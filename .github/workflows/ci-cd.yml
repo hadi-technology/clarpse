@@ -55,10 +55,12 @@ jobs:
       - name: Import GPG key
         run: |
           echo "$GPG_PRIVATE_KEY" | tr -d '\r' > /tmp/gpg.key
-          if grep -q "BEGIN PGP PRIVATE KEY" /tmp/gpg.key; then
-            gpg --batch --import /tmp/gpg.key
+          if gpg --batch --import /tmp/gpg.key; then
+            echo "Imported armored GPG key."
           else
-            base64 --decode /tmp/gpg.key | gpg --batch --import
+            echo "Armored import failed, trying base64 decode."
+            base64 --decode /tmp/gpg.key > /tmp/gpg.bin
+            gpg --batch --import /tmp/gpg.bin
           fi
       - name: Deploy to Maven Central
         run: mvn -P release -DskipTests deploy
