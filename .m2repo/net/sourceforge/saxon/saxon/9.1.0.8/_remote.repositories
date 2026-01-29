@@ -1,0 +1,5 @@
+#NOTE: This is a Maven Resolver internal implementation file, its format can be changed without prior notice.
+#Thu Jan 29 05:37:48 UTC 2026
+saxon-9.1.0.8.pom>central=
+saxon-9.1.0.8.jar>central=
+saxon-9.1.0.8-dom.jar>central=
