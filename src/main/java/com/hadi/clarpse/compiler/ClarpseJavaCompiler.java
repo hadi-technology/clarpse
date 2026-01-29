@@ -91,8 +91,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
     private ParseResults parseJavaFilesParallel(final List<ProjectFile> files, final String persistDir,
                                                 final int parallelism) {
-        final ExecutorService executor = Executors.newFixedThreadPool(parallelism);
-        try {
+        try (ExecutorService executor = Executors.newFixedThreadPool(parallelism)) {
             final ThreadLocal<ParserContext> parserContext = ThreadLocal.withInitial(
                     () -> new ParserContext(persistDir));
             final List<Future<ParseOutcome>> futures = new ArrayList<>();
@@ -112,6 +111,15 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                     throw new IllegalStateException("Failed while parsing Java files in parallel.", e);
                 }
             }
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
             outcomes.sort((a, b) -> Integer.compare(a.index, b.index));
             final OOPSourceCodeModel mergedModel = new OOPSourceCodeModel();
             final Set<ProjectFile> compileFailures = new HashSet<>();
@@ -122,16 +130,6 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                 }
             }
             return new ParseResults(mergedModel, compileFailures);
-        } finally {
-            executor.shutdown();
-            try {
-                if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
-                    executor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                executor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
         }
     }
 
