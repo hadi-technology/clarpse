@@ -3,6 +3,15 @@ Clarpse is a multi-language architectural code analysis library for building bet
 
 [![maintained-by](https://img.shields.io/badge/Maintained%20by-Hadi%20Technology-violet.svg)](https://haditechnology.com) [![Maven Central](https://maven-badges.herokuapp.com/maven-central/io.github.hadi-technology/clarpse/badge.svg)](https://maven-badges.herokuapp.com/maven-central/io.github.hadi-technology/clarpse) [![Java CI](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml/badge.svg?branch=master)](https://github.com/hadi-tech/clarpse/actions/workflows/ci-cd.yml) [![codecov](https://codecov.io/github/hadi-technology/clarpse/graph/badge.svg?token=7uf2jQMlH1)](https://codecov.io/github/hadi-technology/clarpse) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
 
+# Maven Dependency
+```xml
+<dependency>
+  <groupId>io.github.hadi-technology</groupId>
+  <artifactId>clarpse</artifactId>
+  <version>8.1.0</version>
+</dependency>
+```
+
 Clarpse facilitates the development of tools that operate over the higher level, architectural details of source code, which are exposed via an easy to use, object oriented API. Checkout the power of Clarpse in [striff-lib](https://github.com/hadi-tech/striff-lib).
 
 # What is Clarpse?
