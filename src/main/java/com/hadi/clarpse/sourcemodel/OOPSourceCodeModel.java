@@ -43,7 +43,9 @@ public class OOPSourceCodeModel implements Serializable {
     }
 
     public void insertComponent(final Component component) {
-        LOGGER.debug("Inserted component " + component + ".");
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("Inserted component {}.", component);
+        }
         components.put(component.uniqueName(), component);
     }
 
@@ -63,7 +65,9 @@ public class OOPSourceCodeModel implements Serializable {
 
     public void removeComponent(String cmpUniqueName) {
         this.components.remove(cmpUniqueName);
-        LOGGER.debug("Removed component " + cmpUniqueName + ".");
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug("Removed component {}.", cmpUniqueName);
+        }
     }
 
     public Stream<Component> components() {

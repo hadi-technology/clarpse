@@ -18,7 +18,11 @@ public class CommonDir {
     private final String[] dirs;
 
     public CommonDir(String... dirs) {
-        this.dirs = dirs == null ? new String[0] : Arrays.copyOf(dirs, dirs.length);
+        if (dirs == null) {
+            this.dirs = new String[0];
+        } else {
+            this.dirs = Arrays.copyOf(dirs, dirs.length);
+        }
         for (String dir : this.dirs) {
             if (!dir.contains("/")) {
                 throw new IllegalArgumentException("Directory path: " + dir + " is invalid!");
