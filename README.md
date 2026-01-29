@@ -3,9 +3,12 @@ Clarpse is a multi-language architectural code analysis library for building bet
 
 ![img](https://blog.upskillable.com/wp-content/uploads/2019/08/How-our-continuous-code-testing-culture-with-Codacy-helps-us-produce-outstanding-product11.png)
 
-[![maintained-by](https://img.shields.io/badge/Maintained%20by-Hadii%20Technologies-violet.svg)](https://hadii.ca) [![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.github.hadii-tech/clarpse/badge.svg)](https://maven-badges.herokuapp.com/maven-central/com.github.hadii-tech/clarpse) [![Java CI](https://github.com/hadii-tech/clarpse/actions/workflows/ci-cd.yml/badge.svg?branch=master)](https://github.com/hadii-tech/clarpse/actions/workflows/ci-cd.yml) [![codecov](https://codecov.io/gh/hadii-tech/clarpse/branch/master/graph/badge.svg)](https://codecov.io/gh/hadii-tech/clarpse) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
+[![maintained-by](https://img.shields.io/badge/Maintained%20by-Hadi%20Technologies-violet.svg)](https://hadi.ca) [![Maven Central](https://maven-badges.herokuapp.com/maven-central/io.github.hadi-technology/clarpse/badge.svg)](https://maven-badges.herokuapp.com/maven-central/io.github.hadi-technology/clarpse) [![Java CI](https://github.com/hadi-tech/clarpse/actions/workflows/ci-cd.yml/badge.svg?branch=master)](https://github.com/hadi-tech/clarpse/actions/workflows/ci-cd.yml) [![codecov](https://codecov.io/gh/hadi-tech/clarpse/branch/master/graph/badge.svg)](https://codecov.io/gh/hadi-tech/clarpse) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
 
-Clarpse facilitates the development of tools that operate over the higher level, architectural details of source code, which are exposed via an easy to use, object oriented API. Checkout the power of Clarpse in [striff-lib](https://github.com/hadii-tech/striff-lib).
+Clarpse facilitates the development of tools that operate over the higher level, architectural details of source code, which are exposed via an easy to use, object oriented API. Checkout the power of Clarpse in [striff-lib](https://github.com/hadi-tech/striff-lib).
+
+# What is Clarpse?
+Clarpse is a multi-language parsing and analysis library that converts source code into a language-agnostic, object-oriented model. That model makes it easy to build tooling on top of architecture-level details like components, references, and structure without dealing with raw ASTs.
 
 # Features
 
@@ -16,6 +19,20 @@ Clarpse facilitates the development of tools that operate over the higher level,
  - Clean API built on top of AST
  - Support for parsing comments
 
+# Requirements
+ - Java 17
+ - Maven 3.x
+
+# Repo Tour
+Key areas of the repository:
+
+- `src/main/java/com/hadi/clarpse/compiler` - Language compilers, project file handling, and orchestration.
+- `src/main/java/com/hadi/clarpse/listener` - Parse tree listeners that build the source model.
+- `src/main/antlr4/com/hadi/antlr` - ANTLR grammars (lexers/parsers) by language.
+- `src/main/resources` - Parser base helpers and tool configuration.
+- `src/test/java` - Unit and integration tests by language.
+- `src/test/resources` - Test fixtures and zipped codebases used by tests.
+
 # Terminology
 | Term                | Definition                                                                                                                                                                  |
 |---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -24,7 +41,38 @@ Clarpse facilitates the development of tools that operate over the higher level,
 | Component Reference | A reference between an original component to a target component, which typically exist in the form of import statements, variable declarations, method calls, and so on. |
 
 # Getting Started
-Execute `mvn generate-resources` to generate necessary Antlr files. Execute `mvn clean package assembly:single` to compile and build the entire project.
+Build and test in three steps:
+
+1) Generate ANTLR sources: `mvn generate-resources`
+2) Run tests: `mvn test`
+3) Build the full artifact: `mvn clean package assembly:single`
+
+Run a single test class:
+`mvn -Dtest=com.hadi.test.go.GoLangParseTest test`
+
+# Parsing Pipeline
+The parsing flow is:
+
+`ProjectFiles` -> `ClarpseProject` -> `ClarpseCompiler` -> Language Listener -> `OOPSourceCodeModel`
+
+High level steps:
+1) Collect files in `ProjectFiles` (directory, zip, or in-memory).
+2) `ClarpseProject` selects a language compiler.
+3) The compiler parses files and walks the parse tree.
+4) The language listener builds `Component` objects and references.
+5) The resulting `OOPSourceCodeModel` is used by downstream tooling.
+
+# Design and Architecture
+Core classes and where they live:
+
+- Project entry and orchestration: `src/main/java/com/hadi/clarpse/compiler/ClarpseProject.java`
+- Project inputs: `src/main/java/com/hadi/clarpse/compiler/ProjectFiles.java`, `src/main/java/com/hadi/clarpse/compiler/ProjectFile.java`
+- Compiler selection and results: `src/main/java/com/hadi/clarpse/compiler/CompilerFactory.java`, `src/main/java/com/hadi/clarpse/compiler/ClarpseCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/CompileResult.java`
+- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/go/ClarpseGoCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/ClarpseES6Compiler.java`
+- Parse listeners: `src/main/java/com/hadi/clarpse/listener/JavaTreeListener.java`, `src/main/java/com/hadi/clarpse/listener/GoLangTreeListener.java`, `src/main/java/com/hadi/clarpse/listener/es6/ES6Listener.java`
+- Source model: `src/main/java/com/hadi/clarpse/sourcemodel/OOPSourceCodeModel.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Component.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Package.java`
+- References: `src/main/java/com/hadi/clarpse/reference/ComponentReference.java` and related types in `src/main/java/com/hadi/clarpse/reference`
+- Grammars: `src/main/antlr4/com/hadi/antlr`
 
 ## Using The API
 Clarpse abstracts source code into a higher level model in a **language-agnostic** way. This 
@@ -88,15 +136,23 @@ methodComopnent.codeFragment();      // --> "sampleMethod(String)"
 methodComponent.sourceFile();        // --> "foo.java"
 methodComponent.references();		 // --> ["SimpleTypeReference: String"]
 ```
+# Adding or Updating a Language
+Checklist for adding or updating a language implementation:
+
+- Add or update the grammar in `src/main/antlr4/...`.
+- Run `mvn generate-resources` to regenerate parser sources.
+- Add a compiler in `src/main/java/com/hadi/clarpse/compiler`.
+- Add a listener in `src/main/java/com/hadi/clarpse/listener`.
+- Register the language and file extensions in `src/main/java/com/hadi/clarpse/compiler/Lang.java`.
+- Add tests under `src/test/java` and fixtures under `src/test/resources`.
+
 # Contributing A Patch
 
 - Submit an issue describing your proposed change.
 - Fork the repo, develop and test your code changes.
-- Run a local maven build using "clean package assembly:single" to ensure all tests pass and the jar is produced
-- Update the versioning in the pom.xml and README.md using the x.y.z scheme:
-	- x = main version number, Increase if introducing API breaking changes.
-	- y = feature number, Increase this number if the change contains new features with or without bug fixes.
-	- z = hotfix number, Increase this number if the change only contains bug fixes.
--  Submit a pull request.
-
-
+- Run `mvn test` and ensure all tests pass.
+- If your change requires a version bump, update `pom.xml` and `README.md` using the x.y.z scheme:
+  - x = main version number (breaking changes)
+  - y = feature number (new features, optional bug fixes)
+  - z = hotfix number (bug fixes only)
+- Submit a pull request.
