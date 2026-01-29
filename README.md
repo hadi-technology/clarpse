@@ -23,6 +23,16 @@ Clarpse is a multi-language parsing and analysis library that converts source co
  - Java 17
  - Maven 3.x
 
+# Runtime Tuning
+Clarpse supports a global parallelism setting for language compilers that can parse files in parallel.
+
+- `CLARPSE_PARALLELISM` controls the max number of parser threads.
+- Values `1` or lower force serial parsing.
+- If unset, Clarpse uses `min(availableProcessors, fileCount)`.
+
+Example:
+`CLARPSE_PARALLELISM=4 mvn test`
+
 # Repo Tour
 Key areas of the repository:
 

@@ -35,7 +35,7 @@ import java.util.concurrent.Future;
 public class ClarpseJavaCompiler implements ClarpseCompiler {
 
     private static final Logger LOGGER = LogManager.getLogger(ClarpseJavaCompiler.class);
-    private static final String PARALLELISM_PROPERTY = "clarpse.java.parallelism";
+    private static final String PARALLELISM_ENV = "CLARPSE_PARALLELISM";
     private static final int MIN_FILES_FOR_PARALLEL = 2;
 
     @Override
@@ -147,7 +147,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
         if (fileCount < MIN_FILES_FOR_PARALLEL) {
             return 1;
         }
-        final String override = System.getProperty(PARALLELISM_PROPERTY);
+        final String override = System.getenv(PARALLELISM_ENV);
         if (override != null) {
             try {
                 final int requested = Integer.parseInt(override.trim());
