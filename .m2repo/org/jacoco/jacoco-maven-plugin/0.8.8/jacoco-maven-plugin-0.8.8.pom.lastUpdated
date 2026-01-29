@@ -1,0 +1,4 @@
+#NOTE: This is a Maven Resolver internal implementation file, its format can be changed without prior notice.
+#Thu Jan 29 16:18:32 UTC 2026
+@default-central-https\://repo.maven.apache.org/maven2/.lastUpdated=1769703512217
+https\://repo.maven.apache.org/maven2/.error=Could not transfer artifact org.jacoco\:jacoco-maven-plugin\:pom\:0.8.8 from/to central (https\://repo.maven.apache.org/maven2)\: transfer failed for https\://repo.maven.apache.org/maven2/org/jacoco/jacoco-maven-plugin/0.8.8/jacoco-maven-plugin-0.8.8.pom
