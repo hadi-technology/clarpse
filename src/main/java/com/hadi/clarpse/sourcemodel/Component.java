@@ -17,6 +17,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -187,8 +188,8 @@ public final class Component implements Serializable {
     }
 
     public void insertAccessModifier(final String modifier) {
-        if (OOPSourceModelConstants.getJavaAccessModifierMap().containsValue(modifier.toLowerCase())) {
-            modifiers.add(modifier.toLowerCase());
+        if (OOPSourceModelConstants.getJavaAccessModifierMap().containsValue(modifier.toLowerCase(Locale.ROOT))) {
+            modifiers.add(modifier.toLowerCase(Locale.ROOT));
         } else {
             throw new IllegalArgumentException(modifier + " is an invalid modifier!");
         }
@@ -276,7 +277,7 @@ public final class Component implements Serializable {
 
     public void setAccessModifiers(final List<String> list) {
         for (final String modifier : list) {
-            modifiers.add(modifier.toLowerCase());
+            modifiers.add(modifier.toLowerCase(Locale.ROOT));
         }
     }
 

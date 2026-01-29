@@ -56,6 +56,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
@@ -447,7 +448,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     private List<String> resolveJavaParserModifiers(final NodeList<Modifier> modifiers) {
         final List<String> modifierList = new ArrayList<>();
         for (final Modifier modifier : modifiers) {
-            modifierList.add(modifier.toString().toLowerCase().trim());
+            modifierList.add(modifier.toString().toLowerCase(Locale.ROOT).trim());
         }
         return modifierList;
     }

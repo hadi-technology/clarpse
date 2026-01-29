@@ -213,29 +213,32 @@
 				</executions>
 			</plugin>
 			<plugin>
-				<groupId>com.github.spotbugs</groupId>
-				<artifactId>spotbugs-maven-plugin</artifactId>
-				<version>4.7.3.0</version>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-pmd-plugin</artifactId>
+				<version>3.21.2</version>
 				<configuration>
-					<excludeFilterFile>src/main/resources/spotbugs_exclude.xml</excludeFilterFile>
+					<targetJdk>${java.version}</targetJdk>
+					<rulesets>
+						<ruleset>src/main/resources/pmd-ruleset.xml</ruleset>
+					</rulesets>
+					<failOnViolation>true</failOnViolation>
+					<printFailingErrors>true</printFailingErrors>
+					<linkXRef>false</linkXRef>
 				</configuration>
-				<dependencies>
-					<dependency>
-						<groupId>com.github.spotbugs</groupId>
-						<artifactId>spotbugs</artifactId>
-						<version>4.7.3</version>
-					</dependency>
-				</dependencies>
 				<executions>
-					<!-- Ensures that Spotbugs inspects source code when project is compiled. -->
 					<execution>
-						<id>analyze-compile</id>
+						<id>pmd-check</id>
 						<phase>package</phase>
 						<goals>
 							<goal>check</goal>
 						</goals>
 					</execution>
 				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jxr-plugin</artifactId>
+				<version>3.3.1</version>
 			</plugin>
 		</plugins>
 	</build>

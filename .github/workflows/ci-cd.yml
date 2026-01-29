@@ -1,6 +1,8 @@
 name: Java CI
 
-on: [ push ]
+on:
+  push:
+  pull_request:
 
 jobs:
   build:
@@ -20,9 +22,11 @@ jobs:
           cache: 'maven'
       - name: "Run tests and package"
         run: "mvn clean package assembly:single"
-      - name: "Codecov report"
+      - name: Upload coverage reports to Codecov
         if: matrix.java-version == '17'
-        run: bash <(curl -s https://codecov.io/bash)
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'

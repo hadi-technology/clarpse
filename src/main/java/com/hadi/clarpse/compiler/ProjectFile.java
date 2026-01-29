@@ -37,8 +37,9 @@ public class ProjectFile {
     }
 
     public ProjectFile(final java.io.File file) throws IOException {
-        final Scanner scanner = new Scanner(file, StandardCharsets.UTF_8);
-        content = scanner.useDelimiter("\\A").next();
+        try (Scanner scanner = new Scanner(file, StandardCharsets.UTF_8)) {
+            content = scanner.useDelimiter("\\A").next();
+        }
         path = file.getName();
     }
 

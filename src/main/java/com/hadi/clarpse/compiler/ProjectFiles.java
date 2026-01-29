@@ -71,9 +71,10 @@ public class ProjectFiles {
     }
 
     private void initFilesFromZipPath(File projectFiles) throws Exception {
-        InputStream io = FileUtils.openInputStream(projectFiles);
-        LOGGER.info("Converted zip path to an input stream..");
-        extractProjectFilesFromStream(io);
+        try (InputStream io = FileUtils.openInputStream(projectFiles)) {
+            LOGGER.info("Converted zip path to an input stream..");
+            extractProjectFilesFromStream(io);
+        }
     }
 
     /**
@@ -139,10 +140,6 @@ public class ProjectFiles {
             }
         } catch (final Exception e) {
             throw new Exception("Error while  reading  files from zip!", e);
-        } finally {
-            if (is != null) {
-                is.close();
-            }
         }
         LOGGER.info("Extracted " + filesCounter + " files.");
     }
@@ -203,7 +200,6 @@ public class ProjectFiles {
         dirs.add(rootDir);
         this.langToFilesMap.forEach((lang, projectFiles) -> projectFiles.forEach(projectFile -> {
             final String filePath = rootDir + File.separator + projectFile.path();
-            final PrintWriter printWriter;
             final File file = new File(filePath);
             File parent = new File(file.getParent());
             try {
@@ -214,14 +210,12 @@ public class ProjectFiles {
                     dirs.add(parent.getPath());
                     parent = new File(parent.getParent());
                 }
-                final FileWriter fileWriter;
-                fileWriter = new FileWriter(filePath, StandardCharsets.UTF_8);
-                printWriter = new PrintWriter(fileWriter);
+                try (PrintWriter printWriter = new PrintWriter(new FileWriter(filePath, StandardCharsets.UTF_8))) {
+                    printWriter.print(projectFile.content());
+                }
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
-            printWriter.print(projectFile.content());
-            printWriter.close();
         }));
         long elapsedTime = System.currentTimeMillis() - startTime;
         LOGGER.info(this.size() + " files were persisted in " + elapsedTime + " ms");
