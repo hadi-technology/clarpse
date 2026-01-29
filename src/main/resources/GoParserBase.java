@@ -1,8 +1,8 @@
-package com.hadii.antlr.golang;
+package com.hadi.antlr.golang;
 
 import java.util.List;
 
-import com.hadii.antlr.golang.GoLexer;
+import com.hadi.antlr.golang.GoLexer;
 import org.antlr.v4.runtime.*;
 
 /**

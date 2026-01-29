@@ -1,17 +1,17 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 
-	<groupId>com.github.hadii-tech</groupId>
+	<groupId>io.github.hadi-technology</groupId>
 	<artifactId>clarpse</artifactId>
-	<version>7.1.4</version>
+	<version>8.0.0</version>
 	<packaging>jar</packaging>
 
 	<name>${project.groupId}:${project.artifactId}</name>
 	<description>Clarpse is a lightweight polyglot source code analysis tool.</description>
-	<url>https://github.com/hadii-tech/clarpse</url>
+	<url>https://github.com/hadi-technology/clarpse</url>
 
 	<properties>
-		<java.version>11</java.version>
+		<java.version>17</java.version>
 	</properties>
 
 	<licenses>
@@ -26,15 +26,15 @@
 		<developer>
 			<name>Muntazir Fadhel</name>
 			<email>muntazirfadhel@gmail.com</email>
-			<organization>hadii-tech</organization>
-			<organizationUrl>http://hadii.ca</organizationUrl>
+			<organization>hadi-technology</organization>
+			<organizationUrl>http://hadi-technology.com</organizationUrl>
 		</developer>
 	</developers>
 
 	<scm>
-		<connection>scm:git:git://github.com/hadii-tech/clarpse.git</connection>
-		<developerConnection>scm:git:ssh://github.com/hadii-tech/clarpse.git</developerConnection>
-		<url>https://github.com/hadii-tech/clarpse.git</url>
+		<connection>scm:git:git://github.com/hadi-technology/clarpse.git</connection>
+		<developerConnection>scm:git:ssh://github.com/hadi-technology/clarpse.git</developerConnection>
+		<url>https://github.com/hadi-technology/clarpse.git</url>
 	</scm>
 
 	<dependencies>
@@ -59,7 +59,7 @@
 		<dependency>
 			<groupId>com.github.javaparser</groupId>
 			<artifactId>javaparser-symbol-solver-core</artifactId>
-			<version>3.16.1</version>
+			<version>3.28.0</version>
 		</dependency>
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>
@@ -89,16 +89,6 @@
 		</dependency>
 	</dependencies>
 
-	<distributionManagement>
-		<snapshotRepository>
-			<id>ossrh</id>
-			<url>https://oss.sonatype.org/content/repositories/snapshots</url>
-		</snapshotRepository>
-		<repository>
-			<id>ossrh</id>
-			<url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-		</repository>
-	</distributionManagement>
 	<build>
 		<sourceDirectory>src/main/java</sourceDirectory>
 		<plugins>
@@ -113,7 +103,7 @@
 							<goal>copy-resources</goal>
 						</goals>
 						<configuration>
-							<outputDirectory>${basedir}/target/generated-sources/antlr4/com/hadii/antlr/golang</outputDirectory>
+							<outputDirectory>${basedir}/target/generated-sources/antlr4/com/hadi/antlr/golang</outputDirectory>
 							<encoding>UTF-8</encoding>
 							<resources>
 								<resource>
@@ -167,10 +157,9 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
-				<version>3.1</version>
+				<version>3.10.1</version>
 				<configuration>
-					<source>11</source>
-					<target>11</target>
+					<release>${java.version}</release>
 					<compilerArgument>-Xlint:all</compilerArgument>
 					<showWarnings>true</showWarnings>
 					<showDeprecation>true</showDeprecation>
@@ -203,7 +192,7 @@
 						</goals>
 						<configuration>
 							<sourceDirectory>${project.build.sourceDirectory}</sourceDirectory>
-							<excludes>com/hadii/test</excludes>
+							<excludes>com/hadi/test</excludes>
 							<failOnViolation>true</failOnViolation>
 							<configLocation>src/main/resources/clarpsecheckstyleconfig.xml</configLocation>
 							<violationSeverity>warning</violationSeverity>
@@ -213,29 +202,32 @@
 				</executions>
 			</plugin>
 			<plugin>
-				<groupId>com.github.spotbugs</groupId>
-				<artifactId>spotbugs-maven-plugin</artifactId>
-				<version>4.7.3.0</version>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-pmd-plugin</artifactId>
+				<version>3.21.2</version>
 				<configuration>
-					<excludeFilterFile>src/main/resources/spotbugs_exclude.xml</excludeFilterFile>
+					<targetJdk>${java.version}</targetJdk>
+					<rulesets>
+						<ruleset>src/main/resources/pmd-ruleset.xml</ruleset>
+					</rulesets>
+					<failOnViolation>true</failOnViolation>
+					<printFailingErrors>true</printFailingErrors>
+					<linkXRef>false</linkXRef>
 				</configuration>
-				<dependencies>
-					<dependency>
-						<groupId>com.github.spotbugs</groupId>
-						<artifactId>spotbugs</artifactId>
-						<version>4.7.3</version>
-					</dependency>
-				</dependencies>
 				<executions>
-					<!-- Ensures that Spotbugs inspects source code when project is compiled. -->
 					<execution>
-						<id>analyze-compile</id>
+						<id>pmd-check</id>
 						<phase>package</phase>
 						<goals>
 							<goal>check</goal>
 						</goals>
 					</execution>
 				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jxr-plugin</artifactId>
+				<version>3.3.1</version>
 			</plugin>
 		</plugins>
 	</build>
@@ -285,14 +277,12 @@
 						</executions>
 					</plugin>
 					<plugin>
-						<groupId>org.sonatype.plugins</groupId>
-						<artifactId>nexus-staging-maven-plugin</artifactId>
-						<version>1.6.8</version>
+						<groupId>org.sonatype.central</groupId>
+						<artifactId>central-publishing-maven-plugin</artifactId>
+						<version>0.9.0</version>
 						<extensions>true</extensions>
 						<configuration>
-							<serverId>ossrh</serverId>
-							<nexusUrl>https://oss.sonatype.org/</nexusUrl>
-							<autoReleaseAfterClose>false</autoReleaseAfterClose>
+							<publishingServerId>central</publishingServerId>
 						</configuration>
 					</plugin>
 				</plugins>

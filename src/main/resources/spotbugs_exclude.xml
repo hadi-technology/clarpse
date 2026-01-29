@@ -1,9 +1,9 @@
 <FindBugsFilter>
     <Match>
-        <Package name="~com\.hadii\.clarpse\.listener.*"/>
+        <Package name="~com\.hadi\.clarpse\.listener.*"/>
     </Match>
     <Match>
-        <Package name="~com\.hadii\.antlr.*"/>
+        <Package name="~com\.hadi\.antlr.*"/>
     </Match>
     <Match>
         <Bug pattern="EI_EXPOSE_REP"/>
@@ -12,6 +12,6 @@
         <Bug pattern="EI_EXPOSE_REP2"/>
     </Match>
     <Match>
-        <Class name="com.hadii.clarpse.sourcemodel.OOPSourceModelConstants"/>
+        <Class name="com.hadi.clarpse.sourcemodel.OOPSourceModelConstants"/>
     </Match>
 </FindBugsFilter>
