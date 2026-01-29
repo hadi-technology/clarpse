@@ -28,6 +28,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 /**
  * JavaParser based compiler to process source code.
@@ -91,36 +92,47 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
     private ParseResults parseJavaFilesParallel(final List<ProjectFile> files, final String persistDir,
                                                 final int parallelism) {
         final ExecutorService executor = Executors.newFixedThreadPool(parallelism);
-        final ThreadLocal<ParserContext> parserContext = ThreadLocal.withInitial(
-                () -> new ParserContext(persistDir));
-        final List<Future<ParseOutcome>> futures = new ArrayList<>();
-        for (int i = 0; i < files.size(); i++) {
-            final int index = i;
-            final ProjectFile file = files.get(i);
-            futures.add(executor.submit(new ParseTask(parserContext, file, index)));
-        }
-        executor.shutdown();
-        final List<ParseOutcome> outcomes = new ArrayList<>();
-        for (final Future<ParseOutcome> future : futures) {
+        try {
+            final ThreadLocal<ParserContext> parserContext = ThreadLocal.withInitial(
+                    () -> new ParserContext(persistDir));
+            final List<Future<ParseOutcome>> futures = new ArrayList<>();
+            for (int i = 0; i < files.size(); i++) {
+                final int index = i;
+                final ProjectFile file = files.get(i);
+                futures.add(executor.submit(new ParseTask(parserContext, file, index)));
+            }
+            final List<ParseOutcome> outcomes = new ArrayList<>();
+            for (final Future<ParseOutcome> future : futures) {
+                try {
+                    outcomes.add(future.get());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while parsing Java files.", e);
+                } catch (ExecutionException e) {
+                    throw new IllegalStateException("Failed while parsing Java files in parallel.", e);
+                }
+            }
+            outcomes.sort((a, b) -> Integer.compare(a.index, b.index));
+            final OOPSourceCodeModel mergedModel = new OOPSourceCodeModel();
+            final Set<ProjectFile> compileFailures = new HashSet<>();
+            for (final ParseOutcome outcome : outcomes) {
+                mergedModel.merge(outcome.model);
+                if (outcome.failure != null) {
+                    compileFailures.add(outcome.failure);
+                }
+            }
+            return new ParseResults(mergedModel, compileFailures);
+        } finally {
+            executor.shutdown();
             try {
-                outcomes.add(future.get());
+                if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+                    executor.shutdownNow();
+                }
             } catch (InterruptedException e) {
+                executor.shutdownNow();
                 Thread.currentThread().interrupt();
-                throw new IllegalStateException("Interrupted while parsing Java files.", e);
-            } catch (ExecutionException e) {
-                throw new IllegalStateException("Failed while parsing Java files in parallel.", e);
             }
         }
-        outcomes.sort((a, b) -> Integer.compare(a.index, b.index));
-        final OOPSourceCodeModel mergedModel = new OOPSourceCodeModel();
-        final Set<ProjectFile> compileFailures = new HashSet<>();
-        for (final ParseOutcome outcome : outcomes) {
-            mergedModel.merge(outcome.model);
-            if (outcome.failure != null) {
-                compileFailures.add(outcome.failure);
-            }
-        }
-        return new ParseResults(mergedModel, compileFailures);
     }
 
     private ParseOutcome parseSingleFile(final JavaParser parser,
