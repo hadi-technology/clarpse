@@ -54,7 +54,14 @@ jobs:
           cp settings.xml ~/.m2/settings.xml
       - name: Import GPG key
         run: |
-          echo "$GPG_PRIVATE_KEY" | tr -d '\r' > /tmp/gpg.key
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "GPG_PRIVATE_KEY is empty. Check your repo secrets." >&2
+            exit 1
+          fi
+          printf '%s' "$GPG_PRIVATE_KEY" | tr -d '\r' > /tmp/gpg.key
+          if ! grep -q "BEGIN PGP" /tmp/gpg.key; then
+            printf '%b' "$GPG_PRIVATE_KEY" | tr -d '\r' > /tmp/gpg.key
+          fi
           if gpg --batch --import /tmp/gpg.key; then
             echo "Imported armored GPG key."
           else
@@ -62,5 +69,15 @@ jobs:
             base64 --decode /tmp/gpg.key > /tmp/gpg.bin
             gpg --batch --import /tmp/gpg.bin
           fi
+      - name: Resolve GPG key id
+        run: |
+          if [ -z "$GPG_KEYNAME" ]; then
+            GPG_KEYNAME=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^sec/ {print $5; exit}')
+          fi
+          if [ -z "$GPG_KEYNAME" ]; then
+            echo "Unable to determine GPG key id." >&2
+            exit 1
+          fi
+          echo "GPG_KEYNAME=$GPG_KEYNAME" >> $GITHUB_ENV
       - name: Deploy to Maven Central
-        run: mvn -P release -DskipTests deploy
+        run: mvn -P release -DskipTests -Dgpg.keyname="$GPG_KEYNAME" -Dgpg.passphrase="$GPG_PASSPHRASE" deploy
