@@ -1,7 +1,5 @@
 package com.hadi.clarpse.compiler;
 
-import com.hadi.clarpse.compiler.go.ClarpseGoCompiler;
-
 /**
  * Factory to retrieve appropriate parsing tool for our projects.
  */
@@ -12,10 +10,6 @@ public class CompilerFactory {
 
             case JAVA:
             return new ClarpseJavaCompiler();
-            case JAVASCRIPT:
-            return new ClarpseES6Compiler();
-            case GOLANG:
-            return new ClarpseGoCompiler();
         default:
             throw new CompileException("Could not find parsing tool for: " + language.value());
         }

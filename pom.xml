@@ -3,7 +3,7 @@
 
 	<groupId>io.github.hadi-technology</groupId>
 	<artifactId>clarpse</artifactId>
-	<version>8.1.0</version>
+	<version>8.2.0</version>
 	<packaging>jar</packaging>
 
 	<name>${project.groupId}:${project.artifactId}</name>
@@ -38,11 +38,6 @@
 	</scm>
 
 	<dependencies>
-		<dependency>
-			<groupId>com.google.javascript</groupId>
-			<artifactId>closure-compiler</artifactId>
-			<version>v20210302</version>
-		</dependency>
 		<!-- https://mvnrepository.com/artifact/com.tunnelvisionlabs/antlr4-runtime -->
 		<dependency>
 			<groupId>com.tunnelvisionlabs</groupId>
@@ -92,49 +87,6 @@
 	<build>
 		<sourceDirectory>src/main/java</sourceDirectory>
 		<plugins>
-			<plugin>
-				<artifactId>maven-resources-plugin</artifactId>
-				<version>2.6</version>
-				<executions>
-					<execution>
-						<id>copy-resources</id>
-						<phase>validate</phase>
-						<goals>
-							<goal>copy-resources</goal>
-						</goals>
-						<configuration>
-							<outputDirectory>${basedir}/target/generated-sources/antlr4/com/hadi/antlr/golang</outputDirectory>
-							<encoding>UTF-8</encoding>
-							<resources>
-								<resource>
-									<directory>${basedir}/src/main/resources</directory>
-									<includes>
-										<include>GoParserBase.java</include>
-									</includes>
-								</resource>
-							</resources>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-			<plugin>
-				<groupId>com.tunnelvisionlabs</groupId>
-				<artifactId>antlr4-maven-plugin</artifactId>
-				<version>4.4</version>
-				<configuration>
-					<arguments>
-						<argument>-visitor</argument>
-					</arguments>
-				</configuration>
-				<executions>
-					<execution>
-						<id>antlr</id>
-						<goals>
-							<goal>antlr4</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>

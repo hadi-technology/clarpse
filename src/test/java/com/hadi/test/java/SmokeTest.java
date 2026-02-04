@@ -64,35 +64,6 @@ public class SmokeTest {
     }
 
     @Test
-    public void spotCheckClarpseLocalVarsExists() {
-        Assert.assertEquals(6, clarpseCodeModel.getComponent("com.hadi.clarpse.compiler" +
-                ".ClarpseES6Compiler" +
-                ".parseAllSourceCode" +
-                "(List<ProjectFile>, " +
-                "OOPSourceCodeModel, Compiler, " +
-                "ModulesMap)").get().children().size());
-    }
-
-
-    @Test
-    public void spotCheckClarpseInterfaceImplementation() {
-        Assert.assertEquals("com.hadi.clarpse.compiler.ClarpseCompiler", clarpseCodeModel.getComponent("com.hadi.clarpse.compiler.go" +
-                ".ClarpseGoCompiler").get().references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION).get(0).invokedComponent());
-    }
-
-    @Test
-    public void spotCheckClarpseMethodDoc() {
-        Assert.assertEquals("/**\n" + " * Returns all the Go packages contained " + "in the given " + "code sorted by package path\n" + " * length from smallest to greatest.\n" + " */\n", clarpseCodeModel.getComponent("com.hadi.clarpse.compiler.go" +
-                ".ClarpseGoCompiler" + ".sourcePkgs" +
-                "(List<ProjectFile>, boolean)").get().comment());
-    }
-
-    @Test
-    public void spotCheckClarpseClassDoc() {
-        Assert.assertEquals("/**\n" + " * Represents source files to be parsed.\n" + " */\n", clarpseCodeModel.getComponent("com.hadi.clarpse.compiler.go.GoModule").get().comment());
-    }
-
-    @Test
     public void spotCheckClarpseClassImports() {
         Assert.assertEquals(Set.of(
                 "com.hadi.clarpse.reference.ComponentReference",

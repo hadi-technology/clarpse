@@ -70,54 +70,37 @@ public class ProjectFilesTest {
     }
 
     @Test
-    public void testZipInputStreamComponentCheck() throws Exception {
-        assertTrue(new ClarpseProject(InputStreamProjectFiles, Lang.JAVA)
-                .result().model().getComponent(
-            "com.hadi.clarpse.listener.GoLangTreeListener.currPkg").isPresent());
-    }
-
-    @Test
-    public void testZipPathComponentCheck() throws Exception {
-        assertTrue(new ClarpseProject(zipPathProjectFiles, Lang.JAVA).result().model().getComponent(
-            "com.hadi.clarpse.listener.GoLangTreeListener.currPkg").isPresent());
-    }
-
-    @Test
-    public void testSourceDirFilesComponentCheck() throws Exception {
-        assertTrue(new ClarpseProject(sourceDirProjectFiles, Lang.JAVA).result().model().getComponent(
-            "com.hadi.clarpse.listener.GoLangTreeListener.currPkg").isPresent());
-    }
-
-    @Test
     public void testParseEmptyJavaProjectFiles() throws Exception {
         assertEquals(0,
                 new ClarpseProject(new ProjectFiles(Collections.emptyList()), Lang.JAVA).result().model().size());
     }
 
     @Test
-    public void testParseEmptyGoLangProjectFiles() throws Exception {
-        assertEquals(0, new ClarpseProject(new ProjectFiles(Collections.emptyList()), Lang.GOLANG).result().model().size());
+    public void testZipInputStreamParsesJavaCompiler() throws Exception {
+        assertTrue(new ClarpseProject(InputStreamProjectFiles, Lang.JAVA)
+                .result().model().containsComponent("com.hadi.clarpse.compiler.ClarpseJavaCompiler"));
     }
 
     @Test
-    public void testParseEmptyJavascriptProjectFiles() throws Exception {
-        assertEquals(0, new ClarpseProject(new ProjectFiles(Collections.emptyList()), Lang.JAVASCRIPT).result().model().size());
+    public void testSourceDirParsesJavaCompiler() throws Exception {
+        assertTrue(new ClarpseProject(sourceDirProjectFiles, Lang.JAVA)
+                .result().model().containsComponent("com.hadi.clarpse.compiler.ClarpseJavaCompiler"));
     }
 
     @Test
     public void testShiftSubDirs() {
         ProjectFiles projectFiles = new ProjectFiles();
-        ProjectFile projectFile = new ProjectFile("/test/lol/cakes.go", "{}");
+        ProjectFile projectFile = new ProjectFile("/test/lol/cakes.java", "{}");
         projectFiles.insertFile(projectFile);
         projectFiles.shiftSubDirsLeft();
-        assertEquals("/lol/cakes.go",
-                     new ArrayList<>(projectFiles.files(Lang.GOLANG)).get(0).path());
+        assertEquals("/lol/cakes.java",
+                     new ArrayList<>(projectFiles.files(Lang.JAVA)).get(0).path());
     }
 
     @Test
     public void testFilterByNonExistentPath() {
         ProjectFiles projectFiles = new ProjectFiles();
-        ProjectFile projectFile = new ProjectFile("/test/lol/cakes.go", "{}");
+        ProjectFile projectFile = new ProjectFile("/test/lol/cakes.java", "{}");
         projectFiles.insertFile(projectFile);
         ArrayList<String> filterPaths = new ArrayList<>();
         filterPaths.add("/");
@@ -125,6 +108,7 @@ public class ProjectFilesTest {
         // Should remove everything...
         assertEquals(0, projectFiles.size());
     }
+
     @Test
     public void testProjectFilesSize() {
         ProjectFiles pfs = new ProjectFiles();
@@ -137,42 +121,24 @@ public class ProjectFilesTest {
     public void testGetAllFiles() {
         ProjectFiles pfs = new ProjectFiles();
         pfs.insertFile(new ProjectFile("/test.java", "{}"));
-        pfs.insertFile(new ProjectFile("/tester.go", "{}"));
+        pfs.insertFile(new ProjectFile("/tester.java", "{}"));
         assertEquals(2, pfs.files().size());
-    }
-
-    @Test
-    public void testGetAllGoFiles() {
-        ProjectFiles pfs = new ProjectFiles();
-        pfs.insertFile(new ProjectFile("/test.java", "{}"));
-        pfs.insertFile(new ProjectFile("/tester.go", "{}"));
-        assertEquals(1, pfs.files(Lang.GOLANG).size());
-    }
-
-    @Test
-    public void testGetAllFilesForNonExistentLang() {
-        ProjectFiles pfs = new ProjectFiles();
-        pfs.insertFile(new ProjectFile("/test.java", "{}"));
-        pfs.insertFile(new ProjectFile("/tester.go", "{}"));
-        assertEquals(0, pfs.files(Lang.JAVASCRIPT).size());
     }
 
     @Test
     public void testGetAllJavaFiles() {
         ProjectFiles pfs = new ProjectFiles();
         pfs.insertFile(new ProjectFile("/test.java", "{}"));
-        pfs.insertFile(new ProjectFile("/tester.go", "{}"));
-        assertEquals(1, pfs.files(Lang.JAVA).size());
+        pfs.insertFile(new ProjectFile("/tester.java", "{}"));
+        assertEquals(2, pfs.files(Lang.JAVA).size());
     }
 
     @Test
-    public void testGetAllJSFiles() {
+    public void testInsertUnsupportedFileIsSkipped() {
         ProjectFiles pfs = new ProjectFiles();
-        pfs.insertFile(new ProjectFile("/test.js", "{}"));
-        pfs.insertFile(new ProjectFile("/tester.go", "{}"));
-        assertEquals(1, pfs.files(Lang.JAVASCRIPT).size());
+        pfs.insertFile(new ProjectFile("/script.js", "{}"));
+        assertEquals(0, pfs.size());
     }
-
 
     @Test
     public void testEmptyProjectFilesSize() {
@@ -192,43 +158,42 @@ public class ProjectFilesTest {
     @Test
     public void testMatchingFilesByName() {
         ProjectFiles pfs = new ProjectFiles();
-        pfs.insertFile(new ProjectFile("/go.mod", "{}"));
-        assertEquals(1, pfs.matchingFilesByName("go.mod").size());
+        pfs.insertFile(new ProjectFile("/test.java", "{}"));
+        assertEquals(1, pfs.matchingFilesByName("test.java").size());
     }
 
     @Test
     public void testMatchingFilesByNameNoMatch() {
         ProjectFiles pfs = new ProjectFiles();
-        pfs.insertFile(new ProjectFile("/go.mod", "{}"));
-        assertEquals(0, pfs.matchingFilesByName("go2.mod").size());
+        pfs.insertFile(new ProjectFile("/test.java", "{}"));
+        assertEquals(0, pfs.matchingFilesByName("missing.java").size());
     }
-
 
     @Test
     public void testFilterByExistentPath() {
         ProjectFiles projectFiles = new ProjectFiles();
-        ProjectFile projectFile = new ProjectFile("/test/lol/cakes.go", "{}");
+        ProjectFile projectFile = new ProjectFile("/test/lol/cakes.java", "{}");
         projectFiles.insertFile(projectFile);
         ArrayList<String> filterFilePaths = new ArrayList<>();
-        filterFilePaths.add("/test/lol/cakes.go");
+        filterFilePaths.add("/test/lol/cakes.java");
         projectFiles.filter(filterFilePaths);
         assertEquals(1, projectFiles.size());
     }
+
     @Test
-    public void testShiftSubDirsv2() {
+    public void testShiftSubDirsTwice() {
         ProjectFiles projectFiles = new ProjectFiles();
-        ProjectFile projectFile = new ProjectFile("/test/lol.go", "{}");
+        ProjectFile projectFile = new ProjectFile("/test/lol.java", "{}");
         projectFiles.insertFile(projectFile);
         projectFiles.shiftSubDirsLeft();
-        assertEquals("/lol.go", new ArrayList<>(projectFiles.files(Lang.GOLANG)).get(0).path());
+        assertEquals("/lol.java", new ArrayList<>(projectFiles.files(Lang.JAVA)).get(0).path());
     }
 
     @Test(expected = IllegalArgumentException.class)
     public void testShiftSubDirsInvalid() {
         ProjectFiles projectFiles = new ProjectFiles();
-        ProjectFile projectFile = new ProjectFile("/cakes.go", "{}");
+        ProjectFile projectFile = new ProjectFile("/cakes.java", "{}");
         projectFiles.insertFile(projectFile);
         projectFiles.shiftSubDirsLeft();
     }
-
 }

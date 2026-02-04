@@ -8,7 +8,7 @@ Clarpse is a multi-language architectural code analysis library for building bet
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>8.1.0</version>
+<version>8.2.0</version>
 </dependency>
 ```
 
@@ -19,7 +19,7 @@ Clarpse is a multi-language parsing and analysis library that converts source co
 
 # Features
 
- - Supports **Java** and **GoLang**. Development is currently underway for **JavaScript**(ES6 Syntax), **Python**, and **C#**. 
+ - Supports **Java** with a lightweight, architecture-focused parser.
  - Light weight
  - Performant
  - Easy to use
@@ -43,11 +43,12 @@ Example:
 # Repo Tour
 Key areas of the repository:
 
-- `src/main/java/com/hadi/clarpse/compiler` - Language compilers, project file handling, and orchestration.
-- `src/main/java/com/hadi/clarpse/listener` - Parse tree listeners that build the source model.
-- `src/main/antlr4/com/hadi/antlr` - ANTLR grammars (lexers/parsers) by language.
-- `src/main/resources` - Parser base helpers and tool configuration.
-- `src/test/java` - Unit and integration tests by language.
+- `src/main/java/com/hadi/clarpse/compiler` - Language compilers, project file handling, and orchestration (Java only).
+- `src/main/java/com/hadi/clarpse/listener` - Parse tree listeners that build the source model (Java).
+- `src/main/java/com/hadi/clarpse/sourcemodel` - Component and package models.
+- `src/main/java/com/hadi/clarpse/reference` - Component reference types.
+- `src/main/resources` - Parser helpers and tool configuration.
+- `src/test/java` - Unit and integration tests.
 - `src/test/resources` - Test fixtures and zipped codebases used by tests.
 
 # Terminology
@@ -65,7 +66,7 @@ Build and test in three steps:
 3) Build the full artifact: `mvn clean package assembly:single`
 
 Run a single test class:
-`mvn -Dtest=com.hadi.test.go.GoLangParseTest test`
+`mvn -Dtest=com.hadi.test.java.SmokeTest test`
 
 # Parsing Pipeline
 The parsing flow is:
@@ -85,11 +86,10 @@ Core classes and where they live:
 - Project entry and orchestration: `src/main/java/com/hadi/clarpse/compiler/ClarpseProject.java`
 - Project inputs: `src/main/java/com/hadi/clarpse/compiler/ProjectFiles.java`, `src/main/java/com/hadi/clarpse/compiler/ProjectFile.java`
 - Compiler selection and results: `src/main/java/com/hadi/clarpse/compiler/CompilerFactory.java`, `src/main/java/com/hadi/clarpse/compiler/ClarpseCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/CompileResult.java`
-- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/go/ClarpseGoCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/ClarpseES6Compiler.java`
-- Parse listeners: `src/main/java/com/hadi/clarpse/listener/JavaTreeListener.java`, `src/main/java/com/hadi/clarpse/listener/GoLangTreeListener.java`, `src/main/java/com/hadi/clarpse/listener/es6/ES6Listener.java`
+- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`
+- Parse listeners: `src/main/java/com/hadi/clarpse/listener/JavaTreeListener.java`
 - Source model: `src/main/java/com/hadi/clarpse/sourcemodel/OOPSourceCodeModel.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Component.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Package.java`
 - References: `src/main/java/com/hadi/clarpse/reference/ComponentReference.java` and related types in `src/main/java/com/hadi/clarpse/reference`
-- Grammars: `src/main/antlr4/com/hadi/antlr`
 
 ## Using The API
 Clarpse abstracts source code into a higher level model in a **language-agnostic** way. This 
