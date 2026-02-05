@@ -17,12 +17,14 @@ import java.util.stream.Collectors;
  */
 public enum Lang {
 
-    JAVA("java", new HashSet<>(List.of("java")), Collections.emptySet());
+    JAVA("java", new HashSet<>(List.of("java")), Collections.emptySet()),
+    TYPESCRIPT("typescript", new HashSet<>(List.of("ts", "tsx")), Collections.emptySet());
 
     private static final Map<String, Lang> NAMES_MAP = new HashMap<>();
 
     static {
         NAMES_MAP.put(JAVA.value, JAVA);
+        NAMES_MAP.put(TYPESCRIPT.value, TYPESCRIPT);
     }
 
     private final String value;
