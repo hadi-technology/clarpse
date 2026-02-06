@@ -31,15 +31,56 @@ function writeError(id, code, message, data) {
 }
 
 function loadTypeScript(repoRoot) {
-  try {
-    const resolved = require.resolve("typescript", { paths: [repoRoot] });
-    return require(resolved);
-  } catch (err) {
+  function tryResolve(resolver) {
     try {
-      return require("typescript");
-    } catch (err2) {
+      const resolved = resolver();
+      if (resolved) {
+        return require(resolved);
+      }
+    } catch (err) {
       return null;
     }
+    return null;
+  }
+
+  const repoResolved = tryResolve(() => require.resolve("typescript", { paths: [repoRoot] }));
+  if (repoResolved) {
+    return repoResolved;
+  }
+
+  const searchPaths = [];
+  if (process.env.NODE_PATH) {
+    searchPaths.push(...process.env.NODE_PATH.split(path.delimiter));
+  }
+  try {
+    const moduleInfo = require("module");
+    if (moduleInfo && Array.isArray(moduleInfo.globalPaths)) {
+      searchPaths.push(...moduleInfo.globalPaths);
+    }
+  } catch (err) {
+    // ignore module resolution failures
+  }
+
+  const visited = new Set();
+  for (const candidate of searchPaths) {
+    if (!candidate || visited.has(candidate)) {
+      continue;
+    }
+    visited.add(candidate);
+    const direct = tryResolve(() => require.resolve(path.join(candidate, "typescript")));
+    if (direct) {
+      return direct;
+    }
+    const asRoot = tryResolve(() => require.resolve("typescript", { paths: [candidate] }));
+    if (asRoot) {
+      return asRoot;
+    }
+  }
+
+  try {
+    return require("typescript");
+  } catch (err) {
+    return null;
   }
 }
 
