@@ -96,6 +96,6 @@ Targets are classified as internal or external:
 - Compile failures: `src/main/java/com/hadi/clarpse/compiler/CompileFailure.java`
 
 # Non-Goals
-- No heuristic symbol or type resolution.
+- No heuristic or string-based fallback resolution; symbol/type resolution is compiler-backed only.
 - No fallback parsing.
 - No modification to Striffs relation logic.
