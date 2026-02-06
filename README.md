@@ -20,6 +20,7 @@ Clarpse is a multi-language parsing and analysis library that converts source co
 # Features
 
  - Supports **Java** with a lightweight, architecture-focused parser.
+ - Supports **TypeScript** with compiler-accurate, tsconfig-aware parsing and resolution.
  - Light weight
  - Performant
  - Easy to use
@@ -29,6 +30,7 @@ Clarpse is a multi-language parsing and analysis library that converts source co
 # Requirements
  - Java 17
  - Maven 3.x
+ - Node.js 18/20/22 + TypeScript (required for TypeScript parsing)
 
 # Runtime Tuning
 Clarpse supports a global parallelism setting for language compilers that can parse files in parallel.
@@ -43,11 +45,12 @@ Example:
 # Repo Tour
 Key areas of the repository:
 
-- `src/main/java/com/hadi/clarpse/compiler` - Language compilers, project file handling, and orchestration (Java only).
+- `src/main/java/com/hadi/clarpse/compiler` - Language compilers, project file handling, and orchestration.
+- `src/main/java/com/hadi/clarpse/compiler/typescript` - TypeScript compiler bridge and models.
 - `src/main/java/com/hadi/clarpse/listener` - Parse tree listeners that build the source model (Java).
 - `src/main/java/com/hadi/clarpse/sourcemodel` - Component and package models.
 - `src/main/java/com/hadi/clarpse/reference` - Component reference types.
-- `src/main/resources` - Parser helpers and tool configuration.
+- `src/main/resources` - Parser helpers and tool configuration (TypeScript daemon lives here).
 - `src/test/java` - Unit and integration tests.
 - `src/test/resources` - Test fixtures and zipped codebases used by tests.
 
@@ -86,10 +89,14 @@ Core classes and where they live:
 - Project entry and orchestration: `src/main/java/com/hadi/clarpse/compiler/ClarpseProject.java`
 - Project inputs: `src/main/java/com/hadi/clarpse/compiler/ProjectFiles.java`, `src/main/java/com/hadi/clarpse/compiler/ProjectFile.java`
 - Compiler selection and results: `src/main/java/com/hadi/clarpse/compiler/CompilerFactory.java`, `src/main/java/com/hadi/clarpse/compiler/ClarpseCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/CompileResult.java`
-- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`
+- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/typescript/ClarpseTypeScriptCompiler.java`
 - Parse listeners: `src/main/java/com/hadi/clarpse/listener/JavaTreeListener.java`
 - Source model: `src/main/java/com/hadi/clarpse/sourcemodel/OOPSourceCodeModel.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Component.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Package.java`
 - References: `src/main/java/com/hadi/clarpse/reference/ComponentReference.java` and related types in `src/main/java/com/hadi/clarpse/reference`
+- TypeScript daemon: `src/main/resources/typescript/daemon.js`
+
+Architecture docs:
+- `docs/typescript-architecture.md`
 
 ## Using The API
 Clarpse abstracts source code into a higher level model in a **language-agnostic** way. This 
@@ -116,6 +123,14 @@ Set<ProjectFile> failures = compileResult.failures();
 ```
 Note, the `ProjectFiles` object can be initialized from a local directory, a local zip file, or an 
 input stream to a zip file - see `ProjectFilesTest.java` for more information.
+
+TypeScript usage follows the same API, but requires Node.js and a valid `tsconfig.json`:
+```java
+final ProjectFiles projectFiles = new ProjectFiles("/path/to/typescript-project");
+final ClarpseProject project = new ClarpseProject(projectFiles, Lang.TYPESCRIPT);
+CompileResult compileResult = project.result();
+OOPSourceCodeModel codeModel = compileResult.model();
+```
 
 Next, the compiled 
 `OOPSourceCodeModel` is the polygot representation of our source code through a 

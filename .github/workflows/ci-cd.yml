@@ -12,7 +12,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java-version: [17, 21, 25]
+        include:
+          - java-version: 17
+            node-version: 18
+          - java-version: 17
+            node-version: 20
+          - java-version: 17
+            node-version: 22
+          - java-version: 21
+            node-version: 20
+          - java-version: 25
+            node-version: 20
 
     steps:
       - uses: actions/checkout@v2
@@ -22,10 +32,14 @@ jobs:
           java-version: ${{ matrix.java-version }}
           distribution: 'microsoft'
           cache: 'maven'
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
       - name: "Run tests and package"
         run: "mvn clean package assembly:single"
       - name: Upload coverage reports to Codecov
-        if: matrix.java-version == '17'
+        if: matrix.java-version == '17' && matrix.node-version == '20'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

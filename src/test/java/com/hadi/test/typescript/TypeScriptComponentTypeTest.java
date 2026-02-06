@@ -119,6 +119,13 @@ public class TypeScriptComponentTypeTest {
                 cmp.orElseThrow().componentType().toString());
     }
 
+    @Test
+    public void testTopLevelFunctionComponentType() {
+        Optional<Component> cmp = model.getComponent(name("topLevelFunction"));
+        Assert.assertEquals(OOPSourceModelConstants.ComponentType.FUNCTION.toString(),
+                cmp.orElseThrow().componentType().toString());
+    }
+
     private static String name(final String symbolPath) {
         return TypeScriptTestUtil.uniqueName(PACKAGE_PATH, MODULE, symbolPath);
     }

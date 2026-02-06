@@ -6,6 +6,8 @@ public class TypeScriptDaemonException extends Exception {
     public static final int CODE_NO_TSCONFIG = 1002;
     public static final int CODE_CONFIG_PARSE_FAILED = 1003;
     public static final int CODE_PROGRAM_CREATE_FAILED = 1004;
+    public static final int CODE_FILE_NOT_IN_PROGRAM = 2001;
+    public static final int CODE_FILE_NOT_FOUND = 2002;
 
     private final int code;
 

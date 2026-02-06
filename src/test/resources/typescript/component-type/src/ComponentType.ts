@@ -15,3 +15,7 @@ export interface SampleInterface {
 export enum SampleEnum {
   SampleEnumConstant = "const"
 }
+
+export function topLevelFunction(topLevelParam: string): number {
+  return topLevelParam.length;
+}

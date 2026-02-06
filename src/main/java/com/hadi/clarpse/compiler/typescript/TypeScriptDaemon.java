@@ -111,6 +111,12 @@ public final class TypeScriptDaemon implements AutoCloseable {
                     JsonNode error = response.get("error");
                     int code = error.path("code").asInt(0);
                     String message = error.path("message").asText("Unknown error");
+                    if (error.has("data")) {
+                        JsonNode data = error.get("data");
+                        if (data != null && !data.isNull()) {
+                            message = message + " (" + data.toString() + ")";
+                        }
+                    }
                     throw new TypeScriptDaemonException(message, code);
                 }
                 return response.get("result");

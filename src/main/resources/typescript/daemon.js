@@ -69,6 +69,24 @@ function findTsconfigs(root) {
   return results;
 }
 
+function isTypeScriptFile(filePath) {
+  if (!filePath) {
+    return false;
+  }
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith(".d.ts")) {
+    return true;
+  }
+  return lower.endsWith(".ts") || lower.endsWith(".tsx");
+}
+
+function filterTypeScriptRoots(fileNames) {
+  if (!Array.isArray(fileNames)) {
+    return [];
+  }
+  return fileNames.filter(isTypeScriptFile);
+}
+
 function buildPrograms(ts, repoRoot, configPaths) {
   const programs = [];
   for (const configPath of configPaths) {
@@ -84,12 +102,14 @@ function buildPrograms(ts, repoRoot, configPaths) {
     if (config.errors && config.errors.length > 0) {
       throw new Error("CONFIG_PARSE_FAILED:" + configPath);
     }
+    const rootNames = filterTypeScriptRoots(config.fileNames);
+    const options = Object.assign({}, config.options, { allowJs: false, checkJs: false });
     const program = ts.createProgram({
-      rootNames: config.fileNames,
-      options: config.options,
+      rootNames,
+      options,
       projectReferences: config.projectReferences
     });
-    programs.push({ configPath, program, options: config.options, checker: program.getTypeChecker() });
+    programs.push({ configPath, program, options, checker: program.getTypeChecker() });
   }
   return programs;
 }
@@ -257,11 +277,17 @@ function collectSymbolEntries(type, checker, entries) {
   }
   if (type.aliasTypeArguments) {
     for (const arg of type.aliasTypeArguments) {
+      if (arg && arg.isThisType) {
+        continue;
+      }
       collectSymbolEntries(arg, checker, entries);
     }
   }
   if (type.typeArguments) {
     for (const arg of type.typeArguments) {
+      if (arg && arg.isThisType) {
+        continue;
+      }
       collectSymbolEntries(arg, checker, entries);
     }
   }
@@ -271,11 +297,81 @@ function collectSymbolEntries(type, checker, entries) {
   }
 }
 
+function collectDisplayNames(type, checker, names) {
+  if (!type) {
+    return;
+  }
+  if (type.isUnionOrIntersection && type.isUnionOrIntersection()) {
+    for (const sub of type.types) {
+      collectDisplayNames(sub, checker, names);
+    }
+    return;
+  }
+  if (type.aliasTypeArguments) {
+    for (const arg of type.aliasTypeArguments) {
+      if (arg && arg.isThisType) {
+        continue;
+      }
+      collectDisplayNames(arg, checker, names);
+    }
+  }
+  if (type.typeArguments) {
+    for (const arg of type.typeArguments) {
+      if (arg && arg.isThisType) {
+        continue;
+      }
+      collectDisplayNames(arg, checker, names);
+    }
+  }
+  const symbol = type.aliasSymbol || type.symbol;
+  if (symbol) {
+    return;
+  }
+  const displayName = checker.typeToString(type);
+  if (displayName && displayName !== "void") {
+    names.add(displayName);
+  }
+}
+
+function referenceKey(reference) {
+  if (!reference) {
+    return "";
+  }
+  if (reference.external) {
+    return `${reference.kind}|external|${reference.displayName}`;
+  }
+  if (reference.target) {
+    return `${reference.kind}|internal|${reference.target.filePath}|${reference.target.symbolName}`;
+  }
+  return `${reference.kind}|external|${reference.displayName || ""}`;
+}
+
+function mergeReferences(...lists) {
+  const merged = [];
+  const seen = new Set();
+  for (const list of lists) {
+    if (!list) {
+      continue;
+    }
+    for (const ref of list) {
+      const key = referenceKey(ref);
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      merged.push(ref);
+    }
+  }
+  return merged;
+}
+
 function buildReferenceModelsFromType(type, checker, kind) {
   const references = [];
   const seen = new Set();
   const entries = [];
   collectSymbolEntries(type, checker, entries);
+  const displayNames = new Set();
+  collectDisplayNames(type, checker, displayNames);
   if (!entries.length) {
     const displayName = checker.typeToString(type);
     if (displayName && displayName !== "void") {
@@ -311,6 +407,16 @@ function buildReferenceModelsFromType(type, checker, kind) {
         references.push({ kind, external: true, displayName });
         seen.add(key);
       }
+    }
+  }
+  for (const displayName of displayNames) {
+    if (!displayName || displayName === "void") {
+      continue;
+    }
+    const key = `${kind}|external|${displayName}`;
+    if (!seen.has(key)) {
+      references.push({ kind, external: true, displayName });
+      seen.add(key);
     }
   }
   return references;
@@ -365,10 +471,12 @@ function buildLocalVariableModel(declaration, checker) {
     return null;
   }
   const variableType = checker.getTypeAtLocation(declaration);
-  const references = buildReferenceModelsFromType(variableType, checker, "type");
-  if (declaration.initializer) {
-    const initType = checker.getTypeAtLocation(declaration.initializer);
-    references.push(...buildReferenceModelsFromType(initType, checker, "type"));
+  let references = buildReferenceModelsFromType(variableType, checker, "type");
+  if (!declaration.type && declaration.initializer) {
+    references = mergeReferences(
+      references,
+      buildReferenceModelsFromType(checker.getTypeAtLocation(declaration.initializer), checker, "type")
+    );
   }
   return {
     kind: "local",
@@ -488,8 +596,10 @@ function buildMethodModel(node, checker, kindLabel) {
     jsDoc: getJsDoc(node),
     cyclo: computeCyclo(state.ts, node),
     members: paramModels.concat(bodyDetails.locals),
-    references: (returnTypeObject ? buildReferenceModelsFromType(returnTypeObject, checker, "type") : [])
-      .concat(bodyDetails.references)
+    references: mergeReferences(
+      returnTypeObject ? buildReferenceModelsFromType(returnTypeObject, checker, "type") : [],
+      bodyDetails.references
+    )
   };
 }
 
@@ -508,7 +618,7 @@ function buildAccessorModel(node, checker, accessorKind) {
     jsDoc: getJsDoc(node),
     cyclo: computeCyclo(state.ts, node),
     members: buildParameterModels(node.parameters || [], checker).concat(bodyDetails.locals),
-    references: bodyDetails.references
+    references: mergeReferences(bodyDetails.references)
   };
 }
 

@@ -9,10 +9,18 @@ public final class SkippedFile {
 
     private final ProjectFile file;
     private final SkipReason reason;
+    private final String detail;
+    private final Integer errorCode;
 
     public SkippedFile(final ProjectFile file, final SkipReason reason) {
+        this(file, reason, null, null);
+    }
+
+    public SkippedFile(final ProjectFile file, final SkipReason reason, final String detail, final Integer errorCode) {
         this.file = Objects.requireNonNull(file, "file");
         this.reason = Objects.requireNonNull(reason, "reason");
+        this.detail = detail;
+        this.errorCode = errorCode;
     }
 
     public ProjectFile file() {
@@ -21,6 +29,14 @@ public final class SkippedFile {
 
     public SkipReason reason() {
         return reason;
+    }
+
+    public String detail() {
+        return detail;
+    }
+
+    public Integer errorCode() {
+        return errorCode;
     }
 
     @Override
@@ -42,6 +58,19 @@ public final class SkippedFile {
 
     @Override
     public String toString() {
-        return file.path() + " (" + reason + ")";
+        if (detail == null && errorCode == null) {
+            return file.path() + " (" + reason + ")";
+        }
+        StringBuilder sb = new StringBuilder(file.path())
+                .append(" (")
+                .append(reason);
+        if (errorCode != null) {
+            sb.append(", code=").append(errorCode);
+        }
+        if (detail != null) {
+            sb.append(", detail=").append(detail);
+        }
+        sb.append(")");
+        return sb.toString();
     }
 }

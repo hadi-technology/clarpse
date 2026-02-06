@@ -69,8 +69,10 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 try {
                     fileModel = daemon.getFileModel(diskPath);
                 } catch (final TypeScriptDaemonException e) {
-                    skippedFiles.add(new SkippedFile(file, SkipReason.RESOLVER_START_FAILED));
-                    LOGGER.warn("TypeScript resolver failed for file " + file.path() + ".", e);
+                    SkipReason reason = mapSkipReason(e);
+                    skippedFiles.add(new SkippedFile(file, reason, e.getMessage(), e.code()));
+                    LOGGER.warn("TypeScript resolver failed for file " + file.path()
+                            + " (code=" + e.code() + ", reason=" + reason + ").", e);
                     continue;
                 }
                 final Package pkg = resolvePackage(persistDir, diskPath);
@@ -82,14 +84,38 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             classifyClassCyclo(srcModel);
             classifyReferences(srcModel);
         } catch (final TypeScriptDaemonException e) {
-            tsFiles.forEach(file -> skippedFiles.add(new SkippedFile(file, SkipReason.RESOLVER_START_FAILED)));
-            LOGGER.warn("TypeScript resolver failed to start. Skipping " + tsFiles.size() + " TypeScript files.", e);
+            SkipReason reason = mapSkipReason(e);
+            tsFiles.forEach(file -> skippedFiles.add(new SkippedFile(file, reason, e.getMessage(), e.code())));
+            LOGGER.warn("TypeScript resolver failed to start (code=" + e.code() + ", reason=" + reason
+                    + "). Skipping " + tsFiles.size() + " TypeScript files.", e);
         } finally {
             if (persistDir != null && !persistDir.isEmpty() && projectFiles.isTempProjectDir()) {
                 FileUtils.deleteQuietly(new File(persistDir));
             }
         }
         return new CompileResult(srcModel, compileFailures, skippedFiles);
+    }
+
+    private static SkipReason mapSkipReason(final TypeScriptDaemonException e) {
+        if (e == null) {
+            return SkipReason.RESOLVER_START_FAILED;
+        }
+        switch (e.code()) {
+            case TypeScriptDaemonException.CODE_TYPESCRIPT_NOT_FOUND:
+                return SkipReason.TYPESCRIPT_NOT_FOUND;
+            case TypeScriptDaemonException.CODE_NO_TSCONFIG:
+                return SkipReason.NO_TSCONFIG;
+            case TypeScriptDaemonException.CODE_CONFIG_PARSE_FAILED:
+                return SkipReason.CONFIG_PARSE_FAILED;
+            case TypeScriptDaemonException.CODE_PROGRAM_CREATE_FAILED:
+                return SkipReason.PROGRAM_CREATE_FAILED;
+            case TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM:
+                return SkipReason.FILE_NOT_IN_PROGRAM;
+            case TypeScriptDaemonException.CODE_FILE_NOT_FOUND:
+                return SkipReason.FILE_NOT_FOUND;
+            default:
+                return SkipReason.RESOLVER_START_FAILED;
+        }
     }
 
     private static void insertComponentTree(final Package pkg,
@@ -163,8 +189,12 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                                                 final OOPSourceModelConstants.ComponentType componentType,
                                                 final Stack<Component> stack) {
         String identifier = declaration.name;
-        if (componentType.isMethodComponent() && declaration.signature != null && !declaration.signature.isEmpty()) {
-            identifier = declaration.signature;
+        if (componentType.isMethodComponent()) {
+            if ("function".equals(declaration.kind) && stack.isEmpty()) {
+                identifier = declaration.name;
+            } else if (declaration.signature != null && !declaration.signature.isEmpty()) {
+                identifier = declaration.signature;
+            }
         }
         if (!stack.isEmpty()) {
             return stack.peek().componentName() + "." + identifier;
@@ -214,7 +244,7 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             case "enum":
                 return OOPSourceModelConstants.ComponentType.ENUM;
             case "function":
-                return OOPSourceModelConstants.ComponentType.METHOD;
+                return OOPSourceModelConstants.ComponentType.FUNCTION;
             case "method":
                 return OOPSourceModelConstants.ComponentType.METHOD;
             case "constructor":
@@ -252,7 +282,8 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         }
         for (final TypeScriptReferenceModel reference : declaration.references) {
             final ComponentReference componentReference = buildComponentReference(reference, repoRoot);
-            if (componentReference != null) {
+            if (componentReference != null
+                    && !componentReference.invokedComponent().equals(component.uniqueName())) {
                 component.insertCmpRef(componentReference);
             }
         }
