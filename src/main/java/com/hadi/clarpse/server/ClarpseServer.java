@@ -50,9 +50,8 @@ public final class ClarpseServer {
         final long maxBytes = readLongEnv("CLARPSE_MAX_BYTES", DEFAULT_MAX_BYTES);
         final HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         final CountDownLatch stopLatch = new CountDownLatch(1);
-        try (final AutoCloseableExecutor closeableExecutor =
-                     new AutoCloseableExecutor(Executors.newFixedThreadPool(resolveThreadCount()))) {
-            final ExecutorService executor = closeableExecutor.service();
+        final ExecutorService executor = Executors.newFixedThreadPool(resolveThreadCount());
+        try {
             server.setExecutor(executor);
             server.createContext("/health", new HealthHandler());
             server.createContext("/parse", new ParseHandler(maxBytes));
@@ -73,6 +72,8 @@ public final class ClarpseServer {
             } finally {
                 server.stop(0);
             }
+        } finally {
+            executor.shutdown();
         }
     }
 
@@ -224,22 +225,6 @@ public final class ClarpseServer {
         }
     }
 
-    private static final class AutoCloseableExecutor implements AutoCloseable {
-        private final ExecutorService service;
-
-        private AutoCloseableExecutor(final ExecutorService service) {
-            this.service = service;
-        }
-
-        private ExecutorService service() {
-            return service;
-        }
-
-        @Override
-        public void close() {
-            service.shutdown();
-        }
-    }
 
     private static Lang parseLang(final String raw) {
         if (raw == null) {
