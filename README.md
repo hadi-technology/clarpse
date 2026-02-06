@@ -30,7 +30,50 @@ Clarpse is a multi-language parsing and analysis library that converts source co
 # Requirements
  - Java 17
  - Maven 3.x
- - Node.js 18/20/22 + TypeScript (required for TypeScript parsing)
+ - Node.js 18/20/22 (required for TypeScript parsing)
+ - TypeScript compiler: `npm install -g typescript`
+
+# Running Locally
+Build the jar:
+`mvn clean package assembly:single`
+
+Start the HTTP API:
+`java -cp target/clarpse-<version>.jar com.hadi.clarpse.server.ClarpseServer`
+
+Health check:
+`curl -s http://localhost:8080/health`
+
+Parse a JSON request:
+```bash
+curl -s -X POST http://localhost:8080/parse \
+  -H "Content-Type: application/json" \
+  -d '{"language":"java","files":[{"path":"src/Foo.java","content":"package test; class Foo { void m() {} }"}]}'
+```
+
+Parse a zip (Java or TypeScript):
+```bash
+curl -s -X POST "http://localhost:8080/parse?lang=typescript" \
+  -H "Content-Type: application/zip" \
+  --data-binary @project.zip
+```
+
+Notes:
+- TypeScript parsing requires a valid `tsconfig.json` in the project input.
+- Environment variables: `CLARPSE_PORT`, `CLARPSE_MAX_BYTES`, `CLARPSE_PARALLELISM`.
+
+# Docker API for Non-Java Consumers
+Build and run the container (no local jar required):
+```bash
+docker build -t clarpse-api .
+docker run -p 8080:8080 clarpse-api
+```
+
+Then call the API the same way as the local server:
+```bash
+curl -s -X POST http://localhost:8080/parse \
+  -H "Content-Type: application/json" \
+  -d '{"language":"java","files":[{"path":"src/Foo.java","content":"package test; class Foo { void m() {} }"}]}'
+```
 
 # Runtime Tuning
 Clarpse supports a global parallelism setting for language compilers that can parse files in parallel.

@@ -52,7 +52,11 @@ public final class NodeRuntime {
     }
 
     private static boolean checkExplicitPath(final String value, final String sourceLabel) {
-        final String trimmed = value == null ? "" : value.trim();
+        String trimmed = value;
+        if (trimmed == null) {
+            trimmed = "";
+        }
+        trimmed = trimmed.trim();
         if (trimmed.isEmpty()) {
             LOGGER.warn("Node.js path override from " + sourceLabel + " is empty.");
             return false;
@@ -66,7 +70,11 @@ public final class NodeRuntime {
     }
 
     private static String resolveExplicitPath(final String value, final String sourceLabel) {
-        final String trimmed = value == null ? "" : value.trim();
+        String trimmed = value;
+        if (trimmed == null) {
+            trimmed = "";
+        }
+        trimmed = trimmed.trim();
         if (trimmed.isEmpty()) {
             LOGGER.warn("Node.js path override from " + sourceLabel + " is empty.");
             return null;

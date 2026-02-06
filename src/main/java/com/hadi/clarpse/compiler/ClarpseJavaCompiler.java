@@ -151,7 +151,10 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             new JavaTreeListener(localModel, file, typeSolver).visit(cu, null);
         } catch (final Exception e) {
             LOGGER.error("Failed to parse file " + file.path() + ".", e);
-            String message = e.getMessage() != null ? e.getMessage() : "PARSE_FAILED";
+            String message = e.getMessage();
+            if (message == null || message.isEmpty()) {
+                message = "PARSE_FAILED";
+            }
             failure = new CompileFailure(file, message);
         }
         return new ParseOutcome(-1, localModel, failure);
@@ -267,7 +270,10 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                 new JavaTreeListener(localModel, file, parserContext.typeSolver).visit(cu, null);
             } catch (final Exception e) {
                 LOGGER.error("Failed to parse file " + file.path() + ".", e);
-                String message = e.getMessage() != null ? e.getMessage() : "PARSE_FAILED";
+                String message = e.getMessage();
+                if (message == null || message.isEmpty()) {
+                    message = "PARSE_FAILED";
+                }
                 failure = new CompileFailure(file, message);
             }
             return new ParseOutcome(index, localModel, failure);

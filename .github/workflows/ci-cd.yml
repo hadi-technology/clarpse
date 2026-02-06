@@ -40,6 +40,29 @@ jobs:
         run: npm install -g typescript
       - name: "Run tests and package"
         run: "mvn clean package assembly:single"
+      - name: Build Docker image
+        if: matrix.java-version == '17' && matrix.node-version == '20'
+        run: docker build -t clarpse-api .
+      - name: Run Docker smoke test
+        if: matrix.java-version == '17' && matrix.node-version == '20'
+        run: |
+          set -e
+          docker run -d --name clarpse-api -p 8080:8080 clarpse-api
+          trap 'docker rm -f clarpse-api' EXIT
+          for i in {1..30}; do
+            if curl -fs http://localhost:8080/health > /dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          if ! curl -fs http://localhost:8080/health > /dev/null; then
+            docker logs clarpse-api
+            exit 1
+          fi
+          RESPONSE=$(curl -fs -X POST http://localhost:8080/parse \
+            -H "Content-Type: application/json" \
+            -d '{"language":"java","files":[{"path":"src/Foo.java","content":"package test; class Foo { void m() {} }"}]}')
+          echo "$RESPONSE" | grep -q "\"components\""
       - name: Upload coverage reports to Codecov
         if: matrix.java-version == '17' && matrix.node-version == '20'
         uses: codecov/codecov-action@v5

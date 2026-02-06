@@ -139,8 +139,12 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                                             final String repoRoot,
                                             final TypeScriptComponentModel declaration,
                                             final Stack<Component> stack) {
+        Component parent = null;
+        if (!stack.isEmpty()) {
+            parent = stack.peek();
+        }
         final OOPSourceModelConstants.ComponentType componentType =
-                mapComponentType(declaration.kind, stack.isEmpty() ? null : stack.peek());
+                mapComponentType(declaration.kind, parent);
         if (componentType == null || declaration.name == null || declaration.name.isEmpty()) {
             return null;
         }
@@ -186,7 +190,10 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
     private static String buildCodeFragment(final TypeScriptComponentModel declaration,
                                             final OOPSourceModelConstants.ComponentType componentType) {
         if (componentType.isMethodComponent()) {
-            String fragment = declaration.signature != null ? declaration.signature : declaration.name;
+            String fragment = declaration.signature;
+            if (fragment == null || fragment.isEmpty()) {
+                fragment = declaration.name;
+            }
             if (declaration.returnType != null && !declaration.returnType.isEmpty()
                     && !"void".equals(declaration.returnType)) {
                 fragment += " : " + declaration.returnType;

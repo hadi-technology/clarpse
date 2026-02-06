@@ -17,7 +17,11 @@ public final class CompileFailure {
 
     public CompileFailure(final ProjectFile file, final String message, final Integer errorCode) {
         this.file = Objects.requireNonNull(file, "file");
-        this.message = message == null ? "" : message;
+        String safeMessage = message;
+        if (safeMessage == null) {
+            safeMessage = "";
+        }
+        this.message = safeMessage;
         this.errorCode = errorCode;
     }
 
