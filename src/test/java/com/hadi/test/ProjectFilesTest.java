@@ -8,10 +8,14 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static com.hadi.test.ClarpseTestUtil.unzipArchive;
 import static org.junit.Assert.assertEquals;
@@ -195,5 +199,29 @@ public class ProjectFilesTest {
         ProjectFile projectFile = new ProjectFile("/cakes.java", "{}");
         projectFiles.insertFile(projectFile);
         projectFiles.shiftSubDirsLeft();
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testZipEntryLimitAppliesToAllEntries() throws Exception {
+        File zipFile = createZipWithEntries(10001);
+        try {
+            new ProjectFiles(zipFile.getAbsolutePath());
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            zipFile.delete();
+        }
+    }
+
+    private static File createZipWithEntries(final int count) throws IOException {
+        File tmp = File.createTempFile("clarpse-zip-limit", ".zip");
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(tmp))) {
+            for (int i = 0; i < count; i++) {
+                ZipEntry entry = new ZipEntry("file-" + i + ".txt");
+                zos.putNextEntry(entry);
+                zos.write(0);
+                zos.closeEntry();
+            }
+        }
+        return tmp;
     }
 }

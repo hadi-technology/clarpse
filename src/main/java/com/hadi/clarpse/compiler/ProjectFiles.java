@@ -133,12 +133,12 @@ public class ProjectFiles {
         try (ZipInputStream zis = new ZipInputStream(is)) {
             ZipEntry entry = zis.getNextEntry();
             while (entry != null) {
+                entryCounter += 1;
+                if (entryCounter > MAX_ZIP_ENTRIES) {
+                    throw new IllegalArgumentException("Zip contains too many entries.");
+                }
                 if (!entry.isDirectory() && (Lang.langFromExtn(
                         FilenameUtils.getExtension(entry.getName())) != null)) {
-                    entryCounter += 1;
-                    if (entryCounter > MAX_ZIP_ENTRIES) {
-                        throw new IllegalArgumentException("Zip contains too many entries.");
-                    }
                     String safeName = sanitizeEntryName(entry.getName());
                     if (safeName == null) {
                         throw new IllegalArgumentException("Unsafe zip entry path: " + entry.getName());
@@ -158,6 +158,8 @@ public class ProjectFiles {
                 zis.closeEntry();
                 entry = zis.getNextEntry();
             }
+        } catch (final IllegalArgumentException e) {
+            throw e;
         } catch (final Exception e) {
             throw new Exception("Error while  reading  files from zip!", e);
         }
