@@ -49,30 +49,33 @@ public final class ClarpseServer {
         final int port = readIntEnv("CLARPSE_PORT", DEFAULT_PORT);
         final long maxBytes = readLongEnv("CLARPSE_MAX_BYTES", DEFAULT_MAX_BYTES);
         final HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-        final ExecutorService executor = Executors.newFixedThreadPool(resolveThreadCount());
         final CountDownLatch stopLatch = new CountDownLatch(1);
+        try (final AutoCloseableExecutor closeableExecutor =
+                     new AutoCloseableExecutor(Executors.newFixedThreadPool(resolveThreadCount()))) {
+            final ExecutorService executor = closeableExecutor.service();
+            server.setExecutor(executor);
+            server.createContext("/health", new HealthHandler());
+            server.createContext("/parse", new ParseHandler(maxBytes));
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    server.stop(0);
+                } finally {
+                    stopLatch.countDown();
+                }
+            }));
 
-        server.setExecutor(executor);
-        server.createContext("/health", new HealthHandler());
-        server.createContext("/parse", new ParseHandler(maxBytes));
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
-                server.stop(0);
+                server.start();
+                LOGGER.info("Clarpse server listening on port " + port + ".");
+                stopLatch.await();
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
             } finally {
-                stopLatch.countDown();
+                server.stop(0);
             }
-        }));
-
-        try {
-            server.start();
-            LOGGER.info("Clarpse server listening on port " + port + ".");
-            stopLatch.await();
-        } catch (final InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } finally {
-            executor.shutdown();
         }
     }
+
 
     private static int resolveThreadCount() {
         final int processors = Runtime.getRuntime().availableProcessors();
@@ -218,6 +221,23 @@ public final class ClarpseServer {
                 responses.add(new FailureResponse(failure.file().path(), failure.message(), failure.errorCode()));
             }
             return responses;
+        }
+    }
+
+    private static final class AutoCloseableExecutor implements AutoCloseable {
+        private final ExecutorService service;
+
+        private AutoCloseableExecutor(final ExecutorService service) {
+            this.service = service;
+        }
+
+        private ExecutorService service() {
+            return service;
+        }
+
+        @Override
+        public void close() {
+            service.shutdown();
         }
     }
 
