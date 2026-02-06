@@ -64,7 +64,8 @@ public final class TypeScriptDaemon implements AutoCloseable {
         return new InitResult(
                 result.path("tsVersion").asText(""),
                 result.path("configCount").asInt(0),
-                result.path("fileCount").asInt(0)
+                result.path("fileCount").asInt(0),
+                result.path("invalidConfigCount").asInt(0)
         );
     }
 
@@ -178,11 +179,14 @@ public final class TypeScriptDaemon implements AutoCloseable {
         private final String tsVersion;
         private final int configCount;
         private final int fileCount;
+        private final int invalidConfigCount;
 
-        public InitResult(final String tsVersion, final int configCount, final int fileCount) {
+        public InitResult(final String tsVersion, final int configCount, final int fileCount,
+                          final int invalidConfigCount) {
             this.tsVersion = tsVersion;
             this.configCount = configCount;
             this.fileCount = fileCount;
+            this.invalidConfigCount = invalidConfigCount;
         }
 
         public String tsVersion() {
@@ -195,6 +199,10 @@ public final class TypeScriptDaemon implements AutoCloseable {
 
         public int fileCount() {
             return fileCount;
+        }
+
+        public int invalidConfigCount() {
+            return invalidConfigCount;
         }
     }
 }

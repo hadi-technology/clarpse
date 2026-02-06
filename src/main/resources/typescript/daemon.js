@@ -89,10 +89,18 @@ function filterTypeScriptRoots(fileNames) {
 
 function buildPrograms(ts, repoRoot, configPaths) {
   const programs = [];
+  const invalidConfigs = [];
   for (const configPath of configPaths) {
-    const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+    let configFile;
+    try {
+      configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+    } catch (err) {
+      invalidConfigs.push({ configPath, error: "CONFIG_READ_FAILED" });
+      continue;
+    }
     if (configFile.error) {
-      throw new Error("CONFIG_PARSE_FAILED:" + configPath);
+      invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
+      continue;
     }
     const config = ts.parseJsonConfigFileContent(
       configFile.config,
@@ -100,18 +108,23 @@ function buildPrograms(ts, repoRoot, configPaths) {
       path.dirname(configPath)
     );
     if (config.errors && config.errors.length > 0) {
-      throw new Error("CONFIG_PARSE_FAILED:" + configPath);
+      invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
+      continue;
     }
     const rootNames = filterTypeScriptRoots(config.fileNames);
     const options = Object.assign({}, config.options, { allowJs: false, checkJs: false });
-    const program = ts.createProgram({
-      rootNames,
-      options,
-      projectReferences: config.projectReferences
-    });
-    programs.push({ configPath, program, options, checker: program.getTypeChecker() });
+    try {
+      const program = ts.createProgram({
+        rootNames,
+        options,
+        projectReferences: config.projectReferences
+      });
+      programs.push({ configPath, program, options, checker: program.getTypeChecker() });
+    } catch (err) {
+      invalidConfigs.push({ configPath, error: "PROGRAM_CREATE_FAILED" });
+    }
   }
-  return programs;
+  return { programs, invalidConfigs };
 }
 
 function normalizePath(ts, filePath) {
@@ -755,13 +768,22 @@ async function handleInitRepo(params) {
     err.code = ERROR_CODES.NO_TSCONFIG;
     throw err;
   }
-  let programs;
+  let programs = [];
+  let invalidConfigs = [];
   try {
-    programs = buildPrograms(ts, repoRoot, configs);
+    const result = buildPrograms(ts, repoRoot, configs);
+    programs = result.programs || [];
+    invalidConfigs = result.invalidConfigs || [];
   } catch (err) {
     const errObj = new Error("CONFIG_PARSE_FAILED");
     errObj.code = ERROR_CODES.CONFIG_PARSE_FAILED;
     errObj.data = err.message;
+    throw errObj;
+  }
+  if (!programs.length) {
+    const errObj = new Error("CONFIG_PARSE_FAILED");
+    errObj.code = ERROR_CODES.CONFIG_PARSE_FAILED;
+    errObj.data = invalidConfigs.map((entry) => entry.configPath);
     throw errObj;
   }
   const fileMap = new Map();
@@ -786,7 +808,8 @@ async function handleInitRepo(params) {
   return {
     tsVersion: ts.version || "",
     configCount: programs.length,
-    fileCount
+    fileCount,
+    invalidConfigCount: invalidConfigs.length
   };
 }
 

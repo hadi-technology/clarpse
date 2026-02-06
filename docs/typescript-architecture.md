@@ -68,6 +68,10 @@ If Node or the TypeScript compiler is unavailable, or the program cannot be buil
 If a specific file cannot be resolved (e.g., not included in `tsconfig.json`):
 - The file is recorded in `CompileResult.failures()` with a message and optional error code.
 
+If one or more `tsconfig.json` files are invalid:
+- Invalid configs are skipped and parsing continues with valid configs.
+- If none are valid, initialization fails.
+
 # Reference Resolution
 All relationships are resolved through the TypeScript `TypeChecker`:
 - `extends`, `implements`
