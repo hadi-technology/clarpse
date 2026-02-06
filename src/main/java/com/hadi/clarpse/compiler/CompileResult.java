@@ -11,25 +11,17 @@ public class CompileResult {
     /**
      * List of files that could not be parsed.
      */
-    private Set<ProjectFile> failures = new HashSet<>();
-    private Set<SkippedFile> skipped = new HashSet<>();
+    private Set<CompileFailure> failures = new HashSet<>();
     private final OOPSourceCodeModel model;
 
     public CompileResult(OOPSourceCodeModel model) {
         this.model = model;
     }
 
-    public CompileResult(OOPSourceCodeModel model, Set<ProjectFile> failures) {
+    public CompileResult(OOPSourceCodeModel model, Set<CompileFailure> failures) {
         this(model);
         if (failures != null) {
             this.failures = failures;
-        }
-    }
-
-    public CompileResult(OOPSourceCodeModel model, Set<ProjectFile> failures, Set<SkippedFile> skipped) {
-        this(model, failures);
-        if (skipped != null) {
-            this.skipped = skipped;
         }
     }
 
@@ -37,11 +29,7 @@ public class CompileResult {
         return this.model;
     }
 
-    public Collection<ProjectFile> failures() {
+    public Collection<CompileFailure> failures() {
         return Set.copyOf(failures);
-    }
-
-    public Collection<SkippedFile> skipped() {
-        return Set.copyOf(skipped);
     }
 }

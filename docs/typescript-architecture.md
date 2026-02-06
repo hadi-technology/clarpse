@@ -12,7 +12,7 @@ architecture-level model as Java, with strict correctness guarantees and explici
 - A valid `tsconfig.json` exists in the project tree.
 - Only `.ts`, `.tsx`, and `.d.ts` files are parsed; JavaScript is not parsed.
 - The TypeScript compiler is the single source of truth for resolution.
-- If TypeScript cannot resolve a file or program, the file is skipped (no heuristics).
+- If TypeScript cannot resolve a file or program, the compiler fails explicitly (no heuristics).
 
 Supported Node.js versions: 18, 20, 22.
 
@@ -31,7 +31,7 @@ Layer 1: Clarpse core (Java)
 Layer 2: Resolver bridge (Java)
 - Starts/stops the TypeScript daemon.
 - Translates daemon output into Clarpse components and references.
-- Enforces skip/failure contract.
+- Enforces explicit failure contract.
 
 Layer 3: TypeScript daemon (Node)
 - Parses source files using the TypeScript compiler API.
@@ -63,17 +63,10 @@ Package names are derived from the repo-relative directory path, consistent with
 
 # Failure Contract
 If Node or the TypeScript compiler is unavailable, or the program cannot be built:
-- TypeScript files are skipped with explicit reasons.
-- No partial or heuristic output is produced.
+- The compiler throws an error and no partial output is produced.
 
-Skip reasons include:
-- `NODE_NOT_FOUND`
-- `TYPESCRIPT_NOT_FOUND`
-- `NO_TSCONFIG`
-- `CONFIG_PARSE_FAILED`
-- `PROGRAM_CREATE_FAILED`
-- `FILE_NOT_IN_PROGRAM`
-- `FILE_NOT_FOUND`
+If a specific file cannot be resolved (e.g., not included in `tsconfig.json`):
+- The file is recorded in `CompileResult.failures()` with a message and optional error code.
 
 # Reference Resolution
 All relationships are resolved through the TypeScript `TypeChecker`:
@@ -96,7 +89,7 @@ Targets are classified as internal or external:
 - Daemon bridge: `src/main/java/com/hadi/clarpse/compiler/typescript/TypeScriptDaemon.java`
 - Daemon runtime: `src/main/resources/typescript/daemon.js`
 - TypeScript models: `src/main/java/com/hadi/clarpse/compiler/typescript/model/*`
-- Skip reasons: `src/main/java/com/hadi/clarpse/compiler/SkipReason.java`
+- Compile failures: `src/main/java/com/hadi/clarpse/compiler/CompileFailure.java`
 
 # Non-Goals
 - No heuristic symbol or type resolution.

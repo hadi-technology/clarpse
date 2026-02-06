@@ -1,15 +1,15 @@
 package com.hadi.test.typescript;
 
 import com.hadi.clarpse.compiler.ClarpseProject;
-import com.hadi.clarpse.compiler.CompileResult;
+import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFiles;
-import com.hadi.clarpse.compiler.SkipReason;
-import com.hadi.clarpse.compiler.SkippedFile;
+import com.hadi.clarpse.compiler.typescript.NodeRuntime;
 import org.junit.Assume;
 import org.junit.Test;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class TypeScriptNoTsconfigTest {
 
@@ -17,28 +17,13 @@ public class TypeScriptNoTsconfigTest {
 
     @Test
     public void missingTsconfigSkipsFiles() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
         ProjectFiles projectFiles = TypeScriptTestUtil.loadProject(FIXTURE);
-        CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
-
-        for (SkippedFile skipped : result.skipped()) {
-            if (skipped.reason() == SkipReason.NODE_NOT_FOUND
-                    || skipped.reason() == SkipReason.TYPESCRIPT_NOT_FOUND) {
-                Assume.assumeTrue("TypeScript runtime unavailable.", false);
-            }
+        try {
+            new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+            fail("Expected CompileException for missing tsconfig.");
+        } catch (CompileException e) {
+            assertTrue(e.getMessage().contains("NO_TSCONFIG"));
         }
-
-        assertEquals(0, result.model().size());
-        assertEquals(1, result.skipped().size());
-
-        SkippedFile skipped = result.skipped().iterator().next();
-        assertEquals(SkipReason.NO_TSCONFIG, skipped.reason());
-        assertEquals(Integer.valueOf(1002), skipped.errorCode());
-        assertEquals("NO_TSCONFIG", skipped.detail());
-
-        String expectedPath = TypeScriptTestUtil.fixturePath(FIXTURE)
-                .resolve("src")
-                .resolve("Sample.ts")
-                .toString();
-        assertEquals(expectedPath, skipped.file().path());
     }
 }

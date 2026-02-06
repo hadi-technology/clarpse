@@ -1,11 +1,11 @@
 package com.hadi.test.typescript;
 
 import com.hadi.clarpse.compiler.ClarpseProject;
+import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFiles;
-import com.hadi.clarpse.compiler.SkipReason;
-import com.hadi.clarpse.compiler.SkippedFile;
+import com.hadi.clarpse.compiler.typescript.NodeRuntime;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import org.junit.Assume;
 import org.junit.Test;
@@ -19,30 +19,23 @@ public class TypeScriptFileNotInProgramTest {
 
     @Test
     public void fileNotIncludedInTsconfigIsSkipped() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
         ProjectFiles projectFiles = TypeScriptTestUtil.loadProject(FIXTURE);
         CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
-
-        for (SkippedFile skipped : result.skipped()) {
-            if (skipped.reason() == SkipReason.NODE_NOT_FOUND
-                    || skipped.reason() == SkipReason.TYPESCRIPT_NOT_FOUND) {
-                Assume.assumeTrue("TypeScript runtime unavailable.", false);
-            }
-        }
 
         OOPSourceCodeModel model = result.model();
         String includedName = TypeScriptTestUtil.uniqueName("src", "Included", "Included");
         assertTrue(model.getComponent(includedName).isPresent());
 
-        assertEquals(1, result.skipped().size());
-        SkippedFile skipped = result.skipped().iterator().next();
-        assertEquals(SkipReason.FILE_NOT_IN_PROGRAM, skipped.reason());
-        assertEquals(Integer.valueOf(2001), skipped.errorCode());
-        assertEquals("FILE_NOT_IN_PROGRAM", skipped.detail());
+        assertEquals(1, result.failures().size());
+        CompileFailure failure = result.failures().iterator().next();
+        assertEquals(Integer.valueOf(2001), failure.errorCode());
+        assertEquals("FILE_NOT_IN_PROGRAM", failure.message());
 
         String expectedPath = TypeScriptTestUtil.fixturePath(FIXTURE)
                 .resolve("src")
                 .resolve("Ignored.ts")
                 .toString();
-        assertEquals(expectedPath, skipped.file().path());
+        assertEquals(expectedPath, failure.file().path());
     }
 }

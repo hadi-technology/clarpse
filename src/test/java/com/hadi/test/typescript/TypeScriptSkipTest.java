@@ -1,18 +1,16 @@
 package com.hadi.test.typescript;
 
 import com.hadi.clarpse.compiler.ClarpseProject;
+import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
-import com.hadi.clarpse.compiler.SkipReason;
-import com.hadi.clarpse.compiler.SkippedFile;
 import org.junit.Test;
-
-import java.util.Collection;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class TypeScriptSkipTest {
 
@@ -25,16 +23,12 @@ public class TypeScriptSkipTest {
             final ProjectFiles projectFiles = new ProjectFiles();
             projectFiles.insertFile(new ProjectFile("/src/utils/date.ts",
                     "export function format() { return ''; }"));
-            final CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
-
-            assertEquals(0, result.model().size());
-            assertEquals(0, result.failures().size());
-
-            Collection<SkippedFile> skippedFiles = result.skipped();
-            assertEquals(1, skippedFiles.size());
-            SkippedFile skipped = skippedFiles.iterator().next();
-            assertEquals(SkipReason.NODE_NOT_FOUND, skipped.reason());
-            assertEquals("/src/utils/date.ts", skipped.file().path());
+            try {
+                new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+                fail("Expected CompileException for missing Node.js.");
+            } catch (CompileException e) {
+                assertTrue(e.getMessage().contains("Node.js not found"));
+            }
         } finally {
             System.clearProperty(NODE_PATH_PROP);
         }
@@ -53,7 +47,6 @@ public class TypeScriptSkipTest {
 
             assertTrue(result.model().size() > 0);
             assertEquals(0, result.failures().size());
-            assertEquals(0, result.skipped().size());
         } finally {
             System.clearProperty(NODE_PATH_PROP);
         }

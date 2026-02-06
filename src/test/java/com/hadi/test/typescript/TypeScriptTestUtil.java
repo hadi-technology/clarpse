@@ -35,9 +35,6 @@ public final class TypeScriptTestUtil {
         Assume.assumeTrue(NodeRuntime.isNodeAvailable());
         ProjectFiles projectFiles = loadProject(fixtureName);
         CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
-        if (!result.skipped().isEmpty()) {
-            Assume.assumeTrue("TypeScript resolver unavailable.", false);
-        }
         return result;
     }
 

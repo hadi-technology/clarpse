@@ -1,13 +1,12 @@
 package com.hadi.clarpse.compiler.typescript;
 
 import com.hadi.clarpse.compiler.ClarpseCompiler;
+import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
-import com.hadi.clarpse.compiler.SkipReason;
-import com.hadi.clarpse.compiler.SkippedFile;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptComponentModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptFileModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptReferenceModel;
@@ -44,18 +43,15 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
     @Override
     public CompileResult compile(final ProjectFiles projectFiles) throws CompileException {
         final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
-        final Set<ProjectFile> compileFailures = new HashSet<>();
-        final Set<SkippedFile> skippedFiles = new HashSet<>();
+        final Set<CompileFailure> compileFailures = new HashSet<>();
         final List<ProjectFile> tsFiles = new ArrayList<>(projectFiles.files(Lang.TYPESCRIPT));
 
         if (tsFiles.isEmpty()) {
-            return new CompileResult(srcModel, compileFailures, skippedFiles);
+            return new CompileResult(srcModel, compileFailures);
         }
 
         if (!NodeRuntime.isNodeAvailable()) {
-            tsFiles.forEach(file -> skippedFiles.add(new SkippedFile(file, SkipReason.NODE_NOT_FOUND)));
-            LOGGER.warn("Node.js not found. Skipping " + tsFiles.size() + " TypeScript files.");
-            return new CompileResult(srcModel, compileFailures, skippedFiles);
+            throw new CompileException("Node.js not found. TypeScript parsing requires Node.js.");
         }
 
         String persistDir = null;
@@ -69,11 +65,13 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 try {
                     fileModel = daemon.getFileModel(diskPath);
                 } catch (final TypeScriptDaemonException e) {
-                    SkipReason reason = mapSkipReason(e);
-                    skippedFiles.add(new SkippedFile(file, reason, e.getMessage(), e.code()));
-                    LOGGER.warn("TypeScript resolver failed for file " + file.path()
-                            + " (code=" + e.code() + ", reason=" + reason + ").", e);
-                    continue;
+                    if (isFileLevelFailure(e)) {
+                        compileFailures.add(new CompileFailure(file, e.getMessage(), e.code()));
+                        LOGGER.warn("TypeScript resolver failed for file " + file.path()
+                                + " (code=" + e.code() + ").", e);
+                        continue;
+                    }
+                    throw new CompileException("TypeScript resolver failed: " + e.getMessage(), e);
                 }
                 final Package pkg = resolvePackage(persistDir, diskPath);
                 final String moduleName = moduleNameForFile(diskPath);
@@ -84,38 +82,21 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             classifyClassCyclo(srcModel);
             classifyReferences(srcModel);
         } catch (final TypeScriptDaemonException e) {
-            SkipReason reason = mapSkipReason(e);
-            tsFiles.forEach(file -> skippedFiles.add(new SkippedFile(file, reason, e.getMessage(), e.code())));
-            LOGGER.warn("TypeScript resolver failed to start (code=" + e.code() + ", reason=" + reason
-                    + "). Skipping " + tsFiles.size() + " TypeScript files.", e);
+            throw new CompileException("TypeScript resolver failed: " + e.getMessage(), e);
         } finally {
             if (persistDir != null && !persistDir.isEmpty() && projectFiles.isTempProjectDir()) {
                 FileUtils.deleteQuietly(new File(persistDir));
             }
         }
-        return new CompileResult(srcModel, compileFailures, skippedFiles);
+        return new CompileResult(srcModel, compileFailures);
     }
 
-    private static SkipReason mapSkipReason(final TypeScriptDaemonException e) {
+    private static boolean isFileLevelFailure(final TypeScriptDaemonException e) {
         if (e == null) {
-            return SkipReason.RESOLVER_START_FAILED;
+            return false;
         }
-        switch (e.code()) {
-            case TypeScriptDaemonException.CODE_TYPESCRIPT_NOT_FOUND:
-                return SkipReason.TYPESCRIPT_NOT_FOUND;
-            case TypeScriptDaemonException.CODE_NO_TSCONFIG:
-                return SkipReason.NO_TSCONFIG;
-            case TypeScriptDaemonException.CODE_CONFIG_PARSE_FAILED:
-                return SkipReason.CONFIG_PARSE_FAILED;
-            case TypeScriptDaemonException.CODE_PROGRAM_CREATE_FAILED:
-                return SkipReason.PROGRAM_CREATE_FAILED;
-            case TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM:
-                return SkipReason.FILE_NOT_IN_PROGRAM;
-            case TypeScriptDaemonException.CODE_FILE_NOT_FOUND:
-                return SkipReason.FILE_NOT_FOUND;
-            default:
-                return SkipReason.RESOLVER_START_FAILED;
-        }
+        return e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM
+                || e.code() == TypeScriptDaemonException.CODE_FILE_NOT_FOUND;
     }
 
     private static void insertComponentTree(final Package pkg,

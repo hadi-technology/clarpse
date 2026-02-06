@@ -119,7 +119,7 @@ CompileResult compileResult = project.result();
 // Get the code model
 OOPSourceCodeModel codeModel = compileResult.model();
 // View any compile errors for any files
-Set<ProjectFile> failures = compileResult.failures();
+Collection<CompileFailure> failures = compileResult.failures();
 ```
 Note, the `ProjectFiles` object can be initialized from a local directory, a local zip file, or an 
 input stream to a zip file - see `ProjectFilesTest.java` for more information.

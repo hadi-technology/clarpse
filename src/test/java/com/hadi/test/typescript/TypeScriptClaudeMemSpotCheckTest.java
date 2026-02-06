@@ -61,7 +61,7 @@ public class TypeScriptClaudeMemSpotCheckTest {
         }
         projectFiles.filter(keep);
         CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
-        if (!result.skipped().isEmpty()) {
+        if (!result.failures().isEmpty()) {
             Assume.assumeTrue("TypeScript resolver unavailable.", false);
         }
         model = result.model();
