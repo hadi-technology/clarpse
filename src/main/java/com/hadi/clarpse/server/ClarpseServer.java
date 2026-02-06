@@ -50,8 +50,7 @@ public final class ClarpseServer {
         final long maxBytes = readLongEnv("CLARPSE_MAX_BYTES", DEFAULT_MAX_BYTES);
         final HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         final CountDownLatch stopLatch = new CountDownLatch(1);
-        final ExecutorService executor = Executors.newFixedThreadPool(resolveThreadCount());
-        try {
+        try (final ExecutorService executor = Executors.newFixedThreadPool(resolveThreadCount())) {
             server.setExecutor(executor);
             server.createContext("/health", new HealthHandler());
             server.createContext("/parse", new ParseHandler(maxBytes));
@@ -72,8 +71,6 @@ public final class ClarpseServer {
             } finally {
                 server.stop(0);
             }
-        } finally {
-            executor.shutdown();
         }
     }
 
