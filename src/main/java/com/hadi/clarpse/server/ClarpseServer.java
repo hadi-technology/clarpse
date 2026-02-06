@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -49,17 +50,28 @@ public final class ClarpseServer {
         final long maxBytes = readLongEnv("CLARPSE_MAX_BYTES", DEFAULT_MAX_BYTES);
         final HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         final ExecutorService executor = Executors.newFixedThreadPool(resolveThreadCount());
+        final CountDownLatch stopLatch = new CountDownLatch(1);
 
         server.setExecutor(executor);
         server.createContext("/health", new HealthHandler());
         server.createContext("/parse", new ParseHandler(maxBytes));
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            server.stop(0);
-            executor.shutdown();
+            try {
+                server.stop(0);
+            } finally {
+                stopLatch.countDown();
+            }
         }));
 
-        server.start();
-        LOGGER.info("Clarpse server listening on port " + port + ".");
+        try {
+            server.start();
+            LOGGER.info("Clarpse server listening on port " + port + ".");
+            stopLatch.await();
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            executor.shutdown();
+        }
     }
 
     private static int resolveThreadCount() {
