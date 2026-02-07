@@ -56,7 +56,7 @@ jobs:
           set +e
           RESPONSE=$(curl -sS -X POST http://localhost:8080/parse \
             -H "Content-Type: application/json" \
-            -d '{"language":"java","files":[{"path":"src/Foo.java","content":"package test; class Foo { void m() {} }"}]}')
+            -d '{"language":"java","files":[{"path":"/src/Foo.java","content":"package test; class Foo { void m() {} }"}]}')
           STATUS=$?
           set -e
           if [ $STATUS -ne 0 ]; then
