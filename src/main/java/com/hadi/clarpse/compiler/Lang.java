@@ -18,15 +18,13 @@ import java.util.stream.Collectors;
 public enum Lang {
 
     JAVA("java", new HashSet<>(List.of("java")), Collections.emptySet()),
-    JAVASCRIPT("javascript", new HashSet<>(List.of("js")), Collections.emptySet()),
-    GOLANG("golang", new HashSet<>(List.of("go")), new HashSet<>(List.of("mod")));
+    TYPESCRIPT("typescript", new HashSet<>(List.of("ts", "tsx")), Collections.emptySet());
 
     private static final Map<String, Lang> NAMES_MAP = new HashMap<>();
 
     static {
         NAMES_MAP.put(JAVA.value, JAVA);
-        NAMES_MAP.put(JAVASCRIPT.value, JAVASCRIPT);
-        NAMES_MAP.put(GOLANG.value, GOLANG);
+        NAMES_MAP.put(TYPESCRIPT.value, TYPESCRIPT);
     }
 
     private final String value;

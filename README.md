@@ -8,7 +8,7 @@ Clarpse is a multi-language architectural code analysis library for building bet
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>8.1.0</version>
+<version>8.2.0</version>
 </dependency>
 ```
 
@@ -19,7 +19,8 @@ Clarpse is a multi-language parsing and analysis library that converts source co
 
 # Features
 
- - Supports **Java** and **GoLang**. Development is currently underway for **JavaScript**(ES6 Syntax), **Python**, and **C#**. 
+ - Supports **Java** with a lightweight, architecture-focused parser.
+ - Supports **TypeScript** with compiler-accurate, tsconfig-aware parsing and resolution.
  - Light weight
  - Performant
  - Easy to use
@@ -29,6 +30,50 @@ Clarpse is a multi-language parsing and analysis library that converts source co
 # Requirements
  - Java 17
  - Maven 3.x
+ - Node.js 18/20/22 (required for TypeScript parsing)
+ - TypeScript compiler: `npm install -g typescript`
+
+# Running Locally
+Build the jar:
+`mvn clean package assembly:single`
+
+Start the HTTP API:
+`java -cp target/clarpse-<version>.jar com.hadi.clarpse.server.ClarpseServer`
+
+Health check:
+`curl -s http://localhost:8080/health`
+
+Parse a JSON request:
+```bash
+curl -s -X POST http://localhost:8080/parse \
+  -H "Content-Type: application/json" \
+  -d '{"language":"java","files":[{"path":"src/Foo.java","content":"package test; class Foo { void m() {} }"}]}'
+```
+
+Parse a zip (Java or TypeScript):
+```bash
+curl -s -X POST "http://localhost:8080/parse?lang=typescript" \
+  -H "Content-Type: application/zip" \
+  --data-binary @project.zip
+```
+
+Notes:
+- TypeScript parsing requires a valid `tsconfig.json` in the project input.
+- Environment variables: `CLARPSE_PORT`, `CLARPSE_MAX_BYTES`, `CLARPSE_PARALLELISM`.
+
+# Docker API for Non-Java Consumers
+Build and run the container (no local jar required):
+```bash
+docker build -t clarpse-api .
+docker run -p 8080:8080 clarpse-api
+```
+
+Then call the API the same way as the local server:
+```bash
+curl -s -X POST http://localhost:8080/parse \
+  -H "Content-Type: application/json" \
+  -d '{"language":"java","files":[{"path":"src/Foo.java","content":"package test; class Foo { void m() {} }"}]}'
+```
 
 # Runtime Tuning
 Clarpse supports a global parallelism setting for language compilers that can parse files in parallel.
@@ -44,10 +89,12 @@ Example:
 Key areas of the repository:
 
 - `src/main/java/com/hadi/clarpse/compiler` - Language compilers, project file handling, and orchestration.
-- `src/main/java/com/hadi/clarpse/listener` - Parse tree listeners that build the source model.
-- `src/main/antlr4/com/hadi/antlr` - ANTLR grammars (lexers/parsers) by language.
-- `src/main/resources` - Parser base helpers and tool configuration.
-- `src/test/java` - Unit and integration tests by language.
+- `src/main/java/com/hadi/clarpse/compiler/typescript` - TypeScript compiler bridge and models.
+- `src/main/java/com/hadi/clarpse/listener` - Parse tree listeners that build the source model (Java).
+- `src/main/java/com/hadi/clarpse/sourcemodel` - Component and package models.
+- `src/main/java/com/hadi/clarpse/reference` - Component reference types.
+- `src/main/resources` - Parser helpers and tool configuration (TypeScript daemon lives here).
+- `src/test/java` - Unit and integration tests.
 - `src/test/resources` - Test fixtures and zipped codebases used by tests.
 
 # Terminology
@@ -65,7 +112,7 @@ Build and test in three steps:
 3) Build the full artifact: `mvn clean package assembly:single`
 
 Run a single test class:
-`mvn -Dtest=com.hadi.test.go.GoLangParseTest test`
+`mvn -Dtest=com.hadi.test.java.SmokeTest test`
 
 # Parsing Pipeline
 The parsing flow is:
@@ -85,11 +132,14 @@ Core classes and where they live:
 - Project entry and orchestration: `src/main/java/com/hadi/clarpse/compiler/ClarpseProject.java`
 - Project inputs: `src/main/java/com/hadi/clarpse/compiler/ProjectFiles.java`, `src/main/java/com/hadi/clarpse/compiler/ProjectFile.java`
 - Compiler selection and results: `src/main/java/com/hadi/clarpse/compiler/CompilerFactory.java`, `src/main/java/com/hadi/clarpse/compiler/ClarpseCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/CompileResult.java`
-- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/go/ClarpseGoCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/ClarpseES6Compiler.java`
-- Parse listeners: `src/main/java/com/hadi/clarpse/listener/JavaTreeListener.java`, `src/main/java/com/hadi/clarpse/listener/GoLangTreeListener.java`, `src/main/java/com/hadi/clarpse/listener/es6/ES6Listener.java`
+- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/typescript/ClarpseTypeScriptCompiler.java`
+- Parse listeners: `src/main/java/com/hadi/clarpse/listener/JavaTreeListener.java`
 - Source model: `src/main/java/com/hadi/clarpse/sourcemodel/OOPSourceCodeModel.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Component.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Package.java`
 - References: `src/main/java/com/hadi/clarpse/reference/ComponentReference.java` and related types in `src/main/java/com/hadi/clarpse/reference`
-- Grammars: `src/main/antlr4/com/hadi/antlr`
+- TypeScript daemon: `src/main/resources/typescript/daemon.js`
+
+Architecture docs:
+- `docs/typescript-architecture.md`
 
 ## Using The API
 Clarpse abstracts source code into a higher level model in a **language-agnostic** way. This 
@@ -112,10 +162,18 @@ CompileResult compileResult = project.result();
 // Get the code model
 OOPSourceCodeModel codeModel = compileResult.model();
 // View any compile errors for any files
-Set<ProjectFile> failures = compileResult.failures();
+Collection<CompileFailure> failures = compileResult.failures();
 ```
 Note, the `ProjectFiles` object can be initialized from a local directory, a local zip file, or an 
 input stream to a zip file - see `ProjectFilesTest.java` for more information.
+
+TypeScript usage follows the same API, but requires Node.js and a valid `tsconfig.json`:
+```java
+final ProjectFiles projectFiles = new ProjectFiles("/path/to/typescript-project");
+final ClarpseProject project = new ClarpseProject(projectFiles, Lang.TYPESCRIPT);
+CompileResult compileResult = project.result();
+OOPSourceCodeModel codeModel = compileResult.model();
+```
 
 Next, the compiled 
 `OOPSourceCodeModel` is the polygot representation of our source code through a 

@@ -1,6 +1,6 @@
 package com.hadi.clarpse.compiler;
 
-import com.hadi.clarpse.compiler.go.ClarpseGoCompiler;
+import com.hadi.clarpse.compiler.typescript.ClarpseTypeScriptCompiler;
 
 /**
  * Factory to retrieve appropriate parsing tool for our projects.
@@ -12,10 +12,8 @@ public class CompilerFactory {
 
             case JAVA:
             return new ClarpseJavaCompiler();
-            case JAVASCRIPT:
-            return new ClarpseES6Compiler();
-            case GOLANG:
-            return new ClarpseGoCompiler();
+            case TYPESCRIPT:
+            return new ClarpseTypeScriptCompiler();
         default:
             throw new CompileException("Could not find parsing tool for: " + language.value());
         }

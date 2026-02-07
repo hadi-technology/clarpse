@@ -2,12 +2,12 @@ package com.hadi.clarpse.compiler;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -15,6 +15,8 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -34,6 +36,9 @@ import java.util.zip.ZipInputStream;
 public class ProjectFiles {
 
     private static final Logger LOGGER = LogManager.getLogger(ProjectFiles.class);
+    private static final int MAX_ZIP_ENTRIES = 10000;
+    private static final long MAX_TOTAL_UNCOMPRESSED_BYTES = 200L * 1024 * 1024;
+    private static final long MAX_ENTRY_UNCOMPRESSED_BYTES = 10L * 1024 * 1024;
     private final Map<Lang, List<ProjectFile>> langToFilesMap = new HashMap<>();
     private int size = 0;
     private String projectDir;
@@ -123,14 +128,29 @@ public class ProjectFiles {
             throws Exception {
         LOGGER.info("Extracting source files from input stream..");
         int filesCounter = 0;
+        int entryCounter = 0;
+        long totalBytes = 0;
         try (ZipInputStream zis = new ZipInputStream(is)) {
             ZipEntry entry = zis.getNextEntry();
             while (entry != null) {
+                entryCounter += 1;
+                if (entryCounter > MAX_ZIP_ENTRIES) {
+                    throw new IllegalArgumentException("Zip contains too many entries.");
+                }
                 if (!entry.isDirectory() && (Lang.langFromExtn(
                         FilenameUtils.getExtension(entry.getName())) != null)) {
+                    String safeName = sanitizeEntryName(entry.getName());
+                    if (safeName == null) {
+                        throw new IllegalArgumentException("Unsafe zip entry path: " + entry.getName());
+                    }
+                    byte[] content = readEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES);
+                    totalBytes += content.length;
+                    if (totalBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
+                        throw new IllegalArgumentException("Zip exceeds maximum uncompressed size.");
+                    }
                     ProjectFile newFile = new ProjectFile(
-                            File.separator + entry.getName().replace(" ", "_"),
-                            new String(IOUtils.toByteArray(zis), StandardCharsets.UTF_8));
+                            File.separator + safeName.replace(" ", "_"),
+                            new String(content, StandardCharsets.UTF_8));
                     LOGGER.debug("Extracted project file " + newFile + ".");
                     this.insertFile(newFile);
                     filesCounter += 1;
@@ -138,10 +158,47 @@ public class ProjectFiles {
                 zis.closeEntry();
                 entry = zis.getNextEntry();
             }
+        } catch (final IllegalArgumentException e) {
+            throw e;
         } catch (final Exception e) {
             throw new Exception("Error while  reading  files from zip!", e);
         }
         LOGGER.info("Extracted " + filesCounter + " files.");
+    }
+
+    private String sanitizeEntryName(String entryName) {
+        if (entryName == null || entryName.trim().isEmpty()) {
+            return null;
+        }
+        String normalized = entryName.replace("\\", "/");
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        if (normalized.contains(":")) {
+            return null;
+        }
+        Path normalizedPath = Paths.get(normalized).normalize();
+        for (Path part : normalizedPath) {
+            if ("..".equals(part.toString())) {
+                return null;
+            }
+        }
+        return normalizedPath.toString();
+    }
+
+    private byte[] readEntryBytes(InputStream inputStream, long maxBytes) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        int read;
+        while ((read = inputStream.read(buffer)) != -1) {
+            total += read;
+            if (total > maxBytes) {
+                throw new IllegalArgumentException("Zip entry exceeds maximum allowed size.");
+            }
+            output.write(buffer, 0, read);
+        }
+        return output.toByteArray();
     }
 
     private boolean anyMatchExtensions(String s, String[] extn) {

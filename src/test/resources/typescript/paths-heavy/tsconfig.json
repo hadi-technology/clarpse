@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "CommonJS",
+    "baseUrl": ".",
+    "paths": {
+      "@domain": ["src/domain/index"],
+      "@app/*": ["src/app/*"],
+      "@domain/*": ["src/domain/*"],
+      "@shared": ["src/shared/index"],
+      "@shared/*": ["src/shared/*"],
+      "@util": ["src/util/index"],
+      "@util/*": ["src/util/*"]
+    },
+    "strict": true
+  },
+  "include": ["src/**/*"]
+}

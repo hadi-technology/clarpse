@@ -269,12 +269,11 @@ public final class OOPSourceModelConstants {
         CLASS("class", true, false, false), STRUCT("class", true, false, false), INTERFACE("interface", true, false,
                 false), INTERFACE_CONSTANT("interface_constant", false, false, true), ENUM("enum", true, false,
                 false), ANNOTATION("annotation", false, false, false), METHOD("method", false, true,
-                false), CONSTRUCTOR("method", false, true, false), ENUM_CONSTANT("enum_constant", false,
-                false,
-                true), FIELD("field_variable", false, false, true), METHOD_PARAMETER_COMPONENT(
-                "method_parameter", false, false,
-                true), CONSTRUCTOR_PARAMETER_COMPONENT("constructor_parameter", false,
-                false, true), LOCAL("local_variable", false, false, true);
+                false), FUNCTION("function", false, true, false), CONSTRUCTOR("method", false, true, false),
+                ENUM_CONSTANT("enum_constant", false, false, true), FIELD("field_variable", false, false, true),
+                METHOD_PARAMETER_COMPONENT("method_parameter", false, false, true),
+                CONSTRUCTOR_PARAMETER_COMPONENT("constructor_parameter", false, false, true),
+                LOCAL("local_variable", false, false, true);
 
         private final boolean isBaseComponent;
         private final boolean isMethodComponent;

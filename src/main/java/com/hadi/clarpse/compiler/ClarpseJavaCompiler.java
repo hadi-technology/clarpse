@@ -42,7 +42,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
     @Override
     public CompileResult compile(final ProjectFiles projectFiles) throws CompileException {
         final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
-        final Set<ProjectFile> compileFailures = new HashSet<>();
+        final Set<CompileFailure> compileFailures = new HashSet<>();
         final List<ProjectFile> javaFiles = new ArrayList<>(projectFiles.files(Lang.JAVA));
         if (!javaFiles.isEmpty()) {
             String persistDir = null;
@@ -75,7 +75,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
     private ParseResults parseJavaFilesSerial(final List<ProjectFile> files, final String persistDir) {
         final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
-        final Set<ProjectFile> compileFailures = new HashSet<>();
+        final Set<CompileFailure> compileFailures = new HashSet<>();
         final CombinedTypeSolver typeSolver = setupTypeSolver(persistDir);
         final ParserConfiguration parserConfiguration = setupParserConfig(typeSolver);
         final JavaParser parser = new JavaParser(parserConfiguration);
@@ -115,7 +115,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             }
             outcomes.sort((a, b) -> Integer.compare(a.index, b.index));
             final OOPSourceCodeModel mergedModel = new OOPSourceCodeModel();
-            final Set<ProjectFile> compileFailures = new HashSet<>();
+            final Set<CompileFailure> compileFailures = new HashSet<>();
             for (final ParseOutcome outcome : outcomes) {
                 mergedModel.merge(outcome.model);
                 if (outcome.failure != null) {
@@ -140,18 +140,22 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                                          final CombinedTypeSolver typeSolver,
                                          final ProjectFile file) {
         final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
-        ProjectFile failure = null;
+        CompileFailure failure = null;
         try {
             final CompilationUnit cu = parser.parse(ParseStart.COMPILATION_UNIT,
                     new StringProvider(file.content())).getResult().get();
             if (cu.getParsed() == Node.Parsedness.UNPARSABLE || file.content().isEmpty()) {
                 LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
-                failure = file;
+                failure = new CompileFailure(file, "UNPARSEABLE");
             }
             new JavaTreeListener(localModel, file, typeSolver).visit(cu, null);
         } catch (final Exception e) {
             LOGGER.error("Failed to parse file " + file.path() + ".", e);
-            failure = file;
+            String message = e.getMessage();
+            if (message == null || message.isEmpty()) {
+                message = "PARSE_FAILED";
+            }
+            failure = new CompileFailure(file, message);
         }
         return new ParseOutcome(-1, localModel, failure);
     }
@@ -220,9 +224,9 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
     private static final class ParseResults {
         private final OOPSourceCodeModel model;
-        private final Set<ProjectFile> failures;
+        private final Set<CompileFailure> failures;
 
-        private ParseResults(final OOPSourceCodeModel model, final Set<ProjectFile> failures) {
+        private ParseResults(final OOPSourceCodeModel model, final Set<CompileFailure> failures) {
             this.model = model;
             this.failures = failures;
         }
@@ -231,9 +235,9 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
     private static final class ParseOutcome {
         private final int index;
         private final OOPSourceCodeModel model;
-        private final ProjectFile failure;
+        private final CompileFailure failure;
 
-        private ParseOutcome(final int index, final OOPSourceCodeModel model, final ProjectFile failure) {
+        private ParseOutcome(final int index, final OOPSourceCodeModel model, final CompileFailure failure) {
             this.index = index;
             this.model = model;
             this.failure = failure;
@@ -255,18 +259,22 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
         public ParseOutcome call() {
             final ParserContext parserContext = context.get();
             final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
-            ProjectFile failure = null;
+            CompileFailure failure = null;
             try {
                 final CompilationUnit cu = parserContext.parser.parse(ParseStart.COMPILATION_UNIT,
                         new StringProvider(file.content())).getResult().get();
                 if (cu.getParsed() == Node.Parsedness.UNPARSABLE || file.content().isEmpty()) {
                     LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
-                    failure = file;
+                    failure = new CompileFailure(file, "UNPARSEABLE");
                 }
                 new JavaTreeListener(localModel, file, parserContext.typeSolver).visit(cu, null);
             } catch (final Exception e) {
                 LOGGER.error("Failed to parse file " + file.path() + ".", e);
-                failure = file;
+                String message = e.getMessage();
+                if (message == null || message.isEmpty()) {
+                    message = "PARSE_FAILED";
+                }
+                failure = new CompileFailure(file, message);
             }
             return new ParseOutcome(index, localModel, failure);
         }

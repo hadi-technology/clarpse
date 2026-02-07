@@ -28,13 +28,14 @@ public class ClarpseProject {
 
     public CompileResult result() throws CompileException {
         if (this.compileResult == null) {
-            LOGGER.info("Parsing " + this.projectFiles.size() + " source files..");
+            int langFileCount = this.projectFiles.files(this.lang).size();
+            LOGGER.info("Parsing " + langFileCount + " " + this.lang.value() + " source files..");
             long startTime = System.nanoTime();
             final ClarpseCompiler parsingTool = CompilerFactory.getParsingTool(this.lang);
             CompileResult compileRes = parsingTool.compile(this.projectFiles);
             long duration = (System.nanoTime() - startTime) / 1000000;
             LOGGER.info("Parsed " + compileRes.model().size() + " components from "
-                    + this.projectFiles.size() + " files in " + duration + " ms.");
+                    + langFileCount + " " + this.lang.value() + " files in " + duration + " ms.");
             this.compileResult = compileRes;
         }
         LOGGER.info("Returning generated compile result ..");

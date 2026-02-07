@@ -1,0 +1,68 @@
+package com.hadi.test.typescript;
+
+import com.hadi.clarpse.compiler.CompileResult;
+import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
+
+public class TypeScriptCodeFragmentTest {
+
+    private static final String FIXTURE = "code-fragment";
+    private static final String PACKAGE_PATH = "src";
+    private static final String MODULE = "CodeFragment";
+    private static OOPSourceCodeModel model;
+
+    @BeforeClass
+    public static void setup() throws Exception {
+        CompileResult result = TypeScriptTestUtil.compileFixture(FIXTURE);
+        model = result.model();
+    }
+
+    @Test
+    public void classGenericsCodeFragmentTest() {
+        assertEquals("<T>", model.getComponent(name("GenericTest")).orElseThrow().codeFragment());
+    }
+
+    @Test
+    public void classGenericsCodeFragmentTestv2() {
+        assertEquals("<T extends List>",
+                model.getComponent(name("GenericTest2")).orElseThrow().codeFragment());
+    }
+
+    @Test
+    public void fieldVarCodeFragmentTest() {
+        assertEquals("fieldVar : List", model.getComponent(name("FieldTest.fieldVar")).orElseThrow().codeFragment());
+        assertEquals("x : List", model.getComponent(name("FieldTest.x")).orElseThrow().codeFragment());
+    }
+
+    @Test
+    public void fieldVarCodeFragmentTestComplex() {
+        assertEquals("complexField : Map<string, List>",
+                model.getComponent(name("FieldTest.complexField")).orElseThrow().codeFragment());
+    }
+
+    @Test
+    public void simpleMethodCodeFragmentTest() {
+        String methodName = name("MethodTest." + TypeScriptTestUtil.signature("sMethod"));
+        assertEquals("sMethod() : Map<string, List>", model.getComponent(methodName).orElseThrow().codeFragment());
+    }
+
+    @Test
+    public void interfaceMethodCodeFragmentTest() {
+        String methodName = name("InterfaceTest." + TypeScriptTestUtil.signature("sMethod"));
+        assertEquals("sMethod() : Map<string, List>", model.getComponent(methodName).orElseThrow().codeFragment());
+    }
+
+    @Test
+    public void complexMethodCodeFragmentTest() {
+        String methodName = name("MethodTest." + TypeScriptTestUtil.signature("complexMethod", "string", "number"));
+        assertEquals("complexMethod(string, number) : Map<List, string[]>",
+                model.getComponent(methodName).orElseThrow().codeFragment());
+    }
+
+    private static String name(final String symbolPath) {
+        return TypeScriptTestUtil.uniqueName(PACKAGE_PATH, MODULE, symbolPath);
+    }
+}
