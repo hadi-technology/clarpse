@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public final class ClarpseServer {
 
@@ -50,8 +51,8 @@ public final class ClarpseServer {
         final long maxBytes = readLongEnv("CLARPSE_MAX_BYTES", DEFAULT_MAX_BYTES);
         final HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         final CountDownLatch stopLatch = new CountDownLatch(1);
-        try (final ExecutorService executor = Executors.newFixedThreadPool(resolveThreadCount())) {
-            server.setExecutor(executor);
+        try (final CloseableExecutorService closeableExecutor = CloseableExecutorService.newFixedThreadPool(resolveThreadCount())) {
+            server.setExecutor(closeableExecutor.delegate());
             server.createContext("/health", new HealthHandler());
             server.createContext("/parse", new ParseHandler(maxBytes));
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -70,6 +71,36 @@ public final class ClarpseServer {
                 Thread.currentThread().interrupt();
             } finally {
                 server.stop(0);
+            }
+        }
+    }
+
+    private static final class CloseableExecutorService implements AutoCloseable {
+
+        private final ExecutorService delegate;
+
+        private CloseableExecutorService(final ExecutorService delegate) {
+            this.delegate = delegate;
+        }
+
+        static CloseableExecutorService newFixedThreadPool(final int threads) {
+            return new CloseableExecutorService(Executors.newFixedThreadPool(threads));
+        }
+
+        ExecutorService delegate() {
+            return delegate;
+        }
+
+        @Override
+        public void close() {
+            delegate.shutdown();
+            try {
+                if (!delegate.awaitTermination(30, TimeUnit.SECONDS)) {
+                    delegate.shutdownNow();
+                }
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                delegate.shutdownNow();
             }
         }
     }
