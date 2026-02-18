@@ -5,12 +5,13 @@ import com.fasterxml.jackson.annotation.JsonValue;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Languages currently supported by Clarpse.
@@ -18,13 +19,15 @@ import java.util.stream.Collectors;
 public enum Lang {
 
     JAVA("java", new HashSet<>(List.of("java")), Collections.emptySet()),
-    TYPESCRIPT("typescript", new HashSet<>(List.of("ts", "tsx")), Collections.emptySet());
+    TYPESCRIPT("typescript", new HashSet<>(List.of("ts", "tsx")), Collections.emptySet()),
+    PYTHON("python", new HashSet<>(List.of("py")), Collections.emptySet());
 
-    private static final Map<String, Lang> NAMES_MAP = new HashMap<>();
+    private static final Map<String, Lang> NAMES_MAP = new LinkedHashMap<>();
 
     static {
         NAMES_MAP.put(JAVA.value, JAVA);
         NAMES_MAP.put(TYPESCRIPT.value, TYPESCRIPT);
+        NAMES_MAP.put(PYTHON.value, PYTHON);
     }
 
     private final String value;
@@ -33,8 +36,8 @@ public enum Lang {
 
     Lang(final String value, final Set<String> sourceFileExtns, Set<String> nonSourceFileExtns) {
         this.value = value;
-        this.sourceFileExtns = sourceFileExtns;
-        this.nonSourceFileExtns = nonSourceFileExtns;
+        this.sourceFileExtns = Collections.unmodifiableSet(new LinkedHashSet<>(sourceFileExtns));
+        this.nonSourceFileExtns = Collections.unmodifiableSet(new LinkedHashSet<>(nonSourceFileExtns));
     }
 
     public static Set<String> supportedSourceFileExtns() {
@@ -53,25 +56,27 @@ public enum Lang {
      * supported, otherwise null is returned.
      */
     public static Lang langFromExtn(String extension) {
+        if (extension == null || extension.trim().isEmpty()) {
+            return null;
+        }
+        final String normalizedExtension = extension.trim().toLowerCase(Locale.ROOT);
         return Lang.supportedLanguages().stream()
                 .filter(lang -> lang.fileExtns().stream()
-                        .filter(extension::equalsIgnoreCase)
-                        .collect(Collectors.toSet()).size() > 0)
+                        .anyMatch(extn -> extn.equalsIgnoreCase(normalizedExtension)))
                 .findFirst()
                 .orElse(null);
     }
 
     public static List<Lang> supportedLanguages() {
-        final List<Lang> langs = new ArrayList<>();
-        for (final Map.Entry<String, Lang> entry : NAMES_MAP.entrySet()) {
-            langs.add(entry.getValue());
-        }
-        return langs;
+        return new ArrayList<>(NAMES_MAP.values());
     }
 
     @JsonCreator
     public static Lang forValue(final String value) {
-        return NAMES_MAP.get(value);
+        if (value == null) {
+            return null;
+        }
+        return NAMES_MAP.get(value.toLowerCase(Locale.ROOT));
     }
 
     @JsonValue
@@ -88,8 +93,8 @@ public enum Lang {
     }
 
     public Set<String> fileExtns() {
-        Set<String> tmpSet = this.sourceFileExtns;
+        Set<String> tmpSet = new LinkedHashSet<>(this.sourceFileExtns);
         tmpSet.addAll(this.nonSourceFileExtns);
-        return tmpSet;
+        return Collections.unmodifiableSet(tmpSet);
     }
 }

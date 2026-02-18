@@ -1,16 +1,16 @@
 package com.hadi.test.typescript;
 
 import com.hadi.clarpse.compiler.ClarpseProject;
-import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
+import com.hadi.clarpse.compiler.typescript.TypeScriptDaemonException;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 public class TypeScriptSkipTest {
 
@@ -23,12 +23,14 @@ public class TypeScriptSkipTest {
             final ProjectFiles projectFiles = new ProjectFiles();
             projectFiles.insertFile(new ProjectFile("/src/utils/date.ts",
                     "export function format() { return ''; }"));
-            try {
-                new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
-                fail("Expected CompileException for missing Node.js.");
-            } catch (CompileException e) {
-                assertTrue(e.getMessage().contains("Node.js not found"));
-            }
+            final CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+
+            assertEquals(0, result.model().size());
+            assertEquals(1, result.failures().size());
+            assertEquals(TypeScriptDaemonException.CODE_NODE_NOT_FOUND,
+                    result.failures().iterator().next().errorCode().intValue());
+            assertTrue(result.failures().iterator().next().message().contains("Node.js not found"));
+            assertFalse(result.failures().iterator().next().file().path().isEmpty());
         } finally {
             System.clearProperty(NODE_PATH_PROP);
         }

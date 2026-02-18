@@ -271,6 +271,7 @@ public final class OOPSourceModelConstants {
                 false), ANNOTATION("annotation", false, false, false), METHOD("method", false, true,
                 false), FUNCTION("function", false, true, false), CONSTRUCTOR("method", false, true, false),
                 ENUM_CONSTANT("enum_constant", false, false, true), FIELD("field_variable", false, false, true),
+                MODULE_FIELD("module_field", false, false, true),
                 METHOD_PARAMETER_COMPONENT("method_parameter", false, false, true),
                 CONSTRUCTOR_PARAMETER_COMPONENT("constructor_parameter", false, false, true),
                 LOCAL("local_variable", false, false, true);

@@ -11,15 +11,11 @@ import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSol
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
 import com.hadi.clarpse.listener.JavaTreeListener;
-import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
-import org.apache.commons.io.FileUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.io.File;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -54,12 +50,11 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             } catch (Exception e) {
                 throw new CompileException("An error occurred while parsing!", e);
             } finally {
-                if (persistDir != null && !persistDir.isEmpty() && projectFiles.isTempProjectDir()) {
-                    FileUtils.deleteQuietly(new File(persistDir));
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("ProjectFiles cleanup handled by caller.");
                 }
             }
-            // Classify component references as internal/external
-            classifyRefs(srcModel);
+            CompilerSupport.classifyReferences(srcModel);
         }
         return new CompileResult(srcModel, compileFailures);
     }
@@ -177,24 +172,6 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
         }
         final int available = Runtime.getRuntime().availableProcessors();
         return Math.max(1, Math.min(available, fileCount));
-    }
-
-    private void classifyRefs(OOPSourceCodeModel srcModel) {
-        srcModel.components().forEach(component -> {
-            final Set<ComponentReference> internalReferences = new LinkedHashSet<>();
-            final Set<ComponentReference> externalReferences = new LinkedHashSet<>();
-            component.references().forEach(componentReference -> {
-                final boolean isInternal = srcModel.containsComponent(componentReference.invokedComponent());
-                componentReference.setExternal(!isInternal);
-                if (isInternal) {
-                    internalReferences.add(componentReference);
-                } else {
-                    externalReferences.add(componentReference);
-                }
-            });
-            component.setReferenceClassification(internalReferences, externalReferences);
-        });
-        LOGGER.debug("Classified component references as internal/external.");
     }
 
     private static CombinedTypeSolver setupTypeSolver(String persistDir) {

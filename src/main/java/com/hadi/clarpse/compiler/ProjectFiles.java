@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -24,6 +25,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -33,7 +35,7 @@ import java.util.zip.ZipInputStream;
 /**
  * Represents source files to be parsed.
  */
-public class ProjectFiles {
+public class ProjectFiles implements AutoCloseable {
 
     private static final Logger LOGGER = LogManager.getLogger(ProjectFiles.class);
     private static final int MAX_ZIP_ENTRIES = 10000;
@@ -43,6 +45,7 @@ public class ProjectFiles {
     private int size = 0;
     private String projectDir;
     private boolean tempProjectDir = false;
+    private final Map<String, String> configFiles = new HashMap<>();
 
     /**
      * Constructs a ProjectFiles instance from a path to a local directory or zip file.
@@ -92,10 +95,11 @@ public class ProjectFiles {
      */
     public void shiftSubDirsLeft() {
         LOGGER.info("Shifting all source files sub-dirs left..");
+        final String separator = "/";
         this.langToFilesMap.forEach((lang, files) -> this.langToFilesMap.put(lang, files.stream().map(file -> {
-            if (StringUtils.countMatches(file.path(), File.separator) > 1) {
+            if (StringUtils.countMatches(file.path(), separator) > 1) {
                 return new ProjectFile(file.path().substring(
-                        StringUtils.ordinalIndexOf(file.path(), File.separator, 2)
+                        StringUtils.ordinalIndexOf(file.path(), separator, 2)
                 ), file.content());
             } else {
                 throw new IllegalArgumentException("Cannot shift file: " + file.path() + ".");
@@ -117,11 +121,11 @@ public class ProjectFiles {
             if (nextFile.isFile() && Lang.langFromExtn(FilenameUtils.getExtension(nextFile.getName())) != null) {
                 this.insertFile(new ProjectFile(
                         nextFile.getPath(),
-                        FileUtils.readFileToString(nextFile, StandardCharsets.US_ASCII))
+                        FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8))
                 );
             }
         }
-        LOGGER.info("Read " + this.langToFilesMap.size() + " files.");
+        LOGGER.info("Read " + this.size + " files.");
     }
 
     private void extractProjectFilesFromStream(final InputStream is)
@@ -137,8 +141,7 @@ public class ProjectFiles {
                 if (entryCounter > MAX_ZIP_ENTRIES) {
                     throw new IllegalArgumentException("Zip contains too many entries.");
                 }
-                if (!entry.isDirectory() && (Lang.langFromExtn(
-                        FilenameUtils.getExtension(entry.getName())) != null)) {
+                if (!entry.isDirectory()) {
                     String safeName = sanitizeEntryName(entry.getName());
                     if (safeName == null) {
                         throw new IllegalArgumentException("Unsafe zip entry path: " + entry.getName());
@@ -148,12 +151,17 @@ public class ProjectFiles {
                     if (totalBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
                         throw new IllegalArgumentException("Zip exceeds maximum uncompressed size.");
                     }
-                    ProjectFile newFile = new ProjectFile(
-                            File.separator + safeName.replace(" ", "_"),
-                            new String(content, StandardCharsets.UTF_8));
-                    LOGGER.debug("Extracted project file " + newFile + ".");
-                    this.insertFile(newFile);
-                    filesCounter += 1;
+                    String fileName = Paths.get(safeName).getFileName().toString();
+                    handlePotentialConfigFile(safeName, new String(content, StandardCharsets.UTF_8));
+                    Lang lang = Lang.langFromExtn(FilenameUtils.getExtension(fileName));
+                    if (lang != null) {
+                        ProjectFile newFile = new ProjectFile(
+                                File.separator + safeName.replace(" ", "_"),
+                                new String(content, StandardCharsets.UTF_8));
+                        LOGGER.debug("Extracted project file " + newFile + ".");
+                        this.insertFile(newFile);
+                        filesCounter += 1;
+                    }
                 }
                 zis.closeEntry();
                 entry = zis.getNextEntry();
@@ -201,8 +209,26 @@ public class ProjectFiles {
         return output.toByteArray();
     }
 
+    private void handlePotentialConfigFile(String safeName, String content) {
+        String lower = safeName.toLowerCase(Locale.ROOT);
+        if (lower.endsWith("tsconfig.json")
+                || lower.endsWith("pyrightconfig.json")
+                || lower.endsWith("pyproject.toml")) {
+            this.configFiles.put(shiftConfigPath(safeName), content);
+        }
+    }
+
+    private String shiftConfigPath(String safeName) {
+        String normalized = safeName.replace("\\", "/");
+        String[] segments = normalized.split("/");
+        if (segments.length <= 1) {
+            return normalized;
+        }
+        return String.join("/", Arrays.copyOfRange(segments, 1, segments.length));
+    }
+
     private boolean anyMatchExtensions(String s, String[] extn) {
-        return Arrays.stream(extn).anyMatch(s::endsWith);
+        return Arrays.stream(extn).anyMatch(ending -> s.toLowerCase(Locale.ROOT).endsWith(ending));
     }
 
     public final void insertFile(final ProjectFile file) {
@@ -226,13 +252,13 @@ public class ProjectFiles {
     }
 
     public final Collection<ProjectFile> files(Lang language) {
-        return this.langToFilesMap.getOrDefault(language, new ArrayList<>());
+        return List.copyOf(this.langToFilesMap.getOrDefault(language, new ArrayList<>()));
     }
 
     public final Collection<ProjectFile> files() {
         Set<ProjectFile> allFiles = new HashSet<>();
         this.langToFilesMap.forEach((lang, files) -> allFiles.addAll(files));
-        return allFiles;
+        return Set.copyOf(allFiles);
     }
 
     public String projectDir() {
@@ -248,6 +274,14 @@ public class ProjectFiles {
         return this.tempProjectDir;
     }
 
+    @Override
+    public void close() {
+        if (this.tempProjectDir && this.projectDir != null && !this.projectDir.isEmpty()) {
+            FileUtils.deleteQuietly(new File(this.projectDir));
+            this.tempProjectDir = false;
+        }
+    }
+
     private void persistDir() {
         long startTime = System.currentTimeMillis();
         Set<String> dirs = new HashSet<>();
@@ -256,7 +290,8 @@ public class ProjectFiles {
         LOGGER.info("Persisting files to " + rootDir);
         dirs.add(rootDir);
         this.langToFilesMap.forEach((lang, projectFiles) -> projectFiles.forEach(projectFile -> {
-            final String filePath = rootDir + File.separator + projectFile.path();
+            final String relativePath = resolvePersistedRelativePath(projectFile.path());
+            final String filePath = rootDir + File.separator + relativePath;
             final File file = new File(filePath);
             File parent = new File(file.getParent());
             try {
@@ -274,10 +309,43 @@ public class ProjectFiles {
                 throw new RuntimeException(e);
             }
         }));
+        this.configFiles.forEach((relativePath, content) -> {
+            Path target = Paths.get(rootDir, relativePath.split("/"));
+            try {
+                if (target.getParent() != null) {
+                    Files.createDirectories(target.getParent());
+                }
+                Files.write(target, content.getBytes(StandardCharsets.UTF_8),
+                        StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
         long elapsedTime = System.currentTimeMillis() - startTime;
         LOGGER.info(this.size() + " files were persisted in " + elapsedTime + " ms");
         this.projectDir = rootDir;
         this.tempProjectDir = true;
+    }
+
+    private String resolvePersistedRelativePath(final String projectPath) {
+        if (projectPath == null || projectPath.isEmpty()) {
+            throw new IllegalArgumentException("Cannot persist an empty project path.");
+        }
+        String normalized = projectPath.replace('\\', '/');
+        if (CompilerSupport.isAbsolutePath(normalized)) {
+            if (normalized.length() > 2
+                    && Character.isLetter(normalized.charAt(0))
+                    && normalized.charAt(1) == ':') {
+                normalized = normalized.substring(2);
+            }
+        }
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException("Cannot persist project path: " + projectPath);
+        }
+        return normalized.replace('/', File.separatorChar);
     }
 
     public void filter(Collection<String> filterFilePaths) {

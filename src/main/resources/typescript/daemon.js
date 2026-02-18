@@ -43,45 +43,12 @@ function loadTypeScript(repoRoot) {
     return null;
   }
 
-  const repoResolved = tryResolve(() => require.resolve("typescript", { paths: [repoRoot] }));
-  if (repoResolved) {
-    return repoResolved;
+  // Use only the bundled TypeScript runtime that ships with Clarpse.
+  const bundledResolved = tryResolve(() => require.resolve("typescript", { paths: [__dirname] }));
+  if (bundledResolved) {
+    return bundledResolved;
   }
-
-  const searchPaths = [];
-  if (process.env.NODE_PATH) {
-    searchPaths.push(...process.env.NODE_PATH.split(path.delimiter));
-  }
-  try {
-    const moduleInfo = require("module");
-    if (moduleInfo && Array.isArray(moduleInfo.globalPaths)) {
-      searchPaths.push(...moduleInfo.globalPaths);
-    }
-  } catch (err) {
-    // ignore module resolution failures
-  }
-
-  const visited = new Set();
-  for (const candidate of searchPaths) {
-    if (!candidate || visited.has(candidate)) {
-      continue;
-    }
-    visited.add(candidate);
-    const direct = tryResolve(() => require.resolve(path.join(candidate, "typescript")));
-    if (direct) {
-      return direct;
-    }
-    const asRoot = tryResolve(() => require.resolve("typescript", { paths: [candidate] }));
-    if (asRoot) {
-      return asRoot;
-    }
-  }
-
-  try {
-    return require("typescript");
-  } catch (err) {
-    return null;
-  }
+  return null;
 }
 
 function findTsconfigs(root) {
@@ -542,6 +509,27 @@ function buildLocalVariableModel(declaration, checker) {
   };
 }
 
+function buildTopLevelVariableModel(declaration, statement, checker) {
+  const model = buildLocalVariableModel(declaration, checker);
+  if (!model) {
+    return null;
+  }
+  model.kind = "moduleField";
+  if (statement) {
+    model.modifiers = collectModifiers(state.ts, statement).concat(model.modifiers || []);
+    if (statement.declarationList) {
+      const flags = statement.declarationList.flags;
+      if (!(flags & state.ts.NodeFlags.Const) && !(flags & state.ts.NodeFlags.Let)) {
+        model.modifiers.push("var");
+      }
+    }
+    if (!model.jsDoc || !model.jsDoc.length) {
+      model.jsDoc = getJsDoc(statement);
+    }
+  }
+  return model;
+}
+
 function collectBodyDetails(body, checker) {
   const references = [];
   const locals = [];
@@ -786,6 +774,16 @@ function collectTopLevelDeclarations(ts, sourceFile, checker) {
       const model = buildFunctionModel(node, checker);
       if (model) {
         declarations.push(model);
+      }
+      return;
+    }
+    if (ts.isVariableStatement(node)) {
+      const list = node.declarationList;
+      for (const declaration of list.declarations) {
+        const model = buildTopLevelVariableModel(declaration, node, checker);
+        if (model) {
+          declarations.push(model);
+        }
       }
     }
   });
