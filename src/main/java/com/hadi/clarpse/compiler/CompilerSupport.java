@@ -69,22 +69,30 @@ public final class CompilerSupport {
         final java.nio.file.Path repoPath = Paths.get(repoRoot).toAbsolutePath().normalize();
 
         if (isAbsolutePath(normalizedPath)) {
-            final java.nio.file.Path absolutePath = Paths.get(normalizedPath).normalize();
-            if (absolutePath.startsWith(repoPath) || absolutePath.toFile().exists()) {
+            final java.nio.file.Path absolutePath = Paths.get(normalizedPath).toAbsolutePath().normalize();
+            if (absolutePath.startsWith(repoPath)) {
                 return absolutePath.toString();
             }
-            // Zip/in-memory paths are normalized to "/..."; if they do not exist on disk,
-            // treat them as repo-root relative to the persisted temp directory.
-            final String relative = stripLeadingFileSeparators(normalizedPath);
-            return Paths.get(repoRoot, relative).normalize().toString();
+            // Never trust absolute paths outside repoRoot. Rebase them under the persisted repo directory.
+            return rebaseToRepoRoot(repoPath, normalizedPath);
         }
-        final String relative = stripLeadingFileSeparators(normalizedPath);
-        return Paths.get(repoRoot, relative).normalize().toString();
+        return rebaseToRepoRoot(repoPath, normalizedPath);
+    }
+
+    private static String rebaseToRepoRoot(final java.nio.file.Path repoPath, final String path) {
+        String relative = path;
+        if (relative.length() > 2
+                && Character.isLetter(relative.charAt(0))
+                && relative.charAt(1) == ':') {
+            relative = relative.substring(2);
+        }
+        relative = stripLeadingFileSeparators(relative);
+        return repoPath.resolve(relative).normalize().toString();
     }
 
     private static String stripLeadingFileSeparators(final String path) {
         String result = path;
-        while (result.startsWith(File.separator)) {
+        while (result.startsWith("/") || result.startsWith("\\")) {
             result = result.substring(1);
         }
         return result;

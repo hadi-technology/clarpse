@@ -1,14 +1,16 @@
 package com.hadi.clarpse.compiler.python;
 
+import com.hadi.clarpse.compiler.FailureCode;
+
 public class PythonDaemonException extends Exception {
 
-    public static final int CODE_NODE_NOT_FOUND = 1001;
-    public static final int CODE_RESOLVER_START_FAILED = 1002;
-    public static final int CODE_REPO_NOT_FOUND = 2001;
-    public static final int CODE_FILE_NOT_FOUND = 2002;
-    public static final int CODE_PARSE_FAILED = 2003;
-    public static final int CODE_DAEMON_ERROR = 2004;
-    public static final int CODE_FILE_EXCLUDED = 2005;
+    public static final int CODE_NODE_NOT_FOUND = FailureCode.NODE_RUNTIME_NOT_FOUND;
+    public static final int CODE_RESOLVER_START_FAILED = FailureCode.PROGRAM_INIT_FAILED;
+    public static final int CODE_REPO_NOT_FOUND = FailureCode.PROGRAM_INIT_FAILED;
+    public static final int CODE_FILE_NOT_FOUND = FailureCode.FILE_NOT_FOUND;
+    public static final int CODE_PARSE_FAILED = FailureCode.PARSE_FAILED;
+    public static final int CODE_DAEMON_ERROR = FailureCode.DAEMON_ERROR;
+    public static final int CODE_FILE_EXCLUDED = FailureCode.FILE_EXCLUDED;
 
     private final int code;
 

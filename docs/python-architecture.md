@@ -85,9 +85,8 @@ Recoverable failures are returned as `CompileFailure` entries with error codes.
 `CompileException` is reserved for non-recoverable compiler errors.
 
 Common codes:
-- `1001` Node runtime not available.
-- `1002` Resolver startup/init failure.
-- `2001` Repo root missing/invalid.
+- `1000` Node runtime not available.
+- `1004` Resolver/repository initialization failure.
 - `2002` File missing/not in analyzed repo.
 - `2003` Parse/type extraction failed.
 - `2004` Daemon transport/runtime failure.

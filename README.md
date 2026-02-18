@@ -218,26 +218,19 @@ System.out.println(methodComponent.codeFragment());
 ```
 
 ## Failure Contract
-- Java: parser issues are reported in `CompileResult.failures()` per file when possible.
-- TypeScript/Python: daemon/runtime/config/file issues are reported in `CompileResult.failures()` with optional error codes.
+- Java/TypeScript/Python all report recoverable issues in `CompileResult.failures()` using
+  language-agnostic error codes.
 - `CompileException` is reserved for non-recoverable compiler errors.
 
-TypeScript error codes:
+Standardized error codes:
 - `1000` Node runtime not available.
-- `1001` Bundled TypeScript runtime not found.
-- `1002` No valid `tsconfig.json` discovered.
-- `1003` `tsconfig.json` parse/validation failure.
-- `1004` TypeScript program creation failure.
-- `2001` File not included in any active TypeScript program.
-- `2002` File missing on disk.
-- `2004` Daemon transport/runtime error.
-
-Python error codes:
-- `1001` Node runtime not available.
-- `1002` Python resolver startup/init failure.
-- `2001` Repo root is missing or invalid.
-- `2002` File missing or not in analyzed repo.
-- `2003` Parse/type-model extraction failed for file.
+- `1001` Language runtime bundle not available.
+- `1002` Required project config is missing (for example `tsconfig.json`).
+- `1003` Project config parse/validation failed.
+- `1004` Program/repository initialization failed.
+- `2001` File is outside active program/repository scope.
+- `2002` File not found on disk.
+- `2003` File parse/model extraction failed.
 - `2004` Daemon transport/runtime error.
 - `2005` File skipped due to excluded path rules.
 # Adding or Updating a Language

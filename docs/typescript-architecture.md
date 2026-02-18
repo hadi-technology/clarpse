@@ -73,13 +73,13 @@ Examples:
 - File not in program: file failure with `CODE_FILE_NOT_IN_PROGRAM`.
 - Invalid configs in a mixed repo: bad configs are skipped when at least one valid config exists.
 
-Standardized TypeScript codes:
+Standardized language-agnostic codes used by TypeScript:
 - `1000` Node runtime not available.
 - `1001` Bundled TypeScript runtime not found.
 - `1002` No valid `tsconfig.json`.
 - `1003` `tsconfig.json` parse/validation error.
-- `1004` Program creation error.
-- `2001` File not in active TypeScript program.
+- `1004` Program/repository initialization error.
+- `2001` File not in active program scope.
 - `2002` File not found on disk.
 - `2004` Daemon transport/runtime error.
 

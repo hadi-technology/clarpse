@@ -141,7 +141,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                     new StringProvider(file.content())).getResult().get();
             if (cu.getParsed() == Node.Parsedness.UNPARSABLE || file.content().isEmpty()) {
                 LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
-                failure = new CompileFailure(file, "UNPARSEABLE");
+                failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
             }
             new JavaTreeListener(localModel, file, typeSolver).visit(cu, null);
         } catch (final Exception e) {
@@ -150,7 +150,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             if (message == null || message.isEmpty()) {
                 message = "PARSE_FAILED";
             }
-            failure = new CompileFailure(file, message);
+            failure = new CompileFailure(file, message, FailureCode.PARSE_FAILED);
         }
         return new ParseOutcome(-1, localModel, failure);
     }
@@ -242,7 +242,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                         new StringProvider(file.content())).getResult().get();
                 if (cu.getParsed() == Node.Parsedness.UNPARSABLE || file.content().isEmpty()) {
                     LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
-                    failure = new CompileFailure(file, "UNPARSEABLE");
+                    failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
                 }
                 new JavaTreeListener(localModel, file, parserContext.typeSolver).visit(cu, null);
             } catch (final Exception e) {
@@ -251,7 +251,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                 if (message == null || message.isEmpty()) {
                     message = "PARSE_FAILED";
                 }
-                failure = new CompileFailure(file, message);
+                failure = new CompileFailure(file, message, FailureCode.PARSE_FAILED);
             }
             return new ParseOutcome(index, localModel, failure);
         }

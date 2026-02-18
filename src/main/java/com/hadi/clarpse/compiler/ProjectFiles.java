@@ -210,21 +210,13 @@ public class ProjectFiles implements AutoCloseable {
     }
 
     private void handlePotentialConfigFile(String safeName, String content) {
-        String lower = safeName.toLowerCase(Locale.ROOT);
+        String normalizedSafeName = safeName.replace("\\", "/");
+        String lower = normalizedSafeName.toLowerCase(Locale.ROOT);
         if (lower.endsWith("tsconfig.json")
                 || lower.endsWith("pyrightconfig.json")
                 || lower.endsWith("pyproject.toml")) {
-            this.configFiles.put(shiftConfigPath(safeName), content);
+            this.configFiles.put(normalizedSafeName, content);
         }
-    }
-
-    private String shiftConfigPath(String safeName) {
-        String normalized = safeName.replace("\\", "/");
-        String[] segments = normalized.split("/");
-        if (segments.length <= 1) {
-            return normalized;
-        }
-        return String.join("/", Arrays.copyOfRange(segments, 1, segments.length));
     }
 
     private boolean anyMatchExtensions(String s, String[] extn) {

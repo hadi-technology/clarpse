@@ -242,7 +242,7 @@ public class ProjectFilesTest {
         }
 
         String projectDir = projectFiles.projectDir();
-        Path tsconfig = Paths.get(projectDir, "tsconfig.json");
+        Path tsconfig = Paths.get(projectDir, "project", "tsconfig.json");
         assertTrue("tsconfig should be persisted", Files.exists(tsconfig));
         assertEquals("{\"compilerOptions\":{\"allowJs\":true}}",
                 Files.readString(tsconfig, StandardCharsets.UTF_8));
@@ -271,7 +271,7 @@ public class ProjectFilesTest {
         }
 
         String projectDir = projectFiles.projectDir();
-        Path pyrightConfig = Paths.get(projectDir, "pyrightconfig.json");
+        Path pyrightConfig = Paths.get(projectDir, "project", "pyrightconfig.json");
         assertTrue("pyrightconfig.json should be persisted", Files.exists(pyrightConfig));
         assertEquals("{\"pythonVersion\":\"3.11\"}",
                 Files.readString(pyrightConfig, StandardCharsets.UTF_8));
@@ -300,10 +300,38 @@ public class ProjectFilesTest {
         }
 
         String projectDir = projectFiles.projectDir();
-        Path pyproject = Paths.get(projectDir, "pyproject.toml");
+        Path pyproject = Paths.get(projectDir, "project", "pyproject.toml");
         assertTrue("pyproject.toml should be persisted", Files.exists(pyproject));
         assertEquals("[tool.pyright]\npythonVersion = \"3.12\"\n",
                 Files.readString(pyproject, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void testNestedConfigPathIsPreservedWhenZipHasNoWrapperDir() throws Exception {
+        Path zipPath = Files.createTempFile("nested-config", ".zip");
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+            ZipEntry configEntry = new ZipEntry("packages/app/tsconfig.json");
+            zos.putNextEntry(configEntry);
+            String configContent = "{\"include\":[\"src/**/*.ts\"]}";
+            zos.write(configContent.getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+
+            ZipEntry tsEntry = new ZipEntry("packages/app/src/main.ts");
+            zos.putNextEntry(tsEntry);
+            zos.write("export const x = 1;".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+
+        ProjectFiles projectFiles;
+        try (var in = Files.newInputStream(zipPath)) {
+            projectFiles = new ProjectFiles(in);
+        }
+
+        String projectDir = projectFiles.projectDir();
+        Path expectedConfigPath = Paths.get(projectDir, "packages", "app", "tsconfig.json");
+        Path shiftedConfigPath = Paths.get(projectDir, "app", "tsconfig.json");
+        assertTrue("nested config should be persisted at original path", Files.exists(expectedConfigPath));
+        assertFalse("config path should not be shifted", Files.exists(shiftedConfigPath));
     }
 
     @Test(expected = IllegalArgumentException.class)

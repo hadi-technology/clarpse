@@ -4,11 +4,11 @@ const readline = require('readline');
 const vm = require('vm');
 
 const ERROR_CODES = {
-  REPO_NOT_FOUND: 2001,
+  REPO_NOT_FOUND: 1004,
   FILE_NOT_FOUND: 2002,
   PARSE_FAILED: 2003,
   FILE_EXCLUDED: 2005,
-  DAEMON_ERROR: 2006
+  DAEMON_ERROR: 2004
 };
 
 const EXCLUDED_DIRS = new Set([
