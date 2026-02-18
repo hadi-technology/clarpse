@@ -223,9 +223,12 @@ final class PythonModelAssembler {
         component.setModule(moduleName);
         component.setComponentType(OOPSourceModelConstants.ComponentType.MODULE_FIELD);
         component.setName(field.name);
-        final String base = packageName == null || packageName.isEmpty()
-                ? moduleName
-                : packageName + "." + moduleName;
+        final String base;
+        if (packageName == null || packageName.isEmpty()) {
+            base = moduleName;
+        } else {
+            base = packageName + "." + moduleName;
+        }
         final String fieldUniqueName = CompilerSupport.uniqueNameForMember(base, field.name);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, fieldUniqueName));
         component.setSourceFilePath(sourcePath);
@@ -255,9 +258,13 @@ final class PythonModelAssembler {
         final Component component = new Component();
         component.setPkg(pkg);
         component.setModule(moduleName);
-        component.setComponentType(isConstructor(method)
-                ? OOPSourceModelConstants.ComponentType.CONSTRUCTOR
-                : OOPSourceModelConstants.ComponentType.METHOD);
+        final OOPSourceModelConstants.ComponentType methodType;
+        if (isConstructor(method)) {
+            methodType = OOPSourceModelConstants.ComponentType.CONSTRUCTOR;
+        } else {
+            methodType = OOPSourceModelConstants.ComponentType.METHOD;
+        }
+        component.setComponentType(methodType);
         component.setName(method.name);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, method.uniqueName));
         component.setSourceFilePath(sourcePath);
@@ -313,9 +320,13 @@ final class PythonModelAssembler {
         final Component component = new Component();
         component.setPkg(pkg);
         component.setModule(moduleName);
-        component.setComponentType(isConstructor(method)
-                ? OOPSourceModelConstants.ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT
-                : OOPSourceModelConstants.ComponentType.METHOD_PARAMETER_COMPONENT);
+        final OOPSourceModelConstants.ComponentType paramType;
+        if (isConstructor(method)) {
+            paramType = OOPSourceModelConstants.ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT;
+        } else {
+            paramType = OOPSourceModelConstants.ComponentType.METHOD_PARAMETER_COMPONENT;
+        }
+        component.setComponentType(paramType);
         component.setName(param.name);
         final String paramUniqueName = CompilerSupport.uniqueNameForMember(method.uniqueName, param.name);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, paramUniqueName));

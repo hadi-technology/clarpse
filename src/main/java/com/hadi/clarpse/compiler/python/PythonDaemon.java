@@ -194,7 +194,11 @@ public final class PythonDaemon implements AutoCloseable {
                           final List<String> warnings) {
             this.effectivePythonVersion = effectivePythonVersion;
             this.configSource = configSource;
-            this.warnings = warnings == null ? List.of() : List.copyOf(warnings);
+            if (warnings == null) {
+                this.warnings = List.of();
+            } else {
+                this.warnings = List.copyOf(warnings);
+            }
         }
 
         public String effectivePythonVersion() {

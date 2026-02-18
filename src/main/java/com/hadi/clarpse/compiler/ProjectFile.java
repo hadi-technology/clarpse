@@ -19,7 +19,11 @@ public class ProjectFile {
     private String path;
 
     public ProjectFile(final String path, final String fileContent) {
-        this.content = fileContent == null ? "" : fileContent;
+        if (fileContent == null) {
+            this.content = "";
+        } else {
+            this.content = fileContent;
+        }
         this.path = normalizePath(path);
         LOGGER.debug("Created new file with path " + this.path + ".");
     }

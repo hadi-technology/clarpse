@@ -184,7 +184,12 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             throw e;
         }
         final Package pkg = PythonModelAssembler.resolvePackage(fileModel);
-        final String moduleName = fileModel.moduleName == null ? "" : fileModel.moduleName;
+        final String moduleName;
+        if (fileModel.moduleName == null) {
+            moduleName = "";
+        } else {
+            moduleName = fileModel.moduleName;
+        }
         PythonModelAssembler.insertFileModel(pkg, moduleName, file.path(), fileModel, localModel);
         return new ParseOutcome(index, localModel, failure);
     }
@@ -195,7 +200,12 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         }
         final String propertyOverride = System.getProperty(PARALLELISM_PROP);
         final String envOverride = System.getenv(PARALLELISM_ENV);
-        final String override = propertyOverride != null ? propertyOverride : envOverride;
+        final String override;
+        if (propertyOverride != null) {
+            override = propertyOverride;
+        } else {
+            override = envOverride;
+        }
         if (override != null) {
             try {
                 final int requested = Integer.parseInt(override.trim());

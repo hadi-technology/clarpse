@@ -75,7 +75,12 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                     OOPSourceModelConstants.ComponentType.ENUM));
             CompilerSupport.classifyReferences(srcModel);
         } catch (final TypeScriptDaemonException e) {
-            final int code = e.code() == 0 ? TypeScriptDaemonException.CODE_DAEMON_ERROR : e.code();
+            final int code;
+            if (e.code() == 0) {
+                code = TypeScriptDaemonException.CODE_DAEMON_ERROR;
+            } else {
+                code = e.code();
+            }
             for (final ProjectFile file : tsFiles) {
                 compileFailures.add(new CompileFailure(file, e.getMessage(), code));
             }

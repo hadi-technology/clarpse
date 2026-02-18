@@ -13,7 +13,6 @@
   <module name="TreeWalker">
     <module name="JavadocMethod">
       <property name="severity" value="ignore"/>
-      <property name="suppressLoadErrors" value="true"/>
       <metadata name="net.sf.eclipsecs.core.lastEnabledSeverity" value="inherit"/>
     </module>
     <module name="JavadocType">

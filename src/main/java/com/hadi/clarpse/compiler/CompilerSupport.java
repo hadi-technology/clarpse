@@ -2,7 +2,6 @@ package com.hadi.clarpse.compiler;
 
 import com.hadi.clarpse.listener.ParseUtil;
 import com.hadi.clarpse.reference.ComponentReference;
-import com.hadi.clarpse.sourcemodel.Component;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 
@@ -137,7 +136,10 @@ public final class CompilerSupport {
 
     public static String uniqueNameForMember(final String ownerUniqueName, final String memberName) {
         if (ownerUniqueName == null || ownerUniqueName.isEmpty()) {
-            return memberName == null ? "" : memberName;
+            if (memberName == null) {
+                return "";
+            }
+            return memberName;
         }
         if (memberName == null || memberName.isEmpty()) {
             return ownerUniqueName;

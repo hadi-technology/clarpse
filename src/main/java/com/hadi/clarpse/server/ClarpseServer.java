@@ -46,22 +46,32 @@ public final class ClarpseServer {
     private ClarpseServer() {
     }
 
+    @SuppressWarnings({"PMD.CloseResource", "PMD.UseTryWithResources"})
     public static ServerHandle startServer(final int port, final long maxBytes) throws IOException {
         final HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         final CloseableExecutorService executor = CloseableExecutorService.newFixedThreadPool(resolveThreadCount());
-        server.setExecutor(executor.delegate());
-        server.createContext("/health", new HealthHandler());
-        server.createContext("/parse", new ParseHandler(maxBytes));
-        server.start();
-        LOGGER.info("Clarpse server listening on port {}.", server.getAddress().getPort());
-        return new ServerHandle(server, executor);
+        boolean started = false;
+        try {
+            server.setExecutor(executor.delegate());
+            server.createContext("/health", new HealthHandler());
+            server.createContext("/parse", new ParseHandler(maxBytes));
+            server.start();
+            started = true;
+            LOGGER.info("Clarpse server listening on port {}.", server.getAddress().getPort());
+            return new ServerHandle(server, executor);
+        } finally {
+            if (!started) {
+                server.stop(0);
+                executor.close();
+            }
+        }
     }
 
     public static void main(final String[] args) throws IOException {
         final int port = readIntEnv("CLARPSE_PORT", DEFAULT_PORT);
         final long maxBytes = readLongEnv("CLARPSE_MAX_BYTES", DEFAULT_MAX_BYTES);
         final CountDownLatch stopLatch = new CountDownLatch(1);
-        try (final ServerHandle serverHandle = startServer(port, maxBytes)) {
+        try (ServerHandle serverHandle = startServer(port, maxBytes)) {
             final HttpServer server = serverHandle.server();
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 try {

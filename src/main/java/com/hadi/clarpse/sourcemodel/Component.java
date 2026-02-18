@@ -201,7 +201,11 @@ public final class Component implements Serializable {
     }
 
     public void setImports(final Set<String> currentImports) {
-        imports = currentImports == null ? new LinkedHashSet<>() : new LinkedHashSet<>(currentImports);
+        if (currentImports == null) {
+            imports = new LinkedHashSet<>();
+        } else {
+            imports = new LinkedHashSet<>(currentImports);
+        }
     }
 
     public void setComponentName(final String componentName) {
