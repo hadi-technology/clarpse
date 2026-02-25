@@ -113,11 +113,12 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         }
 
         try (CloseableExecutorService closeableExecutor = CloseableExecutorService.newFixedThreadPool(parallelism)) {
-            final ExecutorService executor = closeableExecutor.delegate();
             final List<Future<List<ParseOutcome>>> futures = new ArrayList<>();
             for (final List<IndexedProjectFile> partition : partitions) {
                 if (!partition.isEmpty()) {
-                    futures.add(executor.submit(new PartitionTask(partition, persistDir, pythonVersionOverride)));
+                    futures.add(closeableExecutor.submit(new PartitionTask(partition,
+                            persistDir,
+                            pythonVersionOverride)));
                 }
             }
             final List<ParseOutcome> outcomes = new ArrayList<>();
@@ -233,8 +234,8 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             return new CloseableExecutorService(Executors.newFixedThreadPool(threads));
         }
 
-        ExecutorService delegate() {
-            return delegate;
+        <T> Future<T> submit(final Callable<T> task) {
+            return delegate.submit(task);
         }
 
         @Override
