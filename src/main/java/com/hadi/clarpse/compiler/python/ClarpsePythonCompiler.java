@@ -154,15 +154,15 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         CompileFailure failure = null;
         final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
         if (PythonModelAssembler.shouldSkipPath(diskPath)) {
-            failure = new CompileFailure(file,
-                    "Skipped excluded path.",
-                    PythonDaemonException.CODE_FILE_EXCLUDED);
-            return new ParseOutcome(index, localModel, failure);
+            return new ParseOutcome(index, localModel, null);
         }
         final PythonFileModel fileModel;
         try {
             fileModel = daemon.getFileModel(diskPath);
         } catch (final PythonDaemonException e) {
+            if (e.code() == PythonDaemonException.CODE_FILE_EXCLUDED) {
+                return new ParseOutcome(index, localModel, null);
+            }
             if (isFileLevelFailure(e)) {
                 failure = new CompileFailure(file, e.getMessage(), e.code());
                 LOGGER.warn("Python resolver failed for file {} (code={}): {}",
@@ -218,8 +218,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             return false;
         }
         return e.code() == PythonDaemonException.CODE_FILE_NOT_FOUND
-                || e.code() == PythonDaemonException.CODE_PARSE_FAILED
-                || e.code() == PythonDaemonException.CODE_FILE_EXCLUDED;
+                || e.code() == PythonDaemonException.CODE_PARSE_FAILED;
     }
 
     private static final class CloseableExecutorService implements AutoCloseable {

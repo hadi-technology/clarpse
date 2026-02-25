@@ -120,7 +120,7 @@ public class ProjectFiles implements AutoCloseable {
             File nextFile = it.next();
             if (nextFile.isFile() && Lang.langFromExtn(FilenameUtils.getExtension(nextFile.getName())) != null) {
                 this.insertFile(new ProjectFile(
-                        nextFile.getPath(),
+                        nextFile.getAbsolutePath(),
                         FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8))
                 );
             }

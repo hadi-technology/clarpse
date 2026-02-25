@@ -41,6 +41,7 @@ public class PythonLargeDirExcludeTest {
             String ignoredName = PythonTestUtil.uniqueName(".venv/lib/site-packages", "ignored0", "Ignored0");
             Assert.assertTrue(model.containsComponent(appName));
             Assert.assertFalse(model.containsComponent(ignoredName));
+            Assert.assertTrue(result.failures().isEmpty());
         } finally {
             FileUtils.deleteQuietly(root.toFile());
         }

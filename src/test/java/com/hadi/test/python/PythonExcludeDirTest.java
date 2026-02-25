@@ -15,6 +15,7 @@ public class PythonExcludeDirTest {
     public static void setup() throws Exception {
         CompileResult result = PythonTestUtil.compileFixture(FIXTURE);
         model = result.model();
+        Assert.assertTrue(result.failures().isEmpty());
     }
 
     @Test

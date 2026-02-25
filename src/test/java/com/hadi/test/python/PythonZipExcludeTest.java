@@ -42,5 +42,6 @@ public class PythonZipExcludeTest {
         String ignoredName = PythonTestUtil.uniqueName("project/.venv/lib/site-packages", "ignored", "Ignored");
         Assert.assertTrue(model.containsComponent(mainName));
         Assert.assertFalse(model.containsComponent(ignoredName));
+        Assert.assertTrue(result.failures().isEmpty());
     }
 }

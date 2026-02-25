@@ -41,8 +41,7 @@ let state = {
   serviceProvider: null,
   importResolver: null,
   program: null,
-  fileUriMap: new Map(),
-  trackedFiles: []
+  fileUriMap: new Map()
 };
 
 function writeResponse(id, result) {
@@ -139,10 +138,11 @@ function packageNameForPath(filePath, root) {
   return dir.split('/').filter(Boolean).join('.');
 }
 
-function buildModuleIndex(repoRoot, extraRoots) {
+function buildModuleIndex(repoRoot, extraRoots, filesToIndex) {
   const index = new Map();
   const extraList = Array.isArray(extraRoots) ? extraRoots : [];
-  for (const filePath of scanRepo(repoRoot)) {
+  const files = Array.isArray(filesToIndex) ? filesToIndex : scanRepo(repoRoot);
+  for (const filePath of files) {
     const repoModule = moduleNameForPath(filePath, repoRoot);
     if (repoModule) {
       index.set(repoModule, filePath);
@@ -1591,8 +1591,8 @@ async function handleInitRepo(params) {
   state.configSource = versionInfo.source || 'default';
   const extraPaths = resolveExtraPaths(normalized, versionInfo.extraPaths);
   state.extraModuleRoots = extraPaths;
-  state.trackedFiles = scanRepo(normalized);
-  state.moduleIndex = buildModuleIndex(normalized, extraPaths);
+  const scannedFiles = scanRepo(normalized);
+  state.moduleIndex = buildModuleIndex(normalized, extraPaths, scannedFiles);
   state.fileUriMap = new Map();
   state.program = null;
   state.importResolver = null;
