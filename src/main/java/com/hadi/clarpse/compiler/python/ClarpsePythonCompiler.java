@@ -112,8 +112,8 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             partitions.get(i % parallelism).add(new IndexedProjectFile(i, files.get(i)));
         }
 
-        final ExecutorService executor = Executors.newFixedThreadPool(parallelism);
-        try {
+        try (CloseableExecutorService closeableExecutor = CloseableExecutorService.newFixedThreadPool(parallelism)) {
+            final ExecutorService executor = closeableExecutor.delegate();
             final List<Future<List<ParseOutcome>>> futures = new ArrayList<>();
             for (final List<IndexedProjectFile> partition : partitions) {
                 if (!partition.isEmpty()) {
@@ -142,16 +142,6 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
                 }
             }
             return new ParseResults(model, failures);
-        } finally {
-            executor.shutdown();
-            try {
-                if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
-                    executor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                executor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
         }
     }
 
@@ -229,6 +219,36 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         return e.code() == PythonDaemonException.CODE_FILE_NOT_FOUND
                 || e.code() == PythonDaemonException.CODE_PARSE_FAILED
                 || e.code() == PythonDaemonException.CODE_FILE_EXCLUDED;
+    }
+
+    private static final class CloseableExecutorService implements AutoCloseable {
+
+        private final ExecutorService delegate;
+
+        private CloseableExecutorService(final ExecutorService delegate) {
+            this.delegate = delegate;
+        }
+
+        static CloseableExecutorService newFixedThreadPool(final int threads) {
+            return new CloseableExecutorService(Executors.newFixedThreadPool(threads));
+        }
+
+        ExecutorService delegate() {
+            return delegate;
+        }
+
+        @Override
+        public void close() {
+            delegate.shutdown();
+            try {
+                if (!delegate.awaitTermination(30, TimeUnit.SECONDS)) {
+                    delegate.shutdownNow();
+                }
+            } catch (final InterruptedException e) {
+                delegate.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private static final class ParseResults {
