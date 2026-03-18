@@ -8,11 +8,13 @@ TypeScript support is implemented as a compiler-backed integration that produces
 architecture-level model as Java, with strict correctness guarantees and explicit failure modes.
 
 # Key Assumptions
-- Node.js and the TypeScript compiler API are available at runtime.
+- Node.js is required at runtime; the TypeScript compiler API is bundled with Clarpse.
+- The daemon resolves only the bundled TypeScript runtime (no local/global fallback).
 - A valid `tsconfig.json` exists in the project tree.
 - Only `.ts`, `.tsx`, and `.d.ts` files are parsed; JavaScript is not parsed.
 - The TypeScript compiler is the single source of truth for resolution.
 - If TypeScript cannot resolve a file or program, the compiler fails explicitly (no heuristics).
+- Monorepo setups with multiple `tsconfig.json` files are supported.
 
 Supported Node.js versions: 18, 20, 22.
 
@@ -62,15 +64,25 @@ Examples:
 Package names are derived from the repo-relative directory path, consistent with Java.
 
 # Failure Contract
-If Node or the TypeScript compiler is unavailable, or the program cannot be built:
-- The compiler throws an error and no partial output is produced.
+TypeScript follows the same failure model as Python:
+- Recoverable language/runtime/config/file errors are recorded in `CompileResult.failures()` with an error code.
+- `CompileException` is reserved for non-recoverable compiler failures.
 
-If a specific file cannot be resolved (e.g., not included in `tsconfig.json`):
-- The file is recorded in `CompileResult.failures()` with a message and optional error code.
+Examples:
+- Node missing: file failures with `CODE_NODE_NOT_FOUND`.
+- No valid `tsconfig.json`: file failures with `CODE_NO_TSCONFIG`.
+- File not in program: file failure with `CODE_FILE_NOT_IN_PROGRAM`.
+- Invalid configs in a mixed repo: bad configs are skipped when at least one valid config exists.
 
-If one or more `tsconfig.json` files are invalid:
-- Invalid configs are skipped and parsing continues with valid configs.
-- If none are valid, initialization fails.
+Standardized language-agnostic codes used by TypeScript:
+- `1000` Node runtime not available.
+- `1001` Bundled TypeScript runtime not found.
+- `1002` No valid `tsconfig.json`.
+- `1003` `tsconfig.json` parse/validation error.
+- `1004` Program/repository initialization error.
+- `2001` File not in active program scope.
+- `2002` File not found on disk.
+- `2004` Daemon transport/runtime error.
 
 # Reference Resolution
 All relationships are resolved through the TypeScript `TypeChecker`:
@@ -78,22 +90,51 @@ All relationships are resolved through the TypeScript `TypeChecker`:
 - field types
 - parameter types
 - return types
+- constructor parameter properties (fields declared in constructor parameters)
 
 Targets are classified as internal or external:
 - Internal references resolve to Clarpse uniqueNames.
 - External references are marked explicitly.
 
+# Constructor Parameter Properties
+TypeScript supports parameter properties in constructors, which declare and initialize fields in one step:
+```typescript
+class Example {
+  constructor(public name: string, private age: number) {}
+}
+```
+These are properly modeled as fields with their corresponding visibility modifiers, enabling accurate architectural analysis.
+
 # Efficiency Notes
 - Programs are built once per `tsconfig.json` and reused for all files in that config.
 - A file->program map is built during daemon initialization for faster lookups.
 - The daemon is single-threaded; Java parsing can run in parallel.
+- Monorepo support: Multiple `tsconfig.json` files are handled by building separate programs and correctly scoping files to their appropriate config.
 
 # Core Classes and Locations
 - Compiler: `src/main/java/com/hadi/clarpse/compiler/typescript/ClarpseTypeScriptCompiler.java`
+- Model assembler: `src/main/java/com/hadi/clarpse/compiler/typescript/TypeScriptModelAssembler.java`
 - Daemon bridge: `src/main/java/com/hadi/clarpse/compiler/typescript/TypeScriptDaemon.java`
 - Daemon runtime: `src/main/resources/typescript/daemon.js`
 - TypeScript models: `src/main/java/com/hadi/clarpse/compiler/typescript/model/*`
 - Compile failures: `src/main/java/com/hadi/clarpse/compiler/CompileFailure.java`
+
+# Additional Features
+## Monorepo Support
+Clarpse supports monorepo setups with multiple `tsconfig.json` files:
+- Each `tsconfig.json` creates a separate TypeScript program instance.
+- Files are correctly scoped to their appropriate program based on `tsconfig` references.
+- Project references (`composite: true`, `references` arrays) are properly handled.
+- Files not in any valid program scope are reported with appropriate error codes.
+
+## Constructor Parameter Properties
+TypeScript's parameter properties are fully supported:
+- Fields declared in constructor parameters are extracted as separate field components.
+- Visibility modifiers (public/private/protected/readonly) are preserved.
+- This enables accurate dependency analysis for classes using this TypeScript feature.
+
+## Code Fragment Support
+Method and function signatures are captured as code fragments for display and analysis purposes.
 
 # Non-Goals
 - No heuristic or string-based fallback resolution; symbol/type resolution is compiler-backed only.

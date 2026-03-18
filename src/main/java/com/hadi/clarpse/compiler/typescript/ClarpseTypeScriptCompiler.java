@@ -1,40 +1,31 @@
 package com.hadi.clarpse.compiler.typescript;
 
 import com.hadi.clarpse.compiler.ClarpseCompiler;
-import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileException;
+import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
+import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
-import com.hadi.clarpse.compiler.typescript.model.TypeScriptComponentModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptFileModel;
-import com.hadi.clarpse.compiler.typescript.model.TypeScriptReferenceModel;
-import com.hadi.clarpse.compiler.typescript.model.TypeScriptTargetModel;
-import com.hadi.clarpse.listener.ParseUtil;
-import com.hadi.clarpse.reference.ComponentReference;
-import com.hadi.clarpse.reference.SimpleTypeReference;
-import com.hadi.clarpse.reference.TypeExtensionReference;
-import com.hadi.clarpse.reference.TypeImplementationReference;
-import com.hadi.clarpse.sourcemodel.Component;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.Package;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.commons.io.FileUtils;
 
-import java.io.File;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Stack;
 
 /**
- * TypeScript compiler stub that enforces the Node-backed failure contract.
+ * TypeScript compiler backed by the Node daemon bridge.
  */
 public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
 
@@ -51,41 +42,60 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         }
 
         if (!NodeRuntime.isNodeAvailable()) {
-            throw new CompileException("Node.js not found. TypeScript parsing requires Node.js.");
+            for (final ProjectFile file : tsFiles) {
+                compileFailures.add(new CompileFailure(
+                        file,
+                        "Node.js not found. TypeScript parsing requires Node.js.",
+                        TypeScriptDaemonException.CODE_NODE_NOT_FOUND));
+            }
+            return new CompileResult(srcModel, compileFailures);
         }
 
-        String persistDir = null;
+        final String persistDir = projectFiles.projectDir();
         try (TypeScriptDaemon daemon = new TypeScriptDaemon()) {
-            persistDir = projectFiles.projectDir();
             daemon.start();
-            daemon.initRepo(persistDir);
+            final TypeScriptDaemon.InitResult initResult = daemon.initRepo(persistDir);
+            addInvalidConfigFailures(initResult, compileFailures, persistDir);
             for (final ProjectFile file : tsFiles) {
-                final String diskPath = resolveFileOnDisk(persistDir, file.path());
+                final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
                 final TypeScriptFileModel fileModel;
                 try {
                     fileModel = daemon.getFileModel(diskPath);
                 } catch (final TypeScriptDaemonException e) {
+                    if (e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM) {
+                        LOGGER.debug("Skipping TypeScript file outside program scope: {}", file.path());
+                        continue;
+                    }
                     if (isFileLevelFailure(e)) {
                         compileFailures.add(new CompileFailure(file, e.getMessage(), e.code()));
-                        LOGGER.warn("TypeScript resolver failed for file " + file.path()
-                                + " (code=" + e.code() + ").", e);
+                        LOGGER.warn("TypeScript resolver failed for file {} (code={}).",
+                                file.path(), e.code(), e);
                         continue;
                     }
                     throw new CompileException("TypeScript resolver failed: " + e.getMessage(), e);
                 }
-                final Package pkg = resolvePackage(persistDir, diskPath);
-                final String moduleName = moduleNameForFile(diskPath);
-                for (final TypeScriptComponentModel declaration : fileModel.declarations) {
-                    insertComponentTree(pkg, moduleName, file.path(), persistDir, declaration, srcModel);
-                }
+                final Package pkg = TypeScriptModelAssembler.resolvePackage(persistDir, diskPath);
+                final String moduleName = CompilerSupport.moduleNameForFile(diskPath);
+                TypeScriptModelAssembler.insertFileModel(pkg, moduleName, file.path(), persistDir, fileModel, srcModel);
             }
-            classifyClassCyclo(srcModel);
-            classifyReferences(srcModel);
+            CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(
+                    OOPSourceModelConstants.ComponentType.CLASS,
+                    OOPSourceModelConstants.ComponentType.ENUM));
+            CompilerSupport.classifyReferences(srcModel);
         } catch (final TypeScriptDaemonException e) {
-            throw new CompileException("TypeScript resolver failed: " + e.getMessage(), e);
+            final int code;
+            if (e.code() == 0) {
+                code = TypeScriptDaemonException.CODE_DAEMON_ERROR;
+            } else {
+                code = e.code();
+            }
+            for (final ProjectFile file : tsFiles) {
+                compileFailures.add(new CompileFailure(file, e.getMessage(), code));
+            }
+            LOGGER.warn("TypeScript resolver initialization failed (code={}).", code, e);
         } finally {
-            if (persistDir != null && !persistDir.isEmpty() && projectFiles.isTempProjectDir()) {
-                FileUtils.deleteQuietly(new File(persistDir));
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("ProjectFiles cleanup handled by caller.");
             }
         }
         return new CompileResult(srcModel, compileFailures);
@@ -95,313 +105,38 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         if (e == null) {
             return false;
         }
-        return e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM
-                || e.code() == TypeScriptDaemonException.CODE_FILE_NOT_FOUND;
+        return e.code() == TypeScriptDaemonException.CODE_FILE_NOT_FOUND;
     }
 
-    private static void insertComponentTree(final Package pkg,
-                                            final String moduleName,
-                                            final String sourcePath,
-                                            final String repoRoot,
-                                            final TypeScriptComponentModel declaration,
-                                            final OOPSourceCodeModel srcModel) {
-        final Stack<Component> stack = new Stack<>();
-        insertComponentTree(pkg, moduleName, sourcePath, repoRoot, declaration, stack, srcModel);
-    }
-
-    private static void insertComponentTree(final Package pkg,
-                                            final String moduleName,
-                                            final String sourcePath,
-                                            final String repoRoot,
-                                            final TypeScriptComponentModel declaration,
-                                            final Stack<Component> stack,
-                                            final OOPSourceCodeModel srcModel) {
-        final Component component = buildComponent(pkg, moduleName, sourcePath, repoRoot, declaration, stack);
-        if (component == null) {
-            return;
-        }
-        ParseUtil.pointParentsToGivenChild(component, stack);
-        stack.push(component);
-        for (final TypeScriptComponentModel member : declaration.members) {
-            insertComponentTree(pkg, moduleName, sourcePath, repoRoot, member, stack, srcModel);
-        }
-        if (component.componentType().isMethodComponent() && declaration.cyclo > 0) {
-            component.setCyclo(declaration.cyclo);
-        }
-        srcModel.insertComponent(component);
-        stack.pop();
-        ParseUtil.copyRefsToParents(component, stack);
-    }
-
-    private static Component buildComponent(final Package pkg,
-                                            final String moduleName,
-                                            final String sourcePath,
-                                            final String repoRoot,
-                                            final TypeScriptComponentModel declaration,
-                                            final Stack<Component> stack) {
-        Component parent = null;
-        if (!stack.isEmpty()) {
-            parent = stack.peek();
-        }
-        final OOPSourceModelConstants.ComponentType componentType =
-                mapComponentType(declaration.kind, parent);
-        if (componentType == null || declaration.name == null || declaration.name.isEmpty()) {
-            return null;
-        }
-        final Component component = new Component();
-        component.setPkg(pkg);
-        component.setComponentType(componentType);
-        component.setName(declaration.name);
-        component.setComponentName(generateComponentName(moduleName, declaration, componentType, stack));
-        component.setSourceFilePath(sourcePath);
-        if (declaration.jsDoc != null && !declaration.jsDoc.isEmpty()) {
-            component.setComment(declaration.jsDoc);
-        }
-        if (!declaration.modifiers.isEmpty()) {
-            component.setAccessModifiers(declaration.modifiers);
-        }
-        final String codeFragment = buildCodeFragment(declaration, componentType);
-        if (codeFragment != null && !codeFragment.isEmpty()) {
-            component.setCodeFragment(codeFragment);
-            component.setCodeHash(codeFragment.hashCode());
-        }
-        attachReferences(component, declaration, repoRoot);
-        return component;
-    }
-
-    private static String generateComponentName(final String moduleName,
-                                                final TypeScriptComponentModel declaration,
-                                                final OOPSourceModelConstants.ComponentType componentType,
-                                                final Stack<Component> stack) {
-        String identifier = declaration.name;
-        if (componentType.isMethodComponent()) {
-            if ("function".equals(declaration.kind) && stack.isEmpty()) {
-                identifier = declaration.name;
-            } else if (declaration.signature != null && !declaration.signature.isEmpty()) {
-                identifier = declaration.signature;
-            }
-        }
-        if (!stack.isEmpty()) {
-            return stack.peek().componentName() + "." + identifier;
-        }
-        return moduleName + "." + identifier;
-    }
-
-    private static String buildCodeFragment(final TypeScriptComponentModel declaration,
-                                            final OOPSourceModelConstants.ComponentType componentType) {
-        if (componentType.isMethodComponent()) {
-            String fragment = declaration.signature;
-            if (fragment == null || fragment.isEmpty()) {
-                fragment = declaration.name;
-            }
-            if (declaration.returnType != null && !declaration.returnType.isEmpty()
-                    && !"void".equals(declaration.returnType)) {
-                fragment += " : " + declaration.returnType;
-            }
-            return fragment;
-        }
-        if (componentType == OOPSourceModelConstants.ComponentType.FIELD
-                || componentType == OOPSourceModelConstants.ComponentType.LOCAL) {
-            if (declaration.type == null || declaration.type.isEmpty()) {
-                return null;
-            }
-            return declaration.name + " : " + declaration.type;
-        }
-        if (componentType == OOPSourceModelConstants.ComponentType.METHOD_PARAMETER_COMPONENT
-                || componentType == OOPSourceModelConstants.ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT) {
-            return declaration.type;
-        }
-        if ((componentType == OOPSourceModelConstants.ComponentType.CLASS
-                || componentType == OOPSourceModelConstants.ComponentType.INTERFACE)
-                && declaration.signature != null) {
-            return declaration.signature;
-        }
-        return null;
-    }
-
-    private static OOPSourceModelConstants.ComponentType mapComponentType(final String kind,
-                                                                          final Component parent) {
-        if (kind == null) {
-            return null;
-        }
-        switch (kind) {
-            case "class":
-                return OOPSourceModelConstants.ComponentType.CLASS;
-            case "interface":
-                return OOPSourceModelConstants.ComponentType.INTERFACE;
-            case "enum":
-                return OOPSourceModelConstants.ComponentType.ENUM;
-            case "function":
-                return OOPSourceModelConstants.ComponentType.FUNCTION;
-            case "method":
-                return OOPSourceModelConstants.ComponentType.METHOD;
-            case "constructor":
-                return OOPSourceModelConstants.ComponentType.CONSTRUCTOR;
-            case "field":
-                return OOPSourceModelConstants.ComponentType.FIELD;
-            case "enumMember":
-                return OOPSourceModelConstants.ComponentType.ENUM_CONSTANT;
-            case "parameter":
-                if (parent != null && parent.componentType() == OOPSourceModelConstants.ComponentType.CONSTRUCTOR) {
-                    return OOPSourceModelConstants.ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT;
-                }
-                return OOPSourceModelConstants.ComponentType.METHOD_PARAMETER_COMPONENT;
-            case "local":
-                return OOPSourceModelConstants.ComponentType.LOCAL;
-            default:
-                return null;
+    private static void addInvalidConfigFailures(final TypeScriptDaemon.InitResult initResult,
+                                                 final Set<CompileFailure> compileFailures,
+                                                 final String persistDir) {
+        for (final TypeScriptDaemon.InvalidConfig invalidConfig : initResult.invalidConfigs()) {
+            final String normalizedPath = relativeProjectPath(persistDir, invalidConfig.configPath());
+            final String message = switch (invalidConfig.error()) {
+                case "PROGRAM_CREATE_FAILED" -> "PROGRAM_CREATE_FAILED";
+                case "CONFIG_READ_FAILED", "CONFIG_PARSE_FAILED" -> "CONFIG_PARSE_FAILED";
+                default -> "CONFIG_INVALID";
+            };
+            final Integer code = switch (invalidConfig.error()) {
+                case "PROGRAM_CREATE_FAILED" -> TypeScriptDaemonException.CODE_PROGRAM_CREATE_FAILED;
+                case "CONFIG_READ_FAILED", "CONFIG_PARSE_FAILED" -> TypeScriptDaemonException.CODE_CONFIG_PARSE_FAILED;
+                default -> FailureCode.CONFIG_INVALID;
+            };
+            compileFailures.add(new CompileFailure(new ProjectFile(normalizedPath, ""), message, code));
         }
     }
 
-    private static void classifyClassCyclo(final OOPSourceCodeModel srcModel) {
-        srcModel.components().forEach(component -> {
-            if (component.componentType() == OOPSourceModelConstants.ComponentType.CLASS
-                    || component.componentType() == OOPSourceModelConstants.ComponentType.ENUM) {
-                component.setCyclo(ParseUtil.calculateClassCyclo(component, srcModel));
-            }
-        });
-    }
-
-    private static void attachReferences(final Component component,
-                                         final TypeScriptComponentModel declaration,
-                                         final String repoRoot) {
-        if (declaration.references == null) {
-            return;
+    private static String relativeProjectPath(final String persistDir, final String absolutePath) {
+        if (absolutePath == null || absolutePath.isEmpty()) {
+            return "/";
         }
-        for (final TypeScriptReferenceModel reference : declaration.references) {
-            final ComponentReference componentReference = buildComponentReference(reference, repoRoot);
-            if (componentReference != null
-                    && !componentReference.invokedComponent().equals(component.uniqueName())) {
-                component.insertCmpRef(componentReference);
-            }
-        }
-    }
-
-    private static ComponentReference buildComponentReference(final TypeScriptReferenceModel reference,
-                                                              final String repoRoot) {
-        final String invoked = resolveInvokedComponent(reference, repoRoot);
-        if (invoked == null || invoked.isEmpty()) {
-            return null;
-        }
-        if ("extends".equals(reference.kind)) {
-            return new TypeExtensionReference(invoked);
-        }
-        if ("implements".equals(reference.kind)) {
-            return new TypeImplementationReference(invoked);
-        }
-        return new SimpleTypeReference(invoked);
-    }
-
-    private static String resolveInvokedComponent(final TypeScriptReferenceModel reference,
-                                                  final String repoRoot) {
-        if (reference == null) {
-            return null;
-        }
-        if (!reference.external && reference.target != null) {
-            return resolveUniqueName(repoRoot, reference.target);
-        }
-        return reference.displayName;
-    }
-
-    private static String resolveUniqueName(final String repoRoot, final TypeScriptTargetModel target) {
-        if (target == null || target.filePath == null || target.symbolName == null) {
-            return null;
-        }
-        final String pkgPath = resolvePackagePath(repoRoot, target.filePath);
-        final String moduleName = moduleNameForFile(target.filePath);
-        if (pkgPath.isEmpty()) {
-            return moduleName + "." + target.symbolName;
-        }
-        return pkgPath.replace('/', '.')
-                + "." + moduleName + "." + target.symbolName;
-    }
-
-    private static String resolvePackagePath(final String repoRoot, final String filePath) {
-        if (filePath == null) {
-            return "";
-        }
-        Path file = Paths.get(filePath).toAbsolutePath();
-        Path parent = file.getParent();
-        if (parent == null) {
-            return "";
-        }
-        String pkgPath;
         try {
-            Path root = Paths.get(repoRoot).toAbsolutePath();
-            pkgPath = root.relativize(parent).toString();
-        } catch (final Exception e) {
-            pkgPath = parent.toString();
+            final Path projectRoot = Paths.get(persistDir).toAbsolutePath().normalize();
+            final Path configPath = Paths.get(absolutePath).toAbsolutePath().normalize();
+            return "/" + projectRoot.relativize(configPath).toString().replace('\\', '/');
+        } catch (final Exception ignored) {
+            return absolutePath.replace('\\', '/');
         }
-        pkgPath = pkgPath.replace(File.separatorChar, '/');
-        if (pkgPath.startsWith("/")) {
-            pkgPath = pkgPath.substring(1);
-        }
-        return pkgPath;
-    }
-
-    private static void classifyReferences(final OOPSourceCodeModel srcModel) {
-        srcModel.components().forEach(component -> {
-            final Set<ComponentReference> internalReferences = new HashSet<>();
-            final Set<ComponentReference> externalReferences = new HashSet<>();
-            component.references().forEach(componentReference -> {
-                final boolean isInternal = srcModel.containsComponent(componentReference.invokedComponent());
-                componentReference.setExternal(!isInternal);
-                if (isInternal) {
-                    internalReferences.add(componentReference);
-                } else {
-                    externalReferences.add(componentReference);
-                }
-            });
-            component.setReferenceClassification(internalReferences, externalReferences);
-        });
-    }
-
-    private static String resolveFileOnDisk(final String repoRoot, final String originalPath) {
-        if (originalPath == null || originalPath.isEmpty()) {
-            return originalPath;
-        }
-        if (repoRoot != null && !repoRoot.isEmpty() && originalPath.startsWith(repoRoot)) {
-            return originalPath;
-        }
-        if (originalPath.startsWith(File.separator)) {
-            return repoRoot + originalPath;
-        }
-        return repoRoot + File.separator + originalPath;
-    }
-
-    private static Package resolvePackage(final String repoRoot, final String filePath) {
-        if (filePath == null) {
-            return new Package("", "");
-        }
-        Path file = Paths.get(filePath).toAbsolutePath();
-        Path parent = file.getParent();
-        if (parent == null) {
-            return new Package("", "");
-        }
-        String pkgPath;
-        try {
-            Path root = Paths.get(repoRoot).toAbsolutePath();
-            Path relative = root.relativize(parent);
-            pkgPath = relative.toString();
-        } catch (final Exception e) {
-            pkgPath = parent.toString();
-        }
-        pkgPath = pkgPath.replace(File.separatorChar, '/');
-        if (pkgPath.startsWith("/")) {
-            pkgPath = pkgPath.substring(1);
-        }
-        return new Package(pkgPath, pkgPath);
-    }
-
-    private static String moduleNameForFile(final String filePath) {
-        if (filePath == null || filePath.isEmpty()) {
-            return "";
-        }
-        String fileName = Paths.get(filePath).getFileName().toString();
-        int extIndex = fileName.lastIndexOf('.');
-        if (extIndex > 0) {
-            fileName = fileName.substring(0, extIndex);
-        }
-        return fileName;
     }
 }

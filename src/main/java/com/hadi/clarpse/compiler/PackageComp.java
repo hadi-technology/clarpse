@@ -5,6 +5,9 @@ import com.hadi.clarpse.sourcemodel.Package;
 import java.io.Serializable;
 import java.util.Comparator;
 
+/**
+ * Comparator that orders packages by descending path depth.
+ */
 public class PackageComp implements Comparator<Package>, Serializable {
     @Override
     public int compare(Package o1, Package o2) {

@@ -30,6 +30,15 @@ function writeError(id, code, message, data) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error }) + "\n");
 }
 
+function stableImplementationHash(text) {
+  const normalized = String(text || "").replace(/\r\n/g, "\n").trim();
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash = ((hash * 31) + normalized.charCodeAt(i)) | 0;
+  }
+  return hash;
+}
+
 function loadTypeScript(repoRoot) {
   function tryResolve(resolver) {
     try {
@@ -43,45 +52,12 @@ function loadTypeScript(repoRoot) {
     return null;
   }
 
-  const repoResolved = tryResolve(() => require.resolve("typescript", { paths: [repoRoot] }));
-  if (repoResolved) {
-    return repoResolved;
+  // Use only the bundled TypeScript runtime that ships with Clarpse.
+  const bundledResolved = tryResolve(() => require.resolve("typescript", { paths: [__dirname] }));
+  if (bundledResolved) {
+    return bundledResolved;
   }
-
-  const searchPaths = [];
-  if (process.env.NODE_PATH) {
-    searchPaths.push(...process.env.NODE_PATH.split(path.delimiter));
-  }
-  try {
-    const moduleInfo = require("module");
-    if (moduleInfo && Array.isArray(moduleInfo.globalPaths)) {
-      searchPaths.push(...moduleInfo.globalPaths);
-    }
-  } catch (err) {
-    // ignore module resolution failures
-  }
-
-  const visited = new Set();
-  for (const candidate of searchPaths) {
-    if (!candidate || visited.has(candidate)) {
-      continue;
-    }
-    visited.add(candidate);
-    const direct = tryResolve(() => require.resolve(path.join(candidate, "typescript")));
-    if (direct) {
-      return direct;
-    }
-    const asRoot = tryResolve(() => require.resolve("typescript", { paths: [candidate] }));
-    if (asRoot) {
-      return asRoot;
-    }
-  }
-
-  try {
-    return require("typescript");
-  } catch (err) {
-    return null;
-  }
+  return null;
 }
 
 function findTsconfigs(root) {
@@ -270,7 +246,8 @@ function getReturnType(checker, node) {
   if (!signature) {
     return "";
   }
-  return checker.typeToString(checker.getReturnTypeOfSignature(signature));
+  const returnType = checker.getReturnTypeOfSignature(signature);
+  return normalizeReturnType(returnType, checker);
 }
 
 function getReturnTypeObject(checker, node) {
@@ -282,6 +259,55 @@ function getReturnTypeObject(checker, node) {
     return null;
   }
   return checker.getReturnTypeOfSignature(signature);
+}
+
+function normalizeReturnType(type, checker) {
+  if (!type || !checker || !state.ts) {
+    return "";
+  }
+  const ts = state.ts;
+  const flags = type.flags || 0;
+
+  if (flags & ts.TypeFlags.StringLiteral) {
+    return "string";
+  }
+  if (flags & ts.TypeFlags.NumberLiteral) {
+    return "number";
+  }
+  if (flags & ts.TypeFlags.BooleanLiteral) {
+    return "boolean";
+  }
+  if (flags & ts.TypeFlags.BigIntLiteral) {
+    return "bigint";
+  }
+
+  if (type.isUnion && type.isUnion() && Array.isArray(type.types)) {
+    const parts = [];
+    for (const subType of type.types) {
+      const normalized = normalizeReturnType(subType, checker);
+      if (!normalized) {
+        continue;
+      }
+      parts.push(normalized);
+    }
+    const unique = Array.from(new Set(parts));
+    return unique.join(" | ");
+  }
+
+  if (type.isIntersection && type.isIntersection() && Array.isArray(type.types)) {
+    const parts = [];
+    for (const subType of type.types) {
+      const normalized = normalizeReturnType(subType, checker);
+      if (!normalized) {
+        continue;
+      }
+      parts.push(normalized);
+    }
+    const unique = Array.from(new Set(parts));
+    return unique.join(" & ");
+  }
+
+  return checker.typeToString(type);
 }
 
 function buildSignature(name, parameters, checker) {
@@ -542,6 +568,27 @@ function buildLocalVariableModel(declaration, checker) {
   };
 }
 
+function buildTopLevelVariableModel(declaration, statement, checker) {
+  const model = buildLocalVariableModel(declaration, checker);
+  if (!model) {
+    return null;
+  }
+  model.kind = "moduleField";
+  if (statement) {
+    model.modifiers = collectModifiers(state.ts, statement).concat(model.modifiers || []);
+    if (statement.declarationList) {
+      const flags = statement.declarationList.flags;
+      if (!(flags & state.ts.NodeFlags.Const) && !(flags & state.ts.NodeFlags.Let)) {
+        model.modifiers.push("var");
+      }
+    }
+    if (!model.jsDoc || !model.jsDoc.length) {
+      model.jsDoc = getJsDoc(statement);
+    }
+  }
+  return model;
+}
+
 function collectBodyDetails(body, checker) {
   const references = [];
   const locals = [];
@@ -645,6 +692,7 @@ function buildMethodModel(node, checker, kindLabel) {
     kind: kindLabel,
     name,
     signature,
+    implementationHash: stableImplementationHash(node.body ? node.body.getText() : ""),
     returnType: kindLabel === "constructor" ? "" : getReturnType(checker, node),
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
@@ -667,6 +715,7 @@ function buildAccessorModel(node, checker, accessorKind) {
     kind: "method",
     name,
     signature,
+    implementationHash: stableImplementationHash(node.body ? node.body.getText() : ""),
     returnType: accessorKind === "set" ? "" : getReturnType(checker, node),
     modifiers,
     jsDoc: getJsDoc(node),
@@ -787,6 +836,16 @@ function collectTopLevelDeclarations(ts, sourceFile, checker) {
       if (model) {
         declarations.push(model);
       }
+      return;
+    }
+    if (ts.isVariableStatement(node)) {
+      const list = node.declarationList;
+      for (const declaration of list.declarations) {
+        const model = buildTopLevelVariableModel(declaration, node, checker);
+        if (model) {
+          declarations.push(model);
+        }
+      }
     }
   });
   return declarations.filter(Boolean);
@@ -850,7 +909,8 @@ async function handleInitRepo(params) {
     tsVersion: ts.version || "",
     configCount: programs.length,
     fileCount,
-    invalidConfigCount: invalidConfigs.length
+    invalidConfigCount: invalidConfigs.length,
+    invalidConfigs
   };
 }
 

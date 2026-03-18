@@ -1,6 +1,7 @@
 package com.hadi.clarpse.compiler;
 
 import com.hadi.clarpse.compiler.typescript.ClarpseTypeScriptCompiler;
+import com.hadi.clarpse.compiler.python.ClarpsePythonCompiler;
 
 /**
  * Factory to retrieve appropriate parsing tool for our projects.
@@ -14,6 +15,8 @@ public class CompilerFactory {
             return new ClarpseJavaCompiler();
             case TYPESCRIPT:
             return new ClarpseTypeScriptCompiler();
+            case PYTHON:
+            return new ClarpsePythonCompiler();
         default:
             throw new CompileException("Could not find parsing tool for: " + language.value());
         }

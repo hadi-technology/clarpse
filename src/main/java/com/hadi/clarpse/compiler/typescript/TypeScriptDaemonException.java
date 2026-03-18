@@ -1,13 +1,20 @@
 package com.hadi.clarpse.compiler.typescript;
 
+import com.hadi.clarpse.compiler.FailureCode;
+
+/**
+ * Exception type for TypeScript daemon initialization and parse failures.
+ */
 public class TypeScriptDaemonException extends Exception {
 
-    public static final int CODE_TYPESCRIPT_NOT_FOUND = 1001;
-    public static final int CODE_NO_TSCONFIG = 1002;
-    public static final int CODE_CONFIG_PARSE_FAILED = 1003;
-    public static final int CODE_PROGRAM_CREATE_FAILED = 1004;
-    public static final int CODE_FILE_NOT_IN_PROGRAM = 2001;
-    public static final int CODE_FILE_NOT_FOUND = 2002;
+    public static final int CODE_NODE_NOT_FOUND = FailureCode.NODE_RUNTIME_NOT_FOUND;
+    public static final int CODE_TYPESCRIPT_NOT_FOUND = FailureCode.LANGUAGE_RUNTIME_NOT_FOUND;
+    public static final int CODE_NO_TSCONFIG = FailureCode.CONFIG_NOT_FOUND;
+    public static final int CODE_CONFIG_PARSE_FAILED = FailureCode.CONFIG_INVALID;
+    public static final int CODE_PROGRAM_CREATE_FAILED = FailureCode.PROGRAM_INIT_FAILED;
+    public static final int CODE_FILE_NOT_IN_PROGRAM = FailureCode.FILE_OUT_OF_SCOPE;
+    public static final int CODE_FILE_NOT_FOUND = FailureCode.FILE_NOT_FOUND;
+    public static final int CODE_DAEMON_ERROR = FailureCode.DAEMON_ERROR;
 
     private final int code;
 

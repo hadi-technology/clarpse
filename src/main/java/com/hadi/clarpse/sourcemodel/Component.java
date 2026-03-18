@@ -14,6 +14,7 @@ import org.apache.logging.log4j.Logger;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -40,6 +41,7 @@ public final class Component implements Serializable {
     private String name;
     private String comment = "";
     private String sourceFile;
+    private String module;
     @JsonInclude(Include.NON_EMPTY)
     private Set<String> imports = new HashSet<>();
     @JsonInclude(Include.NON_EMPTY)
@@ -53,32 +55,29 @@ public final class Component implements Serializable {
     private int codeHash;
     private String codeFragment;
 
-    public Component(final Component component) throws Exception {
-        modifiers = component.modifiers();
-        type = component.componentType();
-        codeFragment = component.codeFragment();
-        imports = component.imports();
-        componentName = component.componentName();
-        pkg = component.pkg();
-        value = component.value();
-        sourceFile = component.sourceFile();
-        comment = component.comment();
-        codeHash = component.codeHash();
-        cyclo = component.cyclo();
-        name = component.name();
-        children.addAll(component.children);
-        for (final ComponentReference ref : component.references()) {
-            final ComponentReference clonedRef = (ComponentReference) ref.clone();
-            clonedRef.setExternal(ref.isExternal());
-            this.insertCmpRef(clonedRef);
-        }
+    public Component(final Component component) {
+        this.modifiers = new LinkedHashSet<>(component.modifiers);
+        this.type = component.type;
+        this.codeFragment = component.codeFragment;
+        this.imports = new LinkedHashSet<>(component.imports);
+        this.componentName = component.componentName;
+        this.pkg = component.pkg;
+        this.value = component.value;
+        this.sourceFile = component.sourceFile;
+        this.module = component.module;
+        this.comment = component.comment;
+        this.codeHash = component.codeHash;
+        this.cyclo = component.cyclo;
+        this.name = component.name;
+        this.children.addAll(component.children);
+        component.references().forEach(this::insertCmpRefCopy);
     }
 
     public Component() {
     }
 
     public List<String> children() {
-        return children;
+        return Collections.unmodifiableList(new ArrayList<>(children));
     }
 
     public String uniqueName() {
@@ -133,11 +132,11 @@ public final class Component implements Serializable {
     }
 
     public Set<ComponentReference> internalDependencies() {
-        return internalReferences;
+        return Collections.unmodifiableSet(new LinkedHashSet<>(internalReferences));
     }
 
     public Set<ComponentReference> externalDependencies() {
-        return externalReferences;
+        return Collections.unmodifiableSet(new LinkedHashSet<>(externalReferences));
     }
 
     public void insertCmpRef(final ComponentReference ref) {
@@ -150,11 +149,19 @@ public final class Component implements Serializable {
     }
 
     public Set<String> imports() {
-        return imports;
+        return Collections.unmodifiableSet(new LinkedHashSet<>(imports));
     }
 
     public String componentName() {
         return componentName;
+    }
+
+    public String module() {
+        return module;
+    }
+
+    public void setModule(final String module) {
+        this.module = module;
     }
 
     public void setCodeFragment(final String componentDeclarationTypeFragment) {
@@ -163,20 +170,42 @@ public final class Component implements Serializable {
 
     public void setExternalTypeReferences(final Set<ComponentReference> externalReferences) {
         internalReferences = new LinkedHashSet<>();
-        this.externalReferences = new LinkedHashSet<>(externalReferences);
-        this.externalReferences.forEach(ref -> ref.setExternal(true));
+        this.externalReferences = new LinkedHashSet<>();
+        if (externalReferences != null) {
+            externalReferences.forEach(ref -> {
+                final ComponentReference copiedRef = cloneReference(ref);
+                copiedRef.setExternal(true);
+                this.externalReferences.add(copiedRef);
+            });
+        }
     }
 
     public void setReferenceClassification(final Set<ComponentReference> internalReferences,
                                            final Set<ComponentReference> externalReferences) {
-        internalReferences.forEach(ref -> ref.setExternal(false));
-        externalReferences.forEach(ref -> ref.setExternal(true));
-        this.internalReferences = internalReferences;
-        this.externalReferences = externalReferences;
+        this.internalReferences = new LinkedHashSet<>();
+        this.externalReferences = new LinkedHashSet<>();
+        if (internalReferences != null) {
+            internalReferences.forEach(ref -> {
+                final ComponentReference copiedRef = cloneReference(ref);
+                copiedRef.setExternal(false);
+                this.internalReferences.add(copiedRef);
+            });
+        }
+        if (externalReferences != null) {
+            externalReferences.forEach(ref -> {
+                final ComponentReference copiedRef = cloneReference(ref);
+                copiedRef.setExternal(true);
+                this.externalReferences.add(copiedRef);
+            });
+        }
     }
 
     public void setImports(final Set<String> currentImports) {
-        imports = currentImports;
+        if (currentImports == null) {
+            imports = new LinkedHashSet<>();
+        } else {
+            imports = new LinkedHashSet<>(currentImports);
+        }
     }
 
     public void setComponentName(final String componentName) {
@@ -184,7 +213,7 @@ public final class Component implements Serializable {
     }
 
     public Set<String> modifiers() {
-        return modifiers;
+        return Collections.unmodifiableSet(new LinkedHashSet<>(modifiers));
     }
 
     public void insertAccessModifier(final String modifier) {
@@ -300,5 +329,22 @@ public final class Component implements Serializable {
 
     public void setCodeHash(int codeHash) {
         this.codeHash = codeHash;
+    }
+
+    private void insertCmpRefCopy(final ComponentReference reference) {
+        if (reference == null) {
+            return;
+        }
+        final ComponentReference clonedRef = cloneReference(reference);
+        clonedRef.setExternal(reference.isExternal());
+        this.insertCmpRef(clonedRef);
+    }
+
+    private static ComponentReference cloneReference(final ComponentReference reference) {
+        try {
+            return (ComponentReference) reference.clone();
+        } catch (CloneNotSupportedException e) {
+            throw new IllegalStateException("Failed to clone component reference.", e);
+        }
     }
 }

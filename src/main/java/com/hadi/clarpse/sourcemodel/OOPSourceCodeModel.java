@@ -21,13 +21,13 @@ public class OOPSourceCodeModel implements Serializable {
 
     private static final long serialVersionUID = 1L;
     private static final Logger LOGGER = LogManager.getLogger(OOPSourceCodeModel.class);
-    private Map<String, Component> components = new HashMap<>();
+    private final Map<String, Component> components = new HashMap<>();
 
     public OOPSourceCodeModel() {
     }
 
     public OOPSourceCodeModel(Map<String, Component> components) {
-        this.components = new HashMap<String, Component>(components);
+        insertComponents(components);
     }
 
     private Map<String, Component> getComponents() {
@@ -46,7 +46,8 @@ public class OOPSourceCodeModel implements Serializable {
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("Inserted component {}.", component);
         }
-        components.put(component.uniqueName(), component);
+        final Component cloned = new Component(component);
+        components.put(cloned.uniqueName(), cloned);
     }
 
     public boolean containsComponent(final String componentName) {
@@ -54,12 +55,21 @@ public class OOPSourceCodeModel implements Serializable {
     }
 
     public Optional<Component> getComponent(final String componentName) {
-        return Optional.ofNullable(this.getComponents().get(componentName));
+        final Component component = this.getComponents().get(componentName);
+        if (component == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new Component(component));
     }
 
     public void insertComponents(final Map<String, Component> newCmps) {
+        if (newCmps == null) {
+            return;
+        }
         for (final Map.Entry<String, Component> entry : newCmps.entrySet()) {
-            insertComponent(entry.getValue());
+            if (entry.getValue() != null) {
+                insertComponent(entry.getValue());
+            }
         }
     }
 
@@ -75,7 +85,7 @@ public class OOPSourceCodeModel implements Serializable {
     }
 
     public OOPSourceCodeModel copy() {
-        return new OOPSourceCodeModel(this.components);
+        return new OOPSourceCodeModel(this.getComponents());
     }
 
     /**

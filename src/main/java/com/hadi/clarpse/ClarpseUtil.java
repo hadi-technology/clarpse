@@ -6,6 +6,9 @@ import java.util.Map;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
 
+/**
+ * Shared helper utilities used by source-model assembly and querying logic.
+ */
 public final class ClarpseUtil {
 
     public static Component getParentBaseComponent(Component cmp, final Map<String, Component> map) {

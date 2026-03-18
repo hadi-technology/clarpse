@@ -4,6 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.io.Serializable;
 
+/**
+ * Reference indicating a regular type usage dependency.
+ */
 public class SimpleTypeReference extends ComponentReference implements Serializable {
 
     private static final long serialVersionUID = 7304258760520469246L;

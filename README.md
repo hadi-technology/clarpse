@@ -8,7 +8,7 @@ Clarpse is a multi-language architectural code analysis library for building bet
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-<version>8.2.0</version>
+<version>9.2.5</version>
 </dependency>
 ```
 
@@ -20,18 +20,22 @@ Clarpse is a multi-language parsing and analysis library that converts source co
 # Features
 
  - Supports **Java** with a lightweight, architecture-focused parser.
- - Supports **TypeScript** with compiler-accurate, tsconfig-aware parsing and resolution.
+ - Supports **TypeScript** with compiler-accurate, tsconfig-aware parsing and resolution, including constructor parameter property detection and monorepo support.
+ - Supports **Python** with Pyright-backed parsing, including nested classes, comment parsing, cyclomatic complexity, code hashing, and visibility inference.
+ - Runtime configuration through bundled properties file
  - Light weight
  - Performant
  - Easy to use
  - Clean API built on top of AST
  - Support for parsing comments
+ - Parallel parsing with configurable worker counts
 
 # Requirements
  - Java 17
  - Maven 3.x
- - Node.js 18/20/22 (required for TypeScript parsing)
- - TypeScript compiler: `npm install -g typescript`
+ - Node.js 18/20/22 (required for TypeScript and Python parsing)
+ - No global `typescript` or `pyright` install is required (both are bundled)
+ - No local Python interpreter is required for Python parsing
 
 # Running Locally
 Build the jar:
@@ -50,7 +54,7 @@ curl -s -X POST http://localhost:8080/parse \
   -d '{"language":"java","files":[{"path":"src/Foo.java","content":"package test; class Foo { void m() {} }"}]}'
 ```
 
-Parse a zip (Java or TypeScript):
+Parse a zip (Java, TypeScript, or Python):
 ```bash
 curl -s -X POST "http://localhost:8080/parse?lang=typescript" \
   -H "Content-Type: application/zip" \
@@ -59,7 +63,10 @@ curl -s -X POST "http://localhost:8080/parse?lang=typescript" \
 
 Notes:
 - TypeScript parsing requires a valid `tsconfig.json` in the project input.
-- Environment variables: `CLARPSE_PORT`, `CLARPSE_MAX_BYTES`, `CLARPSE_PARALLELISM`.
+- Python parsing uses bundled Pyright plus project imports/config for internal type linking.
+- TypeScript and Python daemons resolve only bundled compiler/type-checker runtimes.
+- Environment variables: `CLARPSE_PORT`, `CLARPSE_MAX_BYTES`, `CLARPSE_PARALLELISM`, `CLARPSE_PYTHON_PARALLELISM`, `CLARPSE_NODE_PATH`.
+- Node override system properties: `clarpse.node.path`, `clarpse.node.disabled`.
 
 # Docker API for Non-Java Consumers
 Build and run the container (no local jar required):
@@ -76,24 +83,38 @@ curl -s -X POST http://localhost:8080/parse \
 ```
 
 # Runtime Tuning
-Clarpse supports a global parallelism setting for language compilers that can parse files in parallel.
+Clarpse supports runtime configuration through environment variables, system properties, and a bundled properties file.
 
-- `CLARPSE_PARALLELISM` controls the max number of parser threads.
+## Parallelism Control
+- `CLARPSE_PARALLELISM` controls Java parser thread count.
+- `CLARPSE_PYTHON_PARALLELISM` or `-Dclarpse.python.parallelism=<n>` controls Python worker count.
 - Values `1` or lower force serial parsing.
-- If unset, Clarpse uses `min(availableProcessors, fileCount)`.
+- If unset, Clarpse auto-selects a bounded value based on CPU count and file count.
 
 Example:
 `CLARPSE_PARALLELISM=4 mvn test`
+
+## Zip Entry Limits
+Clarpse includes configurable limits for zip processing to prevent resource exhaustion. These can be overridden via system properties or by modifying `src/main/resources/clarpse.properties`:
+- `clarpse.zip.maxEntries` (default: 100000) - Maximum number of entries in a zip file
+- `clarpse.zip.maxTotalUncompressedBytes` (default: 209715200, ~200MB) - Maximum total uncompressed size
+- `clarpse.zip.maxEntryUncompressedBytes` (default: 10485760, ~10MB) - Maximum size per entry
+
+## Node.js Configuration
+- `CLARPSE_NODE_PATH` or `-Dclarpse.node.path=<path>` sets a custom Node.js executable path.
+- `CLARPSE_NODE_DISABLED` or `-Dclarpse.node.disabled=true` disables Node.js (TypeScript and Python parsing will fail).
 
 # Repo Tour
 Key areas of the repository:
 
 - `src/main/java/com/hadi/clarpse/compiler` - Language compilers, project file handling, and orchestration.
 - `src/main/java/com/hadi/clarpse/compiler/typescript` - TypeScript compiler bridge and models.
+- `src/main/java/com/hadi/clarpse/compiler/python` - Python compiler bridge and models.
+- `src/main/java/com/hadi/clarpse/compiler/ClarpseProperties.java` - Runtime properties loader.
 - `src/main/java/com/hadi/clarpse/listener` - Parse tree listeners that build the source model (Java).
 - `src/main/java/com/hadi/clarpse/sourcemodel` - Component and package models.
 - `src/main/java/com/hadi/clarpse/reference` - Component reference types.
-- `src/main/resources` - Parser helpers and tool configuration (TypeScript daemon lives here).
+- `src/main/resources` - Parser helpers, daemon scripts, and configuration (TypeScript and Python daemons, properties file).
 - `src/test/java` - Unit and integration tests.
 - `src/test/resources` - Test fixtures and zipped codebases used by tests.
 
@@ -131,41 +152,52 @@ Core classes and where they live:
 
 - Project entry and orchestration: `src/main/java/com/hadi/clarpse/compiler/ClarpseProject.java`
 - Project inputs: `src/main/java/com/hadi/clarpse/compiler/ProjectFiles.java`, `src/main/java/com/hadi/clarpse/compiler/ProjectFile.java`
+- Runtime properties: `src/main/java/com/hadi/clarpse/compiler/ClarpseProperties.java`, `src/main/resources/clarpse.properties`
 - Compiler selection and results: `src/main/java/com/hadi/clarpse/compiler/CompilerFactory.java`, `src/main/java/com/hadi/clarpse/compiler/ClarpseCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/CompileResult.java`
-- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/typescript/ClarpseTypeScriptCompiler.java`
+- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/typescript/ClarpseTypeScriptCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/python/ClarpsePythonCompiler.java`
 - Parse listeners: `src/main/java/com/hadi/clarpse/listener/JavaTreeListener.java`
 - Source model: `src/main/java/com/hadi/clarpse/sourcemodel/OOPSourceCodeModel.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Component.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Package.java`
 - References: `src/main/java/com/hadi/clarpse/reference/ComponentReference.java` and related types in `src/main/java/com/hadi/clarpse/reference`
 - TypeScript daemon: `src/main/resources/typescript/daemon.js`
+- Python daemon: `src/main/resources/python/daemon.js`
+
+
+Note: TypeScript and Python parsing require Node.js.
 
 Architecture docs:
 - `docs/typescript-architecture.md`
+- `docs/python-architecture.md`
 
 ## Using The API
-Clarpse abstracts source code into a higher level model in a **language-agnostic** way. This 
-model focuses on the architectural properties of the original code. The code snippet below 
-illustrates how this model can be generated from a `ProjectFiles` object which represents the 
-source code to be analyzed.
+Clarpse abstracts source code into a higher level model in a **language-agnostic** way.  
+The snippet below shows how to generate the model from in-memory files.
+
 ```java
-final String code = " package com.foo;  "
-		       +  " public class SampleClass extends AbstractClass {                                                 "
-		       +  "     /** Sample Doc Comment */                                              "
-		       +  "     @SampleAnnotation                                                      "
-		       +  "     public void sampleMethod(String sampleMethodParam) throws AnException {"   
-		       +  "     SampleClassB.fooMethod();
-		       +  "     }                                                                      "
-		       +  " }                                                                          ";;
+final String code =
+        "package com.foo; " +
+        "public class SampleClass { " +
+        "  public void sampleMethod(String sampleMethodParam) { } " +
+        "}";
 final ProjectFiles projectFiles = new ProjectFiles();
-projectFiles.insertFile(new ProjectFile("SampleClass.java", code));
+projectFiles.insertFile(new ProjectFile("src/SampleClass.java", code));
 final ClarpseProject project = new ClarpseProject(projectFiles, Lang.JAVA);
 CompileResult compileResult = project.result();
-// Get the code model
 OOPSourceCodeModel codeModel = compileResult.model();
-// View any compile errors for any files
 Collection<CompileFailure> failures = compileResult.failures();
 ```
-Note, the `ProjectFiles` object can be initialized from a local directory, a local zip file, or an 
-input stream to a zip file - see `ProjectFilesTest.java` for more information.
+
+Path rules for `ProjectFile`:
+- Relative paths are supported and normalized (for example `src/Foo.java`).
+- Absolute paths are supported.
+- Parent traversal (`..`) is rejected.
+
+`ProjectFiles` can be initialized from:
+- a local directory path
+- a local zip file path
+- a zip input stream
+- in-memory `ProjectFile` entries
+
+See `src/test/java/com/hadi/test/ProjectFilesTest.java` for examples.
 
 TypeScript usage follows the same API, but requires Node.js and a valid `tsconfig.json`:
 ```java
@@ -175,42 +207,48 @@ CompileResult compileResult = project.result();
 OOPSourceCodeModel codeModel = compileResult.model();
 ```
 
-Next, the compiled 
-`OOPSourceCodeModel` is the polygot representation of our source code through a 
-collection of `Component` objects. Details about these components and the relationships 
-between them can be fetched in the following way:
+Next, inspect components:
 ```java
 codeModel.components().forEach(component -> {
-        System.out.println(component.name());
-	System.out.println(component.type());           
-	System.out.println(component.comment());        
-	System.out.println(component.modifiers());      
-	System.out.println(component.children());       
-	System.out.println(component.sourceFile());
-	...
-	// Check out the Component class for a full list of component attributes that can be retrieved
-    });
+    System.out.println(component.uniqueName());
+    System.out.println(component.componentType());
+    System.out.println(component.comment());
+    System.out.println(component.modifiers());
+    System.out.println(component.children());
+    System.out.println(component.sourceFile());
+});
 ```
-We can also get specific components by their unique name:
+
+Fetch a specific component by unique name:
 ```java
-Component mainClassComponent = codeModel.get("com.foo.java.SampleClass");
-mainclassComponent.name();           // --> "SampleClass"
-mainClassComponent.type();           // --> CLASS
-mainClassComponent.comment();        // --> "Sample Doc Comment"
-mainClassComponent.modifiers();      // --> ["public"]
-mainClassComponent.children();       // --> ["foo.java.SampleClass.sampleMethod(java.lang.String)"]
-mainClassComponent.sourceFile();     // --> "foo.java"
-mainClassComponent.references();     // --> ["SimpleTypeReference: String", "TypeExtensionReference: com.foo.AbstractClass", "SimpleTypeReference: com.foo.SampleClassB"]
-// Fetch the the inner method component
-methodComponent = codeModel.get(mainClassComponent.children().get(0));
-methodComponent.name();              // --> "sampleMethod"
-methodComponent.type();              // --> METHOD
-methodComponent.modifiers();         // --> ["public"]
-methodComponent.children();          // --> ["com.foo.java.SampleClass.sampleMethod(String).sampleMethodParam"]
-methodComopnent.codeFragment();      // --> "sampleMethod(String)"
-methodComponent.sourceFile();        // --> "foo.java"
-methodComponent.references();		 // --> ["SimpleTypeReference: String"]
+Component classComponent = codeModel.getComponent("com.foo.SampleClass")
+        .orElseThrow();
+System.out.println(classComponent.name());
+System.out.println(classComponent.componentType());
+System.out.println(classComponent.references());
+
+String childUniqueName = classComponent.children().get(0);
+Component methodComponent = codeModel.getComponent(childUniqueName).orElseThrow();
+System.out.println(methodComponent.name());
+System.out.println(methodComponent.codeFragment());
 ```
+
+## Failure Contract
+- Java/TypeScript/Python all report recoverable issues in `CompileResult.failures()` using
+  language-agnostic error codes.
+- `CompileException` is reserved for non-recoverable compiler errors.
+
+Standardized error codes:
+- `1000` Node runtime not available.
+- `1001` Language runtime bundle not available.
+- `1002` Required project config is missing (for example `tsconfig.json`).
+- `1003` Project config parse/validation failed.
+- `1004` Program/repository initialization failed.
+- `2001` File is outside active program/repository scope.
+- `2002` File not found on disk.
+- `2003` File parse/model extraction failed.
+- `2004` Daemon transport/runtime error.
+- `2005` File skipped due to excluded path rules.
 # Adding or Updating a Language
 Checklist for adding or updating a language implementation:
 

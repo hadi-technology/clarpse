@@ -1,0 +1,2 @@
+class Root:
+    pass

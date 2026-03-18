@@ -5,6 +5,9 @@ import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Response payload for parse requests, including model output and failures.
+ */
 public final class ParseResponse {
 
     private String language;

@@ -36,8 +36,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-      - name: Install TypeScript
-        run: npm install -g typescript
       - name: "Run tests and package"
         run: "mvn clean package assembly:single"
       - name: Build Docker image

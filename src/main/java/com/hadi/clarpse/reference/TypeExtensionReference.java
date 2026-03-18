@@ -4,6 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.io.Serializable;
 
+/**
+ * Reference indicating inheritance/extension between two types.
+ */
 public final class TypeExtensionReference extends ComponentReference implements Serializable {
 
     private static final long serialVersionUID = 6641497827060470449L;

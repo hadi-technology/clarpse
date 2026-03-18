@@ -1,0 +1,5 @@
+[tool.pyright]
+pythonVersion = "3.11"
+extraPaths = [
+  "libs"
+]

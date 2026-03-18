@@ -12,6 +12,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Scanner;
 
+/**
+ * In-memory representation of a source file path and its textual content.
+ */
 public class ProjectFile {
 
     private static final Logger LOGGER = LogManager.getLogger(ProjectFile.class);
@@ -19,17 +22,17 @@ public class ProjectFile {
     private String path;
 
     public ProjectFile(final String path, final String fileContent) {
-        content = fileContent;
-        if (path.startsWith(".") || !path.startsWith("/")) {
-            throw new IllegalArgumentException(("Project files must use an absolute path!"));
+        if (fileContent == null) {
+            this.content = "";
         } else {
-            this.path = path;
+            this.content = fileContent;
         }
+        this.path = normalizePath(path);
         LOGGER.debug("Created new file with path " + this.path + ".");
     }
 
     public void path(final String path) {
-        this.path = path;
+        this.path = normalizePath(path);
     }
 
     public void content(final String content) {
@@ -40,7 +43,7 @@ public class ProjectFile {
         try (Scanner scanner = new Scanner(file, StandardCharsets.UTF_8)) {
             content = scanner.useDelimiter("\\A").next();
         }
-        path = file.getName();
+        path = normalizePath(file.getAbsolutePath());
     }
 
     public String dir() {
@@ -107,5 +110,43 @@ public class ProjectFile {
 
     public String extension() {
         return FilenameUtils.getExtension(this.path);
+    }
+
+    private static String normalizePath(final String rawPath) {
+        if (rawPath == null || rawPath.trim().isEmpty()) {
+            throw new IllegalArgumentException("Project files must include a non-empty path.");
+        }
+        String normalizedInput = rawPath.trim().replace('\\', '/');
+        final boolean isAbsolute = CompilerSupport.isAbsolutePath(normalizedInput);
+        String windowsDrivePrefix = "";
+        if (normalizedInput.length() > 2
+                && Character.isLetter(normalizedInput.charAt(0))
+                && normalizedInput.charAt(1) == ':') {
+            windowsDrivePrefix = normalizedInput.substring(0, 2);
+            normalizedInput = normalizedInput.substring(2);
+        }
+        while (normalizedInput.startsWith("/")) {
+            normalizedInput = normalizedInput.substring(1);
+        }
+        if (normalizedInput.isEmpty()) {
+            throw new IllegalArgumentException("Project file path cannot be a root path.");
+        }
+        final Path normalizedPath = Paths.get(normalizedInput).normalize();
+        for (Path part : normalizedPath) {
+            if ("..".equals(part.toString())) {
+                throw new IllegalArgumentException("Project file paths cannot include parent traversal.");
+            }
+        }
+        final String result = normalizedPath.toString().replace('\\', '/');
+        if (result.isEmpty()) {
+            throw new IllegalArgumentException("Project file path is invalid.");
+        }
+        if (isAbsolute) {
+            if (!windowsDrivePrefix.isEmpty()) {
+                return windowsDrivePrefix + "/" + result;
+            }
+            return "/" + result;
+        }
+        return "/" + result;
     }
 }

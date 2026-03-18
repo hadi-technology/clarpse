@@ -3,6 +3,7 @@ package com.hadi.clarpse.compiler.typescript;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.hadi.clarpse.compiler.DaemonResourceExtractor;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptFileModel;
 import org.apache.commons.io.FileUtils;
 import org.apache.logging.log4j.LogManager;
@@ -11,13 +12,14 @@ import org.apache.logging.log4j.Logger;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -27,6 +29,7 @@ public final class TypeScriptDaemon implements AutoCloseable {
 
     private static final Logger LOGGER = LogManager.getLogger(TypeScriptDaemon.class);
     private static final String DAEMON_RESOURCE = "typescript/daemon.js";
+    private static final String TYPESCRIPT_BUNDLE_RESOURCE = "typescript/typescript-bundle.zip";
     private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -42,7 +45,8 @@ public final class TypeScriptDaemon implements AutoCloseable {
         }
         final String nodeCommand = NodeRuntime.resolveNodeCommand();
         if (nodeCommand == null) {
-            throw new TypeScriptDaemonException("Node.js not available.");
+            throw new TypeScriptDaemonException("Node.js not available.",
+                    TypeScriptDaemonException.CODE_NODE_NOT_FOUND);
         }
         final Path daemonScript = extractDaemonScript();
         final ProcessBuilder builder = new ProcessBuilder(nodeCommand, daemonScript.toString());
@@ -52,7 +56,8 @@ public final class TypeScriptDaemon implements AutoCloseable {
             writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
             reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
         } catch (final IOException e) {
-            throw new TypeScriptDaemonException("Failed to start TypeScript daemon.", 0, e);
+            throw new TypeScriptDaemonException("Failed to start TypeScript daemon.",
+                    TypeScriptDaemonException.CODE_DAEMON_ERROR, e);
         }
     }
 
@@ -65,7 +70,8 @@ public final class TypeScriptDaemon implements AutoCloseable {
                 result.path("tsVersion").asText(""),
                 result.path("configCount").asInt(0),
                 result.path("fileCount").asInt(0),
-                result.path("invalidConfigCount").asInt(0)
+                result.path("invalidConfigCount").asInt(0),
+                parseInvalidConfigs(result.path("invalidConfigs"))
         );
     }
 
@@ -77,7 +83,8 @@ public final class TypeScriptDaemon implements AutoCloseable {
         try {
             return objectMapper.treeToValue(result, TypeScriptFileModel.class);
         } catch (final IOException e) {
-            throw new TypeScriptDaemonException("Failed to parse file model.", 0, e);
+            throw new TypeScriptDaemonException("Failed to parse file model.",
+                    TypeScriptDaemonException.CODE_DAEMON_ERROR, e);
         }
     }
 
@@ -96,7 +103,8 @@ public final class TypeScriptDaemon implements AutoCloseable {
             writer.newLine();
             writer.flush();
         } catch (final IOException e) {
-            throw new TypeScriptDaemonException("Failed to write JSON-RPC request.", 0, e);
+            throw new TypeScriptDaemonException("Failed to write JSON-RPC request.",
+                    TypeScriptDaemonException.CODE_DAEMON_ERROR, e);
         }
         try {
             String line;
@@ -123,30 +131,33 @@ public final class TypeScriptDaemon implements AutoCloseable {
                 return response.get("result");
             }
         } catch (final IOException e) {
-            throw new TypeScriptDaemonException("Failed to read JSON-RPC response.", 0, e);
+            throw new TypeScriptDaemonException("Failed to read JSON-RPC response.",
+                    TypeScriptDaemonException.CODE_DAEMON_ERROR, e);
         }
-        throw new TypeScriptDaemonException("TypeScript daemon terminated unexpectedly.");
+        throw new TypeScriptDaemonException("TypeScript daemon terminated unexpectedly.",
+                TypeScriptDaemonException.CODE_DAEMON_ERROR);
     }
 
     private void ensureStarted() throws TypeScriptDaemonException {
         if (process == null || !process.isAlive()) {
-            throw new TypeScriptDaemonException("TypeScript daemon is not running.");
+            throw new TypeScriptDaemonException("TypeScript daemon is not running.",
+                    TypeScriptDaemonException.CODE_DAEMON_ERROR);
         }
     }
 
     private Path extractDaemonScript() throws TypeScriptDaemonException {
-        try (InputStream inputStream = getClass().getClassLoader().getResourceAsStream(DAEMON_RESOURCE)) {
-            if (inputStream == null) {
-                throw new TypeScriptDaemonException("Missing daemon resource: " + DAEMON_RESOURCE);
-            }
-            tempDir = Files.createTempDirectory("clarpse-ts-daemon");
-            Path scriptPath = tempDir.resolve("daemon.js");
-            Files.copy(inputStream, scriptPath);
-            scriptPath.toFile().deleteOnExit();
-            tempDir.toFile().deleteOnExit();
-            return scriptPath;
+        try {
+            DaemonResourceExtractor.Extraction extraction = DaemonResourceExtractor.extract(
+                    getClass(),
+                    "clarpse-ts-daemon",
+                    DAEMON_RESOURCE,
+                    TYPESCRIPT_BUNDLE_RESOURCE
+            );
+            tempDir = extraction.tempDir();
+            return extraction.scriptPath();
         } catch (final IOException e) {
-            throw new TypeScriptDaemonException("Failed to extract daemon resource.", 0, e);
+            throw new TypeScriptDaemonException("Failed to extract daemon resource.",
+                    TypeScriptDaemonException.CODE_DAEMON_ERROR, e);
         }
     }
 
@@ -180,13 +191,15 @@ public final class TypeScriptDaemon implements AutoCloseable {
         private final int configCount;
         private final int fileCount;
         private final int invalidConfigCount;
+        private final List<InvalidConfig> invalidConfigs;
 
         public InitResult(final String tsVersion, final int configCount, final int fileCount,
-                          final int invalidConfigCount) {
+                          final int invalidConfigCount, final List<InvalidConfig> invalidConfigs) {
             this.tsVersion = tsVersion;
             this.configCount = configCount;
             this.fileCount = fileCount;
             this.invalidConfigCount = invalidConfigCount;
+            this.invalidConfigs = invalidConfigs;
         }
 
         public String tsVersion() {
@@ -204,5 +217,40 @@ public final class TypeScriptDaemon implements AutoCloseable {
         public int invalidConfigCount() {
             return invalidConfigCount;
         }
+
+        public List<InvalidConfig> invalidConfigs() {
+            return invalidConfigs;
+        }
+    }
+
+    public static final class InvalidConfig {
+        private final String configPath;
+        private final String error;
+
+        public InvalidConfig(final String configPath, final String error) {
+            this.configPath = configPath;
+            this.error = error;
+        }
+
+        public String configPath() {
+            return configPath;
+        }
+
+        public String error() {
+            return error;
+        }
+    }
+
+    private static List<InvalidConfig> parseInvalidConfigs(final JsonNode invalidConfigsNode) {
+        if (invalidConfigsNode == null || !invalidConfigsNode.isArray() || invalidConfigsNode.isEmpty()) {
+            return Collections.emptyList();
+        }
+        final List<InvalidConfig> invalidConfigs = new ArrayList<>();
+        for (final JsonNode invalidConfigNode : invalidConfigsNode) {
+            invalidConfigs.add(new InvalidConfig(
+                    invalidConfigNode.path("configPath").asText(""),
+                    invalidConfigNode.path("error").asText("")));
+        }
+        return Collections.unmodifiableList(invalidConfigs);
     }
 }

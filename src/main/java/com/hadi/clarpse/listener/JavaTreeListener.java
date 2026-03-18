@@ -112,6 +112,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     private Component createComponent(final Node node, final ComponentType componentType) {
         final Component newCmp = new Component();
         newCmp.setPkg(currentPkg);
+        newCmp.setModule(moduleNameForFile(file.path()));
         newCmp.setComponentType(componentType);
         if (node.getComment().isPresent()) {
             newCmp.setComment(node.getComment().get().toString());
@@ -126,6 +127,22 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         newCmp.setCodeHash(codeBuffer.toString().hashCode());
         newCmp.setSourceFilePath(file.path());
         return newCmp;
+    }
+
+    private static String moduleNameForFile(final String filePath) {
+        if (filePath == null || filePath.isEmpty()) {
+            return "";
+        }
+        try {
+            String fileName = java.nio.file.Paths.get(filePath).getFileName().toString();
+            int extIndex = fileName.lastIndexOf('.');
+            if (extIndex > 0) {
+                fileName = fileName.substring(0, extIndex);
+            }
+            return fileName;
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     @Override

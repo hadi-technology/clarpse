@@ -4,12 +4,18 @@ import com.hadi.clarpse.compiler.ClarpseProject;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
+import com.hadi.clarpse.compiler.typescript.NodeRuntime;
 import org.junit.BeforeClass;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -201,14 +207,265 @@ public class ProjectFilesTest {
         projectFiles.shiftSubDirsLeft();
     }
 
+    @Test
+    public void testRelativeProjectFilePathIsNormalized() {
+        ProjectFile projectFile = new ProjectFile("src/main/java/Test.java", "class Test {}");
+        assertEquals("/src/main/java/Test.java", projectFile.path());
+    }
+
+    @Test
+    public void testWindowsProjectFilePathIsSupported() {
+        ProjectFile projectFile = new ProjectFile("C:\\repo\\src\\main\\java\\Test.java", "class Test {}");
+        assertEquals("C:/repo/src/main/java/Test.java", projectFile.path());
+    }
+
+    @Test
+    public void testTsconfigPersistedFromZip() throws Exception {
+        Path zipPath = Files.createTempFile("tsconfig", ".zip");
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+            ZipEntry configEntry = new ZipEntry("project/tsconfig.json");
+            zos.putNextEntry(configEntry);
+            String configContent = "{\"compilerOptions\":{\"allowJs\":true}}";
+            zos.write(configContent.getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+
+            ZipEntry tsEntry = new ZipEntry("project/src/main/typescript/app.ts");
+            zos.putNextEntry(tsEntry);
+            String tsContent = "export const greet = () => 'hi';";
+            zos.write(tsContent.getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+
+        ProjectFiles projectFiles;
+        try (var in = Files.newInputStream(zipPath)) {
+            projectFiles = new ProjectFiles(in);
+        }
+
+        String projectDir = projectFiles.projectDir();
+        Path tsconfig = Paths.get(projectDir, "project", "tsconfig.json");
+        assertTrue("tsconfig should be persisted", Files.exists(tsconfig));
+        assertEquals("{\"compilerOptions\":{\"allowJs\":true}}",
+                Files.readString(tsconfig, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void testPyrightConfigPersistedFromZip() throws Exception {
+        Path zipPath = Files.createTempFile("pyrightconfig", ".zip");
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+            ZipEntry configEntry = new ZipEntry("project/pyrightconfig.json");
+            zos.putNextEntry(configEntry);
+            String configContent = "{\"pythonVersion\":\"3.11\"}";
+            zos.write(configContent.getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+
+            ZipEntry pyEntry = new ZipEntry("project/src/main/python/app.py");
+            zos.putNextEntry(pyEntry);
+            String pyContent = "class App:\n    pass\n";
+            zos.write(pyContent.getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+
+        ProjectFiles projectFiles;
+        try (var in = Files.newInputStream(zipPath)) {
+            projectFiles = new ProjectFiles(in);
+        }
+
+        String projectDir = projectFiles.projectDir();
+        Path pyrightConfig = Paths.get(projectDir, "project", "pyrightconfig.json");
+        assertTrue("pyrightconfig.json should be persisted", Files.exists(pyrightConfig));
+        assertEquals("{\"pythonVersion\":\"3.11\"}",
+                Files.readString(pyrightConfig, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void testPyprojectPersistedFromZip() throws Exception {
+        Path zipPath = Files.createTempFile("pyproject", ".zip");
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+            ZipEntry configEntry = new ZipEntry("project/pyproject.toml");
+            zos.putNextEntry(configEntry);
+            String configContent = "[tool.pyright]\npythonVersion = \"3.12\"\n";
+            zos.write(configContent.getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+
+            ZipEntry pyEntry = new ZipEntry("project/src/main/python/app.py");
+            zos.putNextEntry(pyEntry);
+            String pyContent = "class App:\n    pass\n";
+            zos.write(pyContent.getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+
+        ProjectFiles projectFiles;
+        try (var in = Files.newInputStream(zipPath)) {
+            projectFiles = new ProjectFiles(in);
+        }
+
+        String projectDir = projectFiles.projectDir();
+        Path pyproject = Paths.get(projectDir, "project", "pyproject.toml");
+        assertTrue("pyproject.toml should be persisted", Files.exists(pyproject));
+        assertEquals("[tool.pyright]\npythonVersion = \"3.12\"\n",
+                Files.readString(pyproject, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void testNestedConfigPathIsPreservedWhenZipHasNoWrapperDir() throws Exception {
+        Path zipPath = Files.createTempFile("nested-config", ".zip");
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+            ZipEntry configEntry = new ZipEntry("packages/app/tsconfig.json");
+            zos.putNextEntry(configEntry);
+            String configContent = "{\"include\":[\"src/**/*.ts\"]}";
+            zos.write(configContent.getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+
+            ZipEntry tsEntry = new ZipEntry("packages/app/src/main.ts");
+            zos.putNextEntry(tsEntry);
+            zos.write("export const x = 1;".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+
+        ProjectFiles projectFiles;
+        try (var in = Files.newInputStream(zipPath)) {
+            projectFiles = new ProjectFiles(in);
+        }
+
+        String projectDir = projectFiles.projectDir();
+        Path expectedConfigPath = Paths.get(projectDir, "packages", "app", "tsconfig.json");
+        Path shiftedConfigPath = Paths.get(projectDir, "app", "tsconfig.json");
+        assertTrue("nested config should be persisted at original path", Files.exists(expectedConfigPath));
+        assertFalse("config path should not be shifted", Files.exists(shiftedConfigPath));
+    }
+
+    @Test
+    public void testShiftSubDirsLeftAlsoShiftsPersistedTsconfigPaths() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        Path zipPath = Files.createTempFile("wrapper-tsconfig", ".zip");
+        try {
+            try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+                ZipEntry configEntry = new ZipEntry("repo-root/apps/backend/tsconfig.json");
+                zos.putNextEntry(configEntry);
+                zos.write("""
+                        {
+                          "compilerOptions": {
+                            "target": "ES2020",
+                            "module": "CommonJS",
+                            "strict": true
+                          },
+                          "include": ["src/**/*.ts"]
+                        }
+                        """.getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+
+                ZipEntry tsEntry = new ZipEntry("repo-root/apps/backend/src/service.ts");
+                zos.putNextEntry(tsEntry);
+                zos.write("""
+                        export class Service {
+                          greet(): string {
+                            return "hi";
+                          }
+                        }
+                        """.getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+            }
+
+            ProjectFiles projectFiles;
+            try (var in = Files.newInputStream(zipPath)) {
+                projectFiles = new ProjectFiles(in);
+            }
+            projectFiles.shiftSubDirsLeft();
+
+            assertTrue(new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result().failures().isEmpty());
+        } finally {
+            Files.deleteIfExists(zipPath);
+        }
+    }
+
     @Test(expected = IllegalArgumentException.class)
     public void testZipEntryLimitAppliesToAllEntries() throws Exception {
-        File zipFile = createZipWithEntries(10001);
+        File zipFile = createZipWithEntries(100001);
         try {
             new ProjectFiles(zipFile.getAbsolutePath());
         } finally {
             //noinspection ResultOfMethodCallIgnored
             zipFile.delete();
+        }
+    }
+
+    @Test
+    public void testOversizedZipEntryIncludesEntryNameInError() throws Exception {
+        Path zipPath = Files.createTempFile("clarpse-large-entry", ".zip");
+        byte[] oversized = new byte[10 * 1024 * 1024 + 1];
+        try {
+            try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+                ZipEntry entry = new ZipEntry("project/big.json");
+                zos.putNextEntry(entry);
+                zos.write(oversized);
+                zos.closeEntry();
+            }
+
+            IllegalArgumentException ex = null;
+            try (var in = Files.newInputStream(zipPath)) {
+                try {
+                    new ProjectFiles(in);
+                } catch (IllegalArgumentException e) {
+                    ex = e;
+                }
+            }
+
+            assertTrue(ex != null);
+            assertTrue(ex.getMessage().contains("project/big.json"));
+        } finally {
+            Files.deleteIfExists(zipPath);
+        }
+    }
+
+    @Test
+    public void testTempProjectDirPersistsAcrossCompilers() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        Path zipPath = Files.createTempFile("clarpse-mixed", ".zip");
+        try {
+            try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+                ZipEntry configEntry = new ZipEntry("project/tsconfig.json");
+                zos.putNextEntry(configEntry);
+                String configContent = "{\"compilerOptions\":{\"allowJs\":true}}";
+                zos.write(configContent.getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+
+                ZipEntry tsEntry = new ZipEntry("project/src/main/typescript/app.ts");
+                zos.putNextEntry(tsEntry);
+                String tsContent = "export const greet = () => 'hi';";
+                zos.write(tsContent.getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+
+                ZipEntry javaEntry = new ZipEntry("project/src/main/java/com/example/Greeting.java");
+                zos.putNextEntry(javaEntry);
+                String javaContent = "package com.example;\n"
+                        + "public class Greeting {\n"
+                        + "  public String message() {\n"
+                        + "    return \"hello\";\n"
+                        + "  }\n"
+                        + "}\n";
+                zos.write(javaContent.getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+            }
+
+            ProjectFiles projectFiles;
+            try (var in = Files.newInputStream(zipPath)) {
+                projectFiles = new ProjectFiles(in);
+            }
+
+            String projectDir = projectFiles.projectDir();
+            Path projectDirPath = Paths.get(projectDir);
+            assertTrue(Files.exists(projectDirPath));
+
+            new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+            assertTrue(Files.exists(projectDirPath));
+
+            new ClarpseProject(projectFiles, Lang.JAVA).result();
+            assertTrue(Files.exists(projectDirPath));
+
+            projectFiles.close();
+            assertFalse(Files.exists(projectDirPath));
+        } finally {
+            Files.deleteIfExists(zipPath);
         }
     }
 

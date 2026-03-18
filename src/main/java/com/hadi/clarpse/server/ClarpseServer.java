@@ -35,6 +35,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Minimal HTTP server exposing Clarpse parse endpoints.
+ */
 public final class ClarpseServer {
 
     private static final Logger LOGGER = LogManager.getLogger(ClarpseServer.class);
@@ -46,15 +49,33 @@ public final class ClarpseServer {
     private ClarpseServer() {
     }
 
+    @SuppressWarnings({"PMD.CloseResource", "PMD.UseTryWithResources"})
+    public static ServerHandle startServer(final int port, final long maxBytes) throws IOException {
+        final HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
+        final CloseableExecutorService executor = CloseableExecutorService.newFixedThreadPool(resolveThreadCount());
+        boolean started = false;
+        try {
+            server.setExecutor(executor.delegate());
+            server.createContext("/health", new HealthHandler());
+            server.createContext("/parse", new ParseHandler(maxBytes));
+            server.start();
+            started = true;
+            LOGGER.info("Clarpse server listening on port {}.", server.getAddress().getPort());
+            return new ServerHandle(server, executor);
+        } finally {
+            if (!started) {
+                server.stop(0);
+                executor.close();
+            }
+        }
+    }
+
     public static void main(final String[] args) throws IOException {
         final int port = readIntEnv("CLARPSE_PORT", DEFAULT_PORT);
         final long maxBytes = readLongEnv("CLARPSE_MAX_BYTES", DEFAULT_MAX_BYTES);
-        final HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         final CountDownLatch stopLatch = new CountDownLatch(1);
-        try (final CloseableExecutorService closeableExecutor = CloseableExecutorService.newFixedThreadPool(resolveThreadCount())) {
-            server.setExecutor(closeableExecutor.delegate());
-            server.createContext("/health", new HealthHandler());
-            server.createContext("/parse", new ParseHandler(maxBytes));
+        try (ServerHandle serverHandle = startServer(port, maxBytes)) {
+            final HttpServer server = serverHandle.server();
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 try {
                     server.stop(0);
@@ -64,14 +85,34 @@ public final class ClarpseServer {
             }));
 
             try {
-                server.start();
-                LOGGER.info("Clarpse server listening on port " + port + ".");
                 stopLatch.await();
             } catch (final InterruptedException e) {
                 Thread.currentThread().interrupt();
-            } finally {
-                server.stop(0);
             }
+        }
+    }
+
+    public static final class ServerHandle implements AutoCloseable {
+        private final HttpServer server;
+        private final CloseableExecutorService executor;
+
+        private ServerHandle(final HttpServer server, final CloseableExecutorService executor) {
+            this.server = server;
+            this.executor = executor;
+        }
+
+        public int port() {
+            return server.getAddress().getPort();
+        }
+
+        HttpServer server() {
+            return server;
+        }
+
+        @Override
+        public void close() {
+            server.stop(0);
+            executor.close();
         }
     }
 
@@ -195,8 +236,9 @@ public final class ClarpseServer {
                 throw new IllegalArgumentException("Missing or invalid lang query parameter.");
             }
             final byte[] body = readRequestBytes(exchange.getRequestBody(), maxBytes);
-            final ProjectFiles projectFiles = new ProjectFiles(new ByteArrayInputStream(body));
-            return compile(lang, projectFiles, startNanos);
+            try (ProjectFiles projectFiles = new ProjectFiles(new ByteArrayInputStream(body))) {
+                return compile(lang, projectFiles, startNanos);
+            }
         }
 
         private ParseResponse handleJson(final HttpExchange exchange, final long startNanos) throws Exception {
@@ -213,22 +255,23 @@ public final class ClarpseServer {
             if (files == null || files.isEmpty()) {
                 throw new IllegalArgumentException("Request contains no files.");
             }
-            final ProjectFiles projectFiles = new ProjectFiles();
-            for (final ParseFile file : files) {
-                if (file == null) {
-                    throw new IllegalArgumentException("Request contains a null file entry.");
+            try (ProjectFiles projectFiles = new ProjectFiles()) {
+                for (final ParseFile file : files) {
+                    if (file == null) {
+                        throw new IllegalArgumentException("Request contains a null file entry.");
+                    }
+                    final String path = file.getPath();
+                    if (path == null || path.trim().isEmpty()) {
+                        throw new IllegalArgumentException("Each file must include a path.");
+                    }
+                    String content = file.getContent();
+                    if (content == null) {
+                        content = "";
+                    }
+                    projectFiles.insertFile(new ProjectFile(path, content));
                 }
-                final String path = file.getPath();
-                if (path == null || path.trim().isEmpty()) {
-                    throw new IllegalArgumentException("Each file must include a path.");
-                }
-                String content = file.getContent();
-                if (content == null) {
-                    content = "";
-                }
-                projectFiles.insertFile(new ProjectFile(path, content));
+                return compile(lang, projectFiles, startNanos);
             }
-            return compile(lang, projectFiles, startNanos);
         }
 
         private ParseResponse compile(final Lang lang, final ProjectFiles projectFiles, final long startNanos)
@@ -264,6 +307,9 @@ public final class ClarpseServer {
         }
         if ("ts".equals(normalized)) {
             return Lang.TYPESCRIPT;
+        }
+        if ("py".equals(normalized)) {
+            return Lang.PYTHON;
         }
         return Lang.forValue(normalized);
     }

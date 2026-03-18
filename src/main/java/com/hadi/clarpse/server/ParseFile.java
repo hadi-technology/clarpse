@@ -1,5 +1,8 @@
 package com.hadi.clarpse.server;
 
+/**
+ * Request payload entry that carries a file path and file content.
+ */
 public final class ParseFile {
 
     private String path;

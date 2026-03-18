@@ -6,6 +6,9 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
 
+/**
+ * Compilation outcome containing the assembled model and non-fatal failures.
+ */
 public class CompileResult {
 
     /**
