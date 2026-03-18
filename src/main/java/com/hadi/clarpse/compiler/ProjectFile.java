@@ -12,6 +12,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Scanner;
 
+/**
+ * In-memory representation of a source file path and its textual content.
+ */
 public class ProjectFile {
 
     private static final Logger LOGGER = LogManager.getLogger(ProjectFile.class);

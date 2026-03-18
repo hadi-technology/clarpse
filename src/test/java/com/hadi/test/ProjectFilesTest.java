@@ -334,14 +334,86 @@ public class ProjectFilesTest {
         assertFalse("config path should not be shifted", Files.exists(shiftedConfigPath));
     }
 
+    @Test
+    public void testShiftSubDirsLeftAlsoShiftsPersistedTsconfigPaths() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        Path zipPath = Files.createTempFile("wrapper-tsconfig", ".zip");
+        try {
+            try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+                ZipEntry configEntry = new ZipEntry("repo-root/apps/backend/tsconfig.json");
+                zos.putNextEntry(configEntry);
+                zos.write("""
+                        {
+                          "compilerOptions": {
+                            "target": "ES2020",
+                            "module": "CommonJS",
+                            "strict": true
+                          },
+                          "include": ["src/**/*.ts"]
+                        }
+                        """.getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+
+                ZipEntry tsEntry = new ZipEntry("repo-root/apps/backend/src/service.ts");
+                zos.putNextEntry(tsEntry);
+                zos.write("""
+                        export class Service {
+                          greet(): string {
+                            return "hi";
+                          }
+                        }
+                        """.getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+            }
+
+            ProjectFiles projectFiles;
+            try (var in = Files.newInputStream(zipPath)) {
+                projectFiles = new ProjectFiles(in);
+            }
+            projectFiles.shiftSubDirsLeft();
+
+            assertTrue(new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result().failures().isEmpty());
+        } finally {
+            Files.deleteIfExists(zipPath);
+        }
+    }
+
     @Test(expected = IllegalArgumentException.class)
     public void testZipEntryLimitAppliesToAllEntries() throws Exception {
-        File zipFile = createZipWithEntries(10001);
+        File zipFile = createZipWithEntries(100001);
         try {
             new ProjectFiles(zipFile.getAbsolutePath());
         } finally {
             //noinspection ResultOfMethodCallIgnored
             zipFile.delete();
+        }
+    }
+
+    @Test
+    public void testOversizedZipEntryIncludesEntryNameInError() throws Exception {
+        Path zipPath = Files.createTempFile("clarpse-large-entry", ".zip");
+        byte[] oversized = new byte[10 * 1024 * 1024 + 1];
+        try {
+            try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+                ZipEntry entry = new ZipEntry("project/big.json");
+                zos.putNextEntry(entry);
+                zos.write(oversized);
+                zos.closeEntry();
+            }
+
+            IllegalArgumentException ex = null;
+            try (var in = Files.newInputStream(zipPath)) {
+                try {
+                    new ProjectFiles(in);
+                } catch (IllegalArgumentException e) {
+                    ex = e;
+                }
+            }
+
+            assertTrue(ex != null);
+            assertTrue(ex.getMessage().contains("project/big.json"));
+        } finally {
+            Files.deleteIfExists(zipPath);
         }
     }
 

@@ -1,5 +1,8 @@
 package com.hadi.clarpse.server;
 
+/**
+ * Generic server error payload returned for invalid requests or failures.
+ */
 public final class ErrorResponse {
 
     private String error;

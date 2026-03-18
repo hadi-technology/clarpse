@@ -698,6 +698,119 @@ function externalLabelFor(raw, ctx) {
   return raw.trim();
 }
 
+function splitTopLevelCsv(text) {
+  const values = [];
+  if (!text) {
+    return values;
+  }
+  let current = '';
+  let depth = 0;
+  let quote = '';
+  let escape = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      current += ch;
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === quote) {
+        quote = '';
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === '[' || ch === '(' || ch === '{') {
+      depth += 1;
+      current += ch;
+      continue;
+    }
+    if (ch === ']' || ch === ')' || ch === '}') {
+      depth = Math.max(0, depth - 1);
+      current += ch;
+      continue;
+    }
+    if (ch === ',' && depth === 0) {
+      if (current.trim()) {
+        values.push(current.trim());
+      }
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) {
+    values.push(current.trim());
+  }
+  return values;
+}
+
+function literalTokenToPythonType(token) {
+  if (!token) {
+    return '';
+  }
+  const text = token.trim();
+  if (!text) {
+    return '';
+  }
+  if (/^(True|False)$/i.test(text)) {
+    return 'bool';
+  }
+  if (/^(None)$/i.test(text)) {
+    return 'None';
+  }
+  if (/^[+-]?\d+$/.test(text)) {
+    return 'int';
+  }
+  if (/^[+-]?(?:\d+\.\d*|\d*\.\d+)$/.test(text)) {
+    return 'float';
+  }
+  if (/^[bB]?(\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*')$/.test(text)) {
+    return text[0].toLowerCase() === 'b' ? 'bytes' : 'str';
+  }
+  return '';
+}
+
+function normalizePythonTypeDisplay(raw) {
+  if (!raw) {
+    return raw;
+  }
+  const text = raw.trim();
+  if (!text) {
+    return text;
+  }
+  const literalMatch = text.match(/^(?:typing\.)?Literal\s*\[(.*)\]$/);
+  if (literalMatch) {
+    const tokens = splitTopLevelCsv(literalMatch[1]);
+    const mapped = [];
+    for (const token of tokens) {
+      const normalized = literalTokenToPythonType(token);
+      if (normalized) {
+        mapped.push(normalized);
+      }
+    }
+    if (!mapped.length) {
+      return text;
+    }
+    const deduped = Array.from(new Set(mapped));
+    return deduped.length === 1 ? deduped[0] : deduped.join(' | ');
+  }
+  const literalType = literalTokenToPythonType(text);
+  if (literalType) {
+    return literalType;
+  }
+  return text;
+}
+
 function loadBuiltins(pyrightJsPath) {
   if (!fs.existsSync(pyrightJsPath)) {
     return {};
@@ -1203,11 +1316,114 @@ function nameFromNode(node) {
   return '';
 }
 
+function instanceFieldNameFromExpression(text) {
+  if (!text) {
+    return '';
+  }
+  const match = text.trim().match(/^(?:self|cls)\.([A-Za-z_][A-Za-z0-9_]*)$/);
+  if (!match) {
+    return '';
+  }
+  return match[1] || '';
+}
+
+function instanceFieldNameFromStatement(text) {
+  if (!text) {
+    return '';
+  }
+  const match = text.trim().match(/^(?:self|cls)\.([A-Za-z_][A-Za-z0-9_]*)(?:\s*:[^=]+)?\s*=/);
+  if (!match) {
+    return '';
+  }
+  return match[1] || '';
+}
+
 function textForNode(node, fileText) {
   if (!node || typeof node.start !== 'number' || typeof node.length !== 'number') {
     return '';
   }
   return fileText.slice(node.start, node.start + node.length).trim();
+}
+
+function stableImplementationHash(text) {
+  const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash = ((hash * 31) + normalized.charCodeAt(i)) | 0;
+  }
+  return hash;
+}
+
+function decodeDocStringLiteral(statementText) {
+  if (!statementText) {
+    return '';
+  }
+  let text = statementText.trim();
+  if (!text) {
+    return '';
+  }
+  text = text.replace(/^[rRuUbBfF]+/, '');
+  if (!text) {
+    return '';
+  }
+  if ((text.startsWith('"""') && text.endsWith('"""'))
+    || (text.startsWith("'''") && text.endsWith("'''"))) {
+    return text.slice(3, -3).replace(/\r\n/g, '\n').trim();
+  }
+  if ((text.startsWith('"') && text.endsWith('"'))
+    || (text.startsWith("'") && text.endsWith("'"))) {
+    return text.slice(1, -1).replace(/\r\n/g, '\n').trim();
+  }
+  return '';
+}
+
+function extractSuiteDocString(suiteNode, fileText) {
+  const statements = getStatementsFromSuite(suiteNode);
+  if (!statements.length) {
+    return '';
+  }
+  const firstStatement = statements[0];
+  const statementText = textForNode(firstStatement, fileText);
+  return decodeDocStringLiteral(statementText);
+}
+
+function normalizeDecoratorName(rawDecoratorText) {
+  if (!rawDecoratorText) {
+    return '';
+  }
+  let name = rawDecoratorText.trim();
+  if (!name) {
+    return '';
+  }
+  if (name.startsWith('@')) {
+    name = name.slice(1);
+  }
+  const callIdx = name.indexOf('(');
+  if (callIdx >= 0) {
+    name = name.slice(0, callIdx);
+  }
+  name = name.trim();
+  if (!name) {
+    return '';
+  }
+  const parts = name.split('.');
+  return parts[parts.length - 1] || '';
+}
+
+function extractDecoratorNames(functionNode, fileText) {
+  const decorators = getNodeProp(functionNode, ['decorators', 'decoratorExpressions', 'decoratorNodes']);
+  if (!Array.isArray(decorators) || !decorators.length) {
+    return [];
+  }
+  const names = [];
+  for (const decorator of decorators) {
+    const raw = textForNode(decorator, fileText) || nameFromNode(decorator);
+    const normalized = normalizeDecoratorName(raw);
+    if (normalized) {
+      names.push(normalized);
+    }
+  }
+  return names;
 }
 
 function getNodeProp(node, keys) {
@@ -1387,7 +1603,49 @@ function buildSignature(name, params, returnType) {
     parts.push(param.name + ': ' + (param.rawType || 'Any'));
   }
   const args = parts.join(', ');
-  return name + '(' + args + ') -> ' + (returnType || 'Any');
+  return name + '(' + args + ') : ' + (returnType || 'Any');
+}
+
+function stripStringsAndComments(text) {
+  if (!text) {
+    return '';
+  }
+  let sanitized = text;
+  sanitized = sanitized.replace(/'''[\s\S]*?'''/g, ' ');
+  sanitized = sanitized.replace(/"""[\s\S]*?"""/g, ' ');
+  sanitized = sanitized.replace(/'(?:\\.|[^'\\])*'/g, ' ');
+  sanitized = sanitized.replace(/"(?:\\.|[^"\\])*"/g, ' ');
+  sanitized = sanitized.replace(/#.*$/gm, ' ');
+  return sanitized;
+}
+
+function countMatches(text, pattern) {
+  if (!text || !pattern) {
+    return 0;
+  }
+  const matches = text.match(pattern);
+  return matches ? matches.length : 0;
+}
+
+function computeCyclo(functionNode, fileText) {
+  if (!functionNode || !functionNode.d || !functionNode.d.suite) {
+    return 0;
+  }
+  const suiteText = textForNode(functionNode.d.suite, fileText);
+  if (!suiteText) {
+    return 1;
+  }
+  const body = stripStringsAndComments(suiteText);
+  let complexity = 1;
+  complexity += countMatches(body, /\bif\b/g);
+  complexity += countMatches(body, /\belif\b/g);
+  complexity += countMatches(body, /\bfor\b/g);
+  complexity += countMatches(body, /\bwhile\b/g);
+  complexity += countMatches(body, /\bexcept\b/g);
+  complexity += countMatches(body, /\bcase\b/g);
+  complexity += countMatches(body, /\band\b/g);
+  complexity += countMatches(body, /\bor\b/g);
+  return complexity;
 }
 
 function extractParams(funcNode, ctx, parseNodeType) {
@@ -1430,16 +1688,30 @@ function extractMethod(methodNode, ctx, parseNodeType) {
   if (!name) {
     return null;
   }
+  const decorators = extractDecoratorNames(methodNode, ctx.fileText);
+  const isClassMethod = decorators.includes('classmethod');
+  const isStaticMethod = decorators.includes('staticmethod');
+  const comment = extractSuiteDocString(methodNode.d ? methodNode.d.suite : null, ctx.fileText);
   const params = extractParams(methodNode, ctx, parseNodeType);
   const returnNode = getNodeProp(methodNode, ['returnTypeAnnotation', 'returnType', 'returnAnnotation']);
-  const returnRaw = returnNode ? textForNode(returnNode, ctx.fileText) : 'Any';
+  const returnRawText = returnNode ? textForNode(returnNode, ctx.fileText) : 'Any';
+  const returnRaw = normalizePythonTypeDisplay(returnRawText || 'Any');
   const signature = buildSignature(name, params, returnRaw || 'Any');
   const uniqueName = ctx.classUniqueName + '.' + signature;
   const returnRef = resolveTypeRef(returnNode, returnRaw || 'Any', ctx);
+  const cyclo = computeCyclo(methodNode, ctx.fileText);
+  const implementationHash = stableImplementationHash(
+    methodNode && methodNode.d && methodNode.d.suite ? textForNode(methodNode.d.suite, ctx.fileText) : ''
+  );
   return {
     name,
     signature,
     uniqueName,
+    implementationHash,
+    comment,
+    cyclo,
+    classMethod: isClassMethod,
+    staticMethod: isStaticMethod,
     params,
     return: returnRef
   };
@@ -1450,19 +1722,30 @@ function extractFunction(functionNode, ctx, parseNodeType) {
   if (!name) {
     return null;
   }
+  const comment = extractSuiteDocString(functionNode.d ? functionNode.d.suite : null, ctx.fileText);
   const params = extractParams(functionNode, ctx, parseNodeType);
   const returnNode = getNodeProp(functionNode, ['returnTypeAnnotation', 'returnType', 'returnAnnotation']);
-  const returnRaw = returnNode ? textForNode(returnNode, ctx.fileText) : 'Any';
+  const returnRawText = returnNode ? textForNode(returnNode, ctx.fileText) : 'Any';
+  const returnRaw = normalizePythonTypeDisplay(returnRawText || 'Any');
   const signature = buildSignature(name, params, returnRaw || 'Any');
   const moduleUniqueName = ctx.packageName
     ? ctx.packageName + '.' + ctx.moduleName
     : ctx.moduleName;
   const uniqueName = moduleUniqueName + '.' + signature;
   const returnRef = resolveTypeRef(returnNode, returnRaw || 'Any', ctx);
+  const cyclo = computeCyclo(functionNode, ctx.fileText);
+  const implementationHash = stableImplementationHash(
+    functionNode && functionNode.d && functionNode.d.suite ? textForNode(functionNode.d.suite, ctx.fileText) : ''
+  );
   return {
     name,
     signature,
     uniqueName,
+    implementationHash,
+    comment,
+    cyclo,
+    classMethod: false,
+    staticMethod: false,
     params,
     return: returnRef
   };
@@ -1495,9 +1778,85 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
   };
 }
 
-function extractClasses(parseTree, ctx, parseNodeType) {
+function extractInstanceFieldFromStatement(statement, ctx) {
+  if (!statement) {
+    return null;
+  }
+  const fileText = ctx && ctx.fileText ? ctx.fileText : '';
+  const statementText = textForNode(statement, fileText);
+  if (!statementText || statementText.indexOf('=') < 0) {
+    return null;
+  }
+  const targetNode = getNodeProp(statement, ['valueExpression', 'expression', 'target', 'name', 'leftExpr', 'valueExpr']);
+  if (!targetNode) {
+    return null;
+  }
+  if (!statementText) {
+    return null;
+  }
+  const statementLower = statementText.trim().toLowerCase();
+  if (!statementLower.includes('self.') && !statementLower.includes('cls.')) {
+    return null;
+  }
+  let fieldName = '';
+  const targetName = nameFromNode(targetNode);
+  if (targetName) {
+    fieldName = instanceFieldNameFromExpression(targetName);
+  }
+  if (!fieldName) {
+    const targetText = textForNode(targetNode, fileText);
+    fieldName = instanceFieldNameFromExpression(targetText);
+  }
+  if (!fieldName) {
+    fieldName = instanceFieldNameFromStatement(statementText);
+  }
+  if (!fieldName) {
+    return null;
+  }
+  const annotationNode = getNodeProp(statement, ['typeAnnotation', 'annotation', 'annotationExpression', 'typeExpression']);
+  const rawType = annotationNode ? textForNode(annotationNode, fileText) : 'Any';
+  const ref = annotationNode ? resolveTypeRef(annotationNode, rawType, ctx) : null;
+  return {
+    name: fieldName,
+    rawType: ref ? ref.raw : rawType,
+    targetUniqueName: ref ? ref.targetUniqueName : null,
+    externalLabel: ref ? ref.externalLabel : (rawType || 'Any')
+  };
+}
+
+function extractInstanceFieldsFromMethod(methodNode, ctx) {
+  if (!methodNode) {
+    return [];
+  }
+  const statements = getStatementsFromSuite(methodNode.d ? methodNode.d.suite : null);
+  const seen = new Set();
+  const fields = [];
+  for (const statement of statements) {
+    const field = extractInstanceFieldFromStatement(statement, ctx);
+    if (!field || !field.name || seen.has(field.name)) {
+      continue;
+    }
+    seen.add(field.name);
+    fields.push(field);
+  }
+  return fields;
+}
+
+function resolveClassUniqueName(className, ctx, parentUniqueName) {
+  if (!className) {
+    return '';
+  }
+  if (parentUniqueName) {
+    return parentUniqueName + '.' + className;
+  }
+  if (ctx.packageName) {
+    return ctx.packageName + '.' + ctx.moduleName + '.' + className;
+  }
+  return ctx.moduleName + '.' + className;
+}
+
+function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniqueName) {
   const classes = [];
-  const statements = getStatementsFromSuite(parseTree);
   for (const statement of statements) {
     if (!statement || !isClassNode(statement, parseNodeType)) {
       continue;
@@ -1506,9 +1865,8 @@ function extractClasses(parseTree, ctx, parseNodeType) {
     if (!className) {
       continue;
     }
-    const classUniqueName = ctx.packageName
-      ? ctx.packageName + '.' + ctx.moduleName + '.' + className
-      : ctx.moduleName + '.' + className;
+    const classUniqueName = resolveClassUniqueName(className, ctx, parentUniqueName);
+    const classComment = extractSuiteDocString(statement.d ? statement.d.suite : null, ctx.fileText);
     let baseExprs = [];
     if (statement.d && Array.isArray(statement.d.baseClassExpressions)) {
       baseExprs = statement.d.baseClassExpressions;
@@ -1522,31 +1880,55 @@ function extractClasses(parseTree, ctx, parseNodeType) {
     const suiteStatements = getStatementsFromSuite(statement.d ? statement.d.suite : null);
     const methods = [];
     const fields = [];
+    const fieldNames = new Set();
+    const nestedClasses = [];
     for (const node of suiteStatements) {
       if (!node) {
+        continue;
+      }
+      if (isClassNode(node, parseNodeType)) {
+        nestedClasses.push(...extractClassesFromStatements([node], classCtx, parseNodeType, classUniqueName));
         continue;
       }
       if (isFunctionNode(node, parseNodeType)) {
         const method = extractMethod(node, classCtx, parseNodeType);
         if (method) {
           methods.push(method);
+          if (method.name === '__init__') {
+            const instanceFields = extractInstanceFieldsFromMethod(node, classCtx);
+            for (const instanceField of instanceFields) {
+              if (!instanceField || !instanceField.name || fieldNames.has(instanceField.name)) {
+                continue;
+              }
+              fieldNames.add(instanceField.name);
+              fields.push(instanceField);
+            }
+          }
         }
         continue;
       }
       const field = extractFieldFromStatement(node, classCtx, parseNodeType, { requireAnnotation: true });
-      if (field) {
+      if (field && field.name && !fieldNames.has(field.name)) {
+        fieldNames.add(field.name);
         fields.push(field);
       }
     }
     classes.push({
       className,
       uniqueName: classUniqueName,
+      comment: classComment,
       bases,
       methods,
-      fields
+      fields,
+      classes: nestedClasses
     });
   }
   return classes;
+}
+
+function extractClasses(parseTree, ctx, parseNodeType) {
+  const statements = getStatementsFromSuite(parseTree);
+  return extractClassesFromStatements(statements, ctx, parseNodeType, null);
 }
 
 function extractFunctions(parseTree, ctx, parseNodeType) {

@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hadi.clarpse.server.ClarpseServer;
 import org.junit.AfterClass;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
+import java.net.SocketException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -33,7 +35,11 @@ public class ClarpseServerTest {
 
     @BeforeClass
     public static void startServer() throws Exception {
-        serverHandle = ClarpseServer.startServer(0, 20L * 1024L * 1024L);
+        try {
+            serverHandle = ClarpseServer.startServer(0, 20L * 1024L * 1024L);
+        } catch (SocketException e) {
+            Assume.assumeTrue("Skipping ClarpseServerTest: unable to bind to a socket in this environment", false);
+        }
         baseUrl = "http://127.0.0.1:" + serverHandle.port();
     }
 

@@ -5,6 +5,7 @@ import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
@@ -20,6 +21,8 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 /**
  * TypeScript compiler backed by the Node daemon bridge.
@@ -51,13 +54,18 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         final String persistDir = projectFiles.projectDir();
         try (TypeScriptDaemon daemon = new TypeScriptDaemon()) {
             daemon.start();
-            daemon.initRepo(persistDir);
+            final TypeScriptDaemon.InitResult initResult = daemon.initRepo(persistDir);
+            addInvalidConfigFailures(initResult, compileFailures, persistDir);
             for (final ProjectFile file : tsFiles) {
                 final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
                 final TypeScriptFileModel fileModel;
                 try {
                     fileModel = daemon.getFileModel(diskPath);
                 } catch (final TypeScriptDaemonException e) {
+                    if (e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM) {
+                        LOGGER.debug("Skipping TypeScript file outside program scope: {}", file.path());
+                        continue;
+                    }
                     if (isFileLevelFailure(e)) {
                         compileFailures.add(new CompileFailure(file, e.getMessage(), e.code()));
                         LOGGER.warn("TypeScript resolver failed for file {} (code={}).",
@@ -97,7 +105,38 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         if (e == null) {
             return false;
         }
-        return e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM
-                || e.code() == TypeScriptDaemonException.CODE_FILE_NOT_FOUND;
+        return e.code() == TypeScriptDaemonException.CODE_FILE_NOT_FOUND;
+    }
+
+    private static void addInvalidConfigFailures(final TypeScriptDaemon.InitResult initResult,
+                                                 final Set<CompileFailure> compileFailures,
+                                                 final String persistDir) {
+        for (final TypeScriptDaemon.InvalidConfig invalidConfig : initResult.invalidConfigs()) {
+            final String normalizedPath = relativeProjectPath(persistDir, invalidConfig.configPath());
+            final String message = switch (invalidConfig.error()) {
+                case "PROGRAM_CREATE_FAILED" -> "PROGRAM_CREATE_FAILED";
+                case "CONFIG_READ_FAILED", "CONFIG_PARSE_FAILED" -> "CONFIG_PARSE_FAILED";
+                default -> "CONFIG_INVALID";
+            };
+            final Integer code = switch (invalidConfig.error()) {
+                case "PROGRAM_CREATE_FAILED" -> TypeScriptDaemonException.CODE_PROGRAM_CREATE_FAILED;
+                case "CONFIG_READ_FAILED", "CONFIG_PARSE_FAILED" -> TypeScriptDaemonException.CODE_CONFIG_PARSE_FAILED;
+                default -> FailureCode.CONFIG_INVALID;
+            };
+            compileFailures.add(new CompileFailure(new ProjectFile(normalizedPath, ""), message, code));
+        }
+    }
+
+    private static String relativeProjectPath(final String persistDir, final String absolutePath) {
+        if (absolutePath == null || absolutePath.isEmpty()) {
+            return "/";
+        }
+        try {
+            final Path projectRoot = Paths.get(persistDir).toAbsolutePath().normalize();
+            final Path configPath = Paths.get(absolutePath).toAbsolutePath().normalize();
+            return "/" + projectRoot.relativize(configPath).toString().replace('\\', '/');
+        } catch (final Exception ignored) {
+            return absolutePath.replace('\\', '/');
+        }
     }
 }

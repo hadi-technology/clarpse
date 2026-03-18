@@ -2,6 +2,9 @@ package com.hadi.clarpse.compiler.typescript;
 
 import com.hadi.clarpse.compiler.FailureCode;
 
+/**
+ * Exception type for TypeScript daemon initialization and parse failures.
+ */
 public class TypeScriptDaemonException extends Exception {
 
     public static final int CODE_NODE_NOT_FOUND = FailureCode.NODE_RUNTIME_NOT_FOUND;

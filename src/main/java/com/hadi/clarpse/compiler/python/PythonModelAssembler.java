@@ -133,6 +133,11 @@ final class PythonModelAssembler {
                     });
                 }
             }
+            if (classModel.classes != null) {
+                for (final PythonClassModel nestedClass : classModel.classes) {
+                    insertClass(pkg, moduleName, sourcePath, packageName, nestedClass, stack, srcModel);
+                }
+            }
         });
     }
 
@@ -168,6 +173,9 @@ final class PythonModelAssembler {
         component.setName(classModel.className);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, classModel.uniqueName));
         component.setSourceFilePath(sourcePath);
+        if (classModel.comment != null && !classModel.comment.isEmpty()) {
+            component.setComment(classModel.comment);
+        }
         if (classModel.bases != null) {
             for (final PythonTypeRefModel base : classModel.bases) {
                 final ComponentReference ref = buildReference(base, true);
@@ -197,7 +205,7 @@ final class PythonModelAssembler {
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, fieldUniqueName));
         component.setSourceFilePath(sourcePath);
         if (field.rawType != null && !field.rawType.isEmpty()) {
-            component.setCodeFragment(field.name + " : " + field.rawType);
+            applyCodeFragmentHash(component, field.name + " : " + field.rawType);
         }
         final PythonTypeRefModel typeRef = new PythonTypeRefModel();
         typeRef.raw = field.rawType;
@@ -233,7 +241,7 @@ final class PythonModelAssembler {
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, fieldUniqueName));
         component.setSourceFilePath(sourcePath);
         if (field.rawType != null && !field.rawType.isEmpty()) {
-            component.setCodeFragment(field.name + " : " + field.rawType);
+            applyCodeFragmentHash(component, field.name + " : " + field.rawType);
         }
         final PythonTypeRefModel typeRef = new PythonTypeRefModel();
         typeRef.raw = field.rawType;
@@ -268,8 +276,21 @@ final class PythonModelAssembler {
         component.setName(method.name);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, method.uniqueName));
         component.setSourceFilePath(sourcePath);
+        component.setCyclo(Math.max(1, method.cyclo));
+        if (method.comment != null && !method.comment.isEmpty()) {
+            component.setComment(method.comment);
+        }
+        final String visibility = inferPythonVisibility(method.name);
+        if (visibility != null) {
+            component.insertAccessModifier(visibility);
+        }
         if (method.signature != null && !method.signature.isEmpty()) {
             component.setCodeFragment(method.signature);
+        }
+        if (method.implementationHash != 0) {
+            component.setCodeHash(method.implementationHash);
+        } else if (method.signature != null && !method.signature.isEmpty()) {
+            component.setCodeHash(method.signature.hashCode());
         }
         if (method.returnType != null) {
             final ComponentReference ref = buildReference(method.returnType, false);
@@ -295,8 +316,17 @@ final class PythonModelAssembler {
         component.setName(function.name);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, function.uniqueName));
         component.setSourceFilePath(sourcePath);
+        component.setCyclo(Math.max(1, function.cyclo));
+        if (function.comment != null && !function.comment.isEmpty()) {
+            component.setComment(function.comment);
+        }
         if (function.signature != null && !function.signature.isEmpty()) {
             component.setCodeFragment(function.signature);
+        }
+        if (function.implementationHash != 0) {
+            component.setCodeHash(function.implementationHash);
+        } else if (function.signature != null && !function.signature.isEmpty()) {
+            component.setCodeHash(function.signature.hashCode());
         }
         if (function.returnType != null) {
             final ComponentReference ref = buildReference(function.returnType, false);
@@ -332,7 +362,7 @@ final class PythonModelAssembler {
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, paramUniqueName));
         component.setSourceFilePath(sourcePath);
         if (param.rawType != null && !param.rawType.isEmpty()) {
-            component.setCodeFragment(param.rawType);
+            applyCodeFragmentHash(component, param.rawType);
         }
         final PythonTypeRefModel typeRef = new PythonTypeRefModel();
         typeRef.raw = param.rawType;
@@ -363,7 +393,7 @@ final class PythonModelAssembler {
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, paramUniqueName));
         component.setSourceFilePath(sourcePath);
         if (param.rawType != null && !param.rawType.isEmpty()) {
-            component.setCodeFragment(param.rawType);
+            applyCodeFragmentHash(component, param.rawType);
         }
         final PythonTypeRefModel typeRef = new PythonTypeRefModel();
         typeRef.raw = param.rawType;
@@ -378,6 +408,27 @@ final class PythonModelAssembler {
 
     private static boolean isConstructor(final PythonMethodModel method) {
         return method != null && "__init__".equals(method.name);
+    }
+
+    private static void applyCodeFragmentHash(final Component component, final String codeFragment) {
+        if (component == null || codeFragment == null || codeFragment.isEmpty()) {
+            return;
+        }
+        component.setCodeFragment(codeFragment);
+        component.setCodeHash(codeFragment.hashCode());
+    }
+
+    private static String inferPythonVisibility(final String name) {
+        if (name == null || name.isEmpty()) {
+            return null;
+        }
+        if (name.startsWith("__") && !name.endsWith("__")) {
+            return "private";
+        }
+        if (name.startsWith("_") && !name.startsWith("__")) {
+            return "protected";
+        }
+        return null;
     }
 
     private static ComponentReference buildReference(final PythonTypeRefModel ref,

@@ -1,5 +1,8 @@
 package com.hadi.clarpse;
 
+/**
+ * Utility that trims repeated prefix and suffix tokens from a string value.
+ */
 public class TrimmedString {
 
     private String untrimmedString;

@@ -3,6 +3,9 @@ package com.hadi.clarpse.compiler.python.model;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Raw Python file payload returned by the daemon.
+ */
 public class PythonFileModel {
 
     public String filePath;

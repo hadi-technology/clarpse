@@ -18,6 +18,11 @@ class diagrams while treating external libraries as labels only.
 - Resolve internal types across modules.
 - Treat external types as labels only.
 - Skip large dependency folders like .venv, venv, __pycache__, .tox, build, dist.
+- Support nested class declarations.
+- Extract docstrings and comments for components.
+- Calculate cyclomatic complexity for methods and functions.
+- Generate code hashes for change detection.
+- Infer visibility modifiers for methods (public/private based on name prefix).
 
 # Identity and Naming
 Unique names follow the existing Clarpse rule.
@@ -30,8 +35,10 @@ Where:
 
 Component naming:
 - Class: componentName = moduleName.ClassName
+- Nested class: componentName = moduleName.OuterClassName.NestedClassName
 - Method: componentName = moduleName.ClassName.signature
 - Field: componentName = moduleName.ClassName.field
+- Function: componentName = moduleName.functionSignature
 
 Method signature format:
 methodName(p1: T1, p2: T2) -> R
@@ -64,6 +71,11 @@ and can be mapped through imports or local class declarations.
 - A missing or invalid file yields a file level error that the compiler records.
 - Module-level functions are emitted as `FUNCTION` components.
 - Module-level variables are emitted as `MODULE_FIELD` components.
+- Nested classes are fully supported with proper unique name chaining.
+- Docstrings are extracted and attached to the component's comment field.
+- Cyclomatic complexity is calculated and stored in the component's cyclo field.
+- Code hashes are generated from implementation hashes or signature hashes for change detection.
+- Method visibility is inferred: methods starting with `_` are marked as private.
 
 # JSON Protocol
 Requests use line delimited JSON.
@@ -105,6 +117,31 @@ Label precedence:
 # Excludes
 Default excluded directories:
 - .venv, venv, __pycache__, .tox, build, dist, node_modules, .mypy_cache, .pytest_cache
+
+# Additional Features
+## Comment Extraction
+Python docstrings are extracted and attached to components using the standard docstring conventions. Both class and method/function docstrings are captured.
+
+## Cyclomatic Complexity
+Method and function cyclomatic complexity is calculated by the Pyright daemon and stored in the component's cyclo field. This provides a measure of code complexity for architectural analysis.
+
+## Code Hashing
+Each method and function includes a code hash for change detection:
+- If an implementation hash is provided by the daemon, it is used directly.
+- Otherwise, the signature hash is used as a fallback.
+- This enables downstream tools to detect when method implementations have changed.
+
+## Visibility Inference
+Python methods are tagged with visibility modifiers based on naming conventions:
+- Methods starting with `_` (single underscore) are marked as private.
+- Methods starting with `__` (double underscore) are marked as private.
+- All other methods are considered public.
+
+## Nested Classes
+Python supports nested class definitions, and these are fully modeled:
+- Nested classes have unique names that include their parent class path.
+- All references to and from nested classes are properly resolved.
+- Nested classes can be nested to arbitrary depth.
 
 # Non Goals
 - Runtime execution or dynamic import evaluation.

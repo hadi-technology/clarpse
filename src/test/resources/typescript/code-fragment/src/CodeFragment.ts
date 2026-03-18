@@ -22,4 +22,16 @@ class MethodTest {
   complexMethod(s: string, t: number): Map<List, string[]> {
     return null as any;
   }
+
+  literalText(): "ready" {
+    return "ready";
+  }
+
+  literalCount(): 7 {
+    return 7;
+  }
+
+  literalSwitch(flag: boolean): "on" | "off" {
+    return flag ? "on" : "off";
+  }
 }

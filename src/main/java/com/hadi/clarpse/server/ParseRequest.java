@@ -2,6 +2,9 @@ package com.hadi.clarpse.server;
 
 import java.util.List;
 
+/**
+ * Incoming parse request containing target language and source files.
+ */
 public final class ParseRequest {
 
     private String language;

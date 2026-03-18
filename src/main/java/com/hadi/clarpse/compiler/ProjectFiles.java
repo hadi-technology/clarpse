@@ -38,9 +38,11 @@ import java.util.zip.ZipInputStream;
 public class ProjectFiles implements AutoCloseable {
 
     private static final Logger LOGGER = LogManager.getLogger(ProjectFiles.class);
-    private static final int MAX_ZIP_ENTRIES = 10000;
-    private static final long MAX_TOTAL_UNCOMPRESSED_BYTES = 200L * 1024 * 1024;
-    private static final long MAX_ENTRY_UNCOMPRESSED_BYTES = 10L * 1024 * 1024;
+    private static final int MAX_ZIP_ENTRIES = ClarpseProperties.getInt("clarpse.zip.maxEntries", 100000);
+    private static final long MAX_TOTAL_UNCOMPRESSED_BYTES =
+            ClarpseProperties.getLong("clarpse.zip.maxTotalUncompressedBytes", 200L * 1024 * 1024);
+    private static final long MAX_ENTRY_UNCOMPRESSED_BYTES =
+            ClarpseProperties.getLong("clarpse.zip.maxEntryUncompressedBytes", 10L * 1024 * 1024);
     private final Map<Lang, List<ProjectFile>> langToFilesMap = new HashMap<>();
     private int size = 0;
     private String projectDir;
@@ -105,6 +107,15 @@ public class ProjectFiles implements AutoCloseable {
                 throw new IllegalArgumentException("Cannot shift file: " + file.path() + ".");
             }
         }).collect(Collectors.toList())));
+        final Map<String, String> shiftedConfigFiles = new HashMap<>();
+        this.configFiles.forEach((path, content) -> shiftedConfigFiles.put(shiftConfigPath(path), content));
+        this.configFiles.clear();
+        this.configFiles.putAll(shiftedConfigFiles);
+        if (this.tempProjectDir && this.projectDir != null && !this.projectDir.isEmpty()) {
+            FileUtils.deleteQuietly(new File(this.projectDir));
+            this.tempProjectDir = false;
+            this.projectDir = null;
+        }
     }
 
     public int size() {
@@ -146,7 +157,7 @@ public class ProjectFiles implements AutoCloseable {
                     if (safeName == null) {
                         throw new IllegalArgumentException("Unsafe zip entry path: " + entry.getName());
                     }
-                    byte[] content = readEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES);
+                    byte[] content = readEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, safeName);
                     totalBytes += content.length;
                     if (totalBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
                         throw new IllegalArgumentException("Zip exceeds maximum uncompressed size.");
@@ -194,7 +205,7 @@ public class ProjectFiles implements AutoCloseable {
         return normalizedPath.toString();
     }
 
-    private byte[] readEntryBytes(InputStream inputStream, long maxBytes) throws IOException {
+    private byte[] readEntryBytes(InputStream inputStream, long maxBytes, String entryName) throws IOException {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         byte[] buffer = new byte[8192];
         long total = 0;
@@ -202,7 +213,8 @@ public class ProjectFiles implements AutoCloseable {
         while ((read = inputStream.read(buffer)) != -1) {
             total += read;
             if (total > maxBytes) {
-                throw new IllegalArgumentException("Zip entry exceeds maximum allowed size.");
+                throw new IllegalArgumentException(
+                        "Zip entry exceeds maximum allowed size: " + entryName + ".");
             }
             output.write(buffer, 0, read);
         }
@@ -221,6 +233,18 @@ public class ProjectFiles implements AutoCloseable {
 
     private boolean anyMatchExtensions(String s, String[] extn) {
         return Arrays.stream(extn).anyMatch(ending -> s.toLowerCase(Locale.ROOT).endsWith(ending));
+    }
+
+    private String shiftConfigPath(final String configPath) {
+        if (configPath == null) {
+            throw new IllegalArgumentException("Cannot shift config path: null");
+        }
+        final String normalized = configPath.replace('\\', '/');
+        final int firstSeparator = normalized.indexOf('/');
+        if (firstSeparator < 0 || firstSeparator + 1 >= normalized.length()) {
+            throw new IllegalArgumentException("Cannot shift config path: " + configPath + ".");
+        }
+        return normalized.substring(firstSeparator + 1);
     }
 
     public final void insertFile(final ProjectFile file) {

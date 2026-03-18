@@ -62,6 +62,24 @@ public class TypeScriptCodeFragmentTest {
                 model.getComponent(methodName).orElseThrow().codeFragment());
     }
 
+    @Test
+    public void literalStringReturnTypeIsNormalized() {
+        String methodName = name("MethodTest." + TypeScriptTestUtil.signature("literalText"));
+        assertEquals("literalText() : string", model.getComponent(methodName).orElseThrow().codeFragment());
+    }
+
+    @Test
+    public void literalNumberReturnTypeIsNormalized() {
+        String methodName = name("MethodTest." + TypeScriptTestUtil.signature("literalCount"));
+        assertEquals("literalCount() : number", model.getComponent(methodName).orElseThrow().codeFragment());
+    }
+
+    @Test
+    public void literalUnionReturnTypeIsNormalized() {
+        String methodName = name("MethodTest." + TypeScriptTestUtil.signature("literalSwitch", "boolean"));
+        assertEquals("literalSwitch(boolean) : string", model.getComponent(methodName).orElseThrow().codeFragment());
+    }
+
     private static String name(final String symbolPath) {
         return TypeScriptTestUtil.uniqueName(PACKAGE_PATH, MODULE, symbolPath);
     }

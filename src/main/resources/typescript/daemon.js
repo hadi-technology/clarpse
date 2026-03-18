@@ -30,6 +30,15 @@ function writeError(id, code, message, data) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error }) + "\n");
 }
 
+function stableImplementationHash(text) {
+  const normalized = String(text || "").replace(/\r\n/g, "\n").trim();
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash = ((hash * 31) + normalized.charCodeAt(i)) | 0;
+  }
+  return hash;
+}
+
 function loadTypeScript(repoRoot) {
   function tryResolve(resolver) {
     try {
@@ -237,7 +246,8 @@ function getReturnType(checker, node) {
   if (!signature) {
     return "";
   }
-  return checker.typeToString(checker.getReturnTypeOfSignature(signature));
+  const returnType = checker.getReturnTypeOfSignature(signature);
+  return normalizeReturnType(returnType, checker);
 }
 
 function getReturnTypeObject(checker, node) {
@@ -249,6 +259,55 @@ function getReturnTypeObject(checker, node) {
     return null;
   }
   return checker.getReturnTypeOfSignature(signature);
+}
+
+function normalizeReturnType(type, checker) {
+  if (!type || !checker || !state.ts) {
+    return "";
+  }
+  const ts = state.ts;
+  const flags = type.flags || 0;
+
+  if (flags & ts.TypeFlags.StringLiteral) {
+    return "string";
+  }
+  if (flags & ts.TypeFlags.NumberLiteral) {
+    return "number";
+  }
+  if (flags & ts.TypeFlags.BooleanLiteral) {
+    return "boolean";
+  }
+  if (flags & ts.TypeFlags.BigIntLiteral) {
+    return "bigint";
+  }
+
+  if (type.isUnion && type.isUnion() && Array.isArray(type.types)) {
+    const parts = [];
+    for (const subType of type.types) {
+      const normalized = normalizeReturnType(subType, checker);
+      if (!normalized) {
+        continue;
+      }
+      parts.push(normalized);
+    }
+    const unique = Array.from(new Set(parts));
+    return unique.join(" | ");
+  }
+
+  if (type.isIntersection && type.isIntersection() && Array.isArray(type.types)) {
+    const parts = [];
+    for (const subType of type.types) {
+      const normalized = normalizeReturnType(subType, checker);
+      if (!normalized) {
+        continue;
+      }
+      parts.push(normalized);
+    }
+    const unique = Array.from(new Set(parts));
+    return unique.join(" & ");
+  }
+
+  return checker.typeToString(type);
 }
 
 function buildSignature(name, parameters, checker) {
@@ -633,6 +692,7 @@ function buildMethodModel(node, checker, kindLabel) {
     kind: kindLabel,
     name,
     signature,
+    implementationHash: stableImplementationHash(node.body ? node.body.getText() : ""),
     returnType: kindLabel === "constructor" ? "" : getReturnType(checker, node),
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
@@ -655,6 +715,7 @@ function buildAccessorModel(node, checker, accessorKind) {
     kind: "method",
     name,
     signature,
+    implementationHash: stableImplementationHash(node.body ? node.body.getText() : ""),
     returnType: accessorKind === "set" ? "" : getReturnType(checker, node),
     modifiers,
     jsDoc: getJsDoc(node),
@@ -848,7 +909,8 @@ async function handleInitRepo(params) {
     tsVersion: ts.version || "",
     configCount: programs.length,
     fileCount,
-    invalidConfigCount: invalidConfigs.length
+    invalidConfigCount: invalidConfigs.length,
+    invalidConfigs
   };
 }
 

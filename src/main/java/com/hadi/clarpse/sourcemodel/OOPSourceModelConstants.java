@@ -10,6 +10,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
 
+/**
+ * Central constants and enums used by the language-agnostic source model.
+ */
 public final class OOPSourceModelConstants {
 
     static final Map<String, String> JAVA_COLLECTIONS = new HashMap<String, String>();
@@ -232,6 +235,9 @@ public final class OOPSourceModelConstants {
         return COMPONENT_TYPES;
     }
 
+    /**
+     * Supported access/modifier tokens with UML visibility symbols.
+     */
     public enum AccessModifiers {
         FINAL(""), ABSTRACT(""), INTERFACE(""), NATIVE(""), PRIVATE("-"), PROTECTED("#"), PUBLIC("+"), STATIC(
                 ""), STRICTFP(""), SYNCHRONIZED(""), TRANSIENT(""), NONE("~"), VOLATILE("");
@@ -247,6 +253,9 @@ public final class OOPSourceModelConstants {
         }
     }
 
+    /**
+     * Categories of component references captured by the model.
+     */
     public enum TypeReferences {
 
         SIMPLE(SimpleTypeReference.class),
@@ -264,6 +273,9 @@ public final class OOPSourceModelConstants {
         }
     }
 
+    /**
+     * Normalized component kinds used across all language implementations.
+     */
     public enum ComponentType implements Serializable {
 
         CLASS("class", true, false, false), STRUCT("class", true, false, false), INTERFACE("interface", true, false,

@@ -1,5 +1,8 @@
 package com.hadi.clarpse.server;
 
+/**
+ * Serializable representation of a single compile/parse failure.
+ */
 public final class FailureResponse {
 
     private String path;

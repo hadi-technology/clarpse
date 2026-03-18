@@ -39,7 +39,8 @@ public class TypeScriptInvalidTsconfigTest {
 
         assertEquals(1, result.failures().size());
         CompileFailure failure = result.failures().iterator().next();
-        assertEquals("FILE_NOT_IN_PROGRAM", failure.message());
-        assertTrue(failure.file().path().endsWith("bad/src/Bad.ts"));
+        assertEquals(Integer.valueOf(1003), failure.errorCode());
+        assertEquals("CONFIG_PARSE_FAILED", failure.message());
+        assertTrue(failure.file().path().endsWith("bad/tsconfig.json"));
     }
 }

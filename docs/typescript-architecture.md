@@ -14,6 +14,7 @@ architecture-level model as Java, with strict correctness guarantees and explici
 - Only `.ts`, `.tsx`, and `.d.ts` files are parsed; JavaScript is not parsed.
 - The TypeScript compiler is the single source of truth for resolution.
 - If TypeScript cannot resolve a file or program, the compiler fails explicitly (no heuristics).
+- Monorepo setups with multiple `tsconfig.json` files are supported.
 
 Supported Node.js versions: 18, 20, 22.
 
@@ -89,15 +90,26 @@ All relationships are resolved through the TypeScript `TypeChecker`:
 - field types
 - parameter types
 - return types
+- constructor parameter properties (fields declared in constructor parameters)
 
 Targets are classified as internal or external:
 - Internal references resolve to Clarpse uniqueNames.
 - External references are marked explicitly.
 
+# Constructor Parameter Properties
+TypeScript supports parameter properties in constructors, which declare and initialize fields in one step:
+```typescript
+class Example {
+  constructor(public name: string, private age: number) {}
+}
+```
+These are properly modeled as fields with their corresponding visibility modifiers, enabling accurate architectural analysis.
+
 # Efficiency Notes
 - Programs are built once per `tsconfig.json` and reused for all files in that config.
 - A file->program map is built during daemon initialization for faster lookups.
 - The daemon is single-threaded; Java parsing can run in parallel.
+- Monorepo support: Multiple `tsconfig.json` files are handled by building separate programs and correctly scoping files to their appropriate config.
 
 # Core Classes and Locations
 - Compiler: `src/main/java/com/hadi/clarpse/compiler/typescript/ClarpseTypeScriptCompiler.java`
@@ -106,6 +118,23 @@ Targets are classified as internal or external:
 - Daemon runtime: `src/main/resources/typescript/daemon.js`
 - TypeScript models: `src/main/java/com/hadi/clarpse/compiler/typescript/model/*`
 - Compile failures: `src/main/java/com/hadi/clarpse/compiler/CompileFailure.java`
+
+# Additional Features
+## Monorepo Support
+Clarpse supports monorepo setups with multiple `tsconfig.json` files:
+- Each `tsconfig.json` creates a separate TypeScript program instance.
+- Files are correctly scoped to their appropriate program based on `tsconfig` references.
+- Project references (`composite: true`, `references` arrays) are properly handled.
+- Files not in any valid program scope are reported with appropriate error codes.
+
+## Constructor Parameter Properties
+TypeScript's parameter properties are fully supported:
+- Fields declared in constructor parameters are extracted as separate field components.
+- Visibility modifiers (public/private/protected/readonly) are preserved.
+- This enables accurate dependency analysis for classes using this TypeScript feature.
+
+## Code Fragment Support
+Method and function signatures are captured as code fragments for display and analysis purposes.
 
 # Non-Goals
 - No heuristic or string-based fallback resolution; symbol/type resolution is compiler-backed only.

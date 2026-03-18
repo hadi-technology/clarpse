@@ -4,6 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.io.Serializable;
 
+/**
+ * Reference indicating a type implements another type contract.
+ */
 public class TypeImplementationReference extends ComponentReference implements Serializable {
 
     private static final long serialVersionUID = 7807962152246261233L;

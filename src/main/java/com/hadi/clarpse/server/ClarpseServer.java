@@ -35,6 +35,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Minimal HTTP server exposing Clarpse parse endpoints.
+ */
 public final class ClarpseServer {
 
     private static final Logger LOGGER = LogManager.getLogger(ClarpseServer.class);

@@ -2,6 +2,9 @@ package com.hadi.clarpse.compiler.python;
 
 import com.hadi.clarpse.compiler.FailureCode;
 
+/**
+ * Exception type for Python daemon initialization and parse failures.
+ */
 public class PythonDaemonException extends Exception {
 
     public static final int CODE_NODE_NOT_FOUND = FailureCode.NODE_RUNTIME_NOT_FOUND;

@@ -8,7 +8,7 @@ Clarpse is a multi-language architectural code analysis library for building bet
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-<version>9.0.0</version>
+<version>9.2.5</version>
 </dependency>
 ```
 
@@ -20,13 +20,15 @@ Clarpse is a multi-language parsing and analysis library that converts source co
 # Features
 
  - Supports **Java** with a lightweight, architecture-focused parser.
- - Supports **TypeScript** with compiler-accurate, tsconfig-aware parsing and resolution.
- - Supports **Python** with Pyright-backed parsing, cross-file internal type links, and external type labels.
+ - Supports **TypeScript** with compiler-accurate, tsconfig-aware parsing and resolution, including constructor parameter property detection and monorepo support.
+ - Supports **Python** with Pyright-backed parsing, including nested classes, comment parsing, cyclomatic complexity, code hashing, and visibility inference.
+ - Runtime configuration through bundled properties file
  - Light weight
  - Performant
  - Easy to use
  - Clean API built on top of AST
  - Support for parsing comments
+ - Parallel parsing with configurable worker counts
 
 # Requirements
  - Java 17
@@ -81,8 +83,9 @@ curl -s -X POST http://localhost:8080/parse \
 ```
 
 # Runtime Tuning
-Clarpse supports per-language parallelism tuning.
+Clarpse supports runtime configuration through environment variables, system properties, and a bundled properties file.
 
+## Parallelism Control
 - `CLARPSE_PARALLELISM` controls Java parser thread count.
 - `CLARPSE_PYTHON_PARALLELISM` or `-Dclarpse.python.parallelism=<n>` controls Python worker count.
 - Values `1` or lower force serial parsing.
@@ -91,15 +94,27 @@ Clarpse supports per-language parallelism tuning.
 Example:
 `CLARPSE_PARALLELISM=4 mvn test`
 
+## Zip Entry Limits
+Clarpse includes configurable limits for zip processing to prevent resource exhaustion. These can be overridden via system properties or by modifying `src/main/resources/clarpse.properties`:
+- `clarpse.zip.maxEntries` (default: 100000) - Maximum number of entries in a zip file
+- `clarpse.zip.maxTotalUncompressedBytes` (default: 209715200, ~200MB) - Maximum total uncompressed size
+- `clarpse.zip.maxEntryUncompressedBytes` (default: 10485760, ~10MB) - Maximum size per entry
+
+## Node.js Configuration
+- `CLARPSE_NODE_PATH` or `-Dclarpse.node.path=<path>` sets a custom Node.js executable path.
+- `CLARPSE_NODE_DISABLED` or `-Dclarpse.node.disabled=true` disables Node.js (TypeScript and Python parsing will fail).
+
 # Repo Tour
 Key areas of the repository:
 
 - `src/main/java/com/hadi/clarpse/compiler` - Language compilers, project file handling, and orchestration.
 - `src/main/java/com/hadi/clarpse/compiler/typescript` - TypeScript compiler bridge and models.
+- `src/main/java/com/hadi/clarpse/compiler/python` - Python compiler bridge and models.
+- `src/main/java/com/hadi/clarpse/compiler/ClarpseProperties.java` - Runtime properties loader.
 - `src/main/java/com/hadi/clarpse/listener` - Parse tree listeners that build the source model (Java).
 - `src/main/java/com/hadi/clarpse/sourcemodel` - Component and package models.
 - `src/main/java/com/hadi/clarpse/reference` - Component reference types.
-- `src/main/resources` - Parser helpers and tool configuration (TypeScript daemon lives here).
+- `src/main/resources` - Parser helpers, daemon scripts, and configuration (TypeScript and Python daemons, properties file).
 - `src/test/java` - Unit and integration tests.
 - `src/test/resources` - Test fixtures and zipped codebases used by tests.
 
@@ -137,6 +152,7 @@ Core classes and where they live:
 
 - Project entry and orchestration: `src/main/java/com/hadi/clarpse/compiler/ClarpseProject.java`
 - Project inputs: `src/main/java/com/hadi/clarpse/compiler/ProjectFiles.java`, `src/main/java/com/hadi/clarpse/compiler/ProjectFile.java`
+- Runtime properties: `src/main/java/com/hadi/clarpse/compiler/ClarpseProperties.java`, `src/main/resources/clarpse.properties`
 - Compiler selection and results: `src/main/java/com/hadi/clarpse/compiler/CompilerFactory.java`, `src/main/java/com/hadi/clarpse/compiler/ClarpseCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/CompileResult.java`
 - Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/typescript/ClarpseTypeScriptCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/python/ClarpsePythonCompiler.java`
 - Parse listeners: `src/main/java/com/hadi/clarpse/listener/JavaTreeListener.java`

@@ -34,7 +34,7 @@ public final class PythonTestUtil {
         if (paramDecls != null && paramDecls.length > 0) {
             params = String.join(", ", paramDecls);
         }
-        return name + "(" + params + ") -> " + returnType;
+        return name + "(" + params + ") : " + returnType;
     }
 
     public static String uniqueName(final String packagePath, final String moduleName, final String symbolPath) {

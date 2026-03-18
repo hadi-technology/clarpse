@@ -107,12 +107,22 @@ final class TypeScriptModelAssembler {
             component.setAccessModifiers(declaration.modifiers);
         }
         final String codeFragment = buildCodeFragment(declaration, componentType);
-        if (codeFragment != null && !codeFragment.isEmpty()) {
-            component.setCodeFragment(codeFragment);
-            component.setCodeHash(codeFragment.hashCode());
-        }
+        applyCodeSignature(component, declaration, codeFragment);
         attachReferences(component, declaration, repoRoot);
         return component;
+    }
+
+    private static void applyCodeSignature(final Component component,
+                                           final TypeScriptComponentModel declaration,
+                                           final String codeFragment) {
+        if (codeFragment != null && !codeFragment.isEmpty()) {
+            component.setCodeFragment(codeFragment);
+        }
+        if (declaration != null && declaration.implementationHash != 0) {
+            component.setCodeHash(declaration.implementationHash);
+        } else if (codeFragment != null && !codeFragment.isEmpty()) {
+            component.setCodeHash(codeFragment.hashCode());
+        }
     }
 
     private static String generateComponentName(final String moduleName,

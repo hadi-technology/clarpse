@@ -17,6 +17,9 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -67,7 +70,8 @@ public final class TypeScriptDaemon implements AutoCloseable {
                 result.path("tsVersion").asText(""),
                 result.path("configCount").asInt(0),
                 result.path("fileCount").asInt(0),
-                result.path("invalidConfigCount").asInt(0)
+                result.path("invalidConfigCount").asInt(0),
+                parseInvalidConfigs(result.path("invalidConfigs"))
         );
     }
 
@@ -187,13 +191,15 @@ public final class TypeScriptDaemon implements AutoCloseable {
         private final int configCount;
         private final int fileCount;
         private final int invalidConfigCount;
+        private final List<InvalidConfig> invalidConfigs;
 
         public InitResult(final String tsVersion, final int configCount, final int fileCount,
-                          final int invalidConfigCount) {
+                          final int invalidConfigCount, final List<InvalidConfig> invalidConfigs) {
             this.tsVersion = tsVersion;
             this.configCount = configCount;
             this.fileCount = fileCount;
             this.invalidConfigCount = invalidConfigCount;
+            this.invalidConfigs = invalidConfigs;
         }
 
         public String tsVersion() {
@@ -211,5 +217,40 @@ public final class TypeScriptDaemon implements AutoCloseable {
         public int invalidConfigCount() {
             return invalidConfigCount;
         }
+
+        public List<InvalidConfig> invalidConfigs() {
+            return invalidConfigs;
+        }
+    }
+
+    public static final class InvalidConfig {
+        private final String configPath;
+        private final String error;
+
+        public InvalidConfig(final String configPath, final String error) {
+            this.configPath = configPath;
+            this.error = error;
+        }
+
+        public String configPath() {
+            return configPath;
+        }
+
+        public String error() {
+            return error;
+        }
+    }
+
+    private static List<InvalidConfig> parseInvalidConfigs(final JsonNode invalidConfigsNode) {
+        if (invalidConfigsNode == null || !invalidConfigsNode.isArray() || invalidConfigsNode.isEmpty()) {
+            return Collections.emptyList();
+        }
+        final List<InvalidConfig> invalidConfigs = new ArrayList<>();
+        for (final JsonNode invalidConfigNode : invalidConfigsNode) {
+            invalidConfigs.add(new InvalidConfig(
+                    invalidConfigNode.path("configPath").asText(""),
+                    invalidConfigNode.path("error").asText("")));
+        }
+        return Collections.unmodifiableList(invalidConfigs);
     }
 }
