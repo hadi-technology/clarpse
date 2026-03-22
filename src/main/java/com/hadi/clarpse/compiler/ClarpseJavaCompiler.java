@@ -16,6 +16,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -36,10 +37,11 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
     private static final int MIN_FILES_FOR_PARALLEL = 2;
 
     @Override
-    public CompileResult compile(final ProjectFiles projectFiles) throws CompileException {
+    public CompileResult compile(final ProjectFiles projectFiles,
+                                 final Collection<String> analyzedFilePaths) throws CompileException {
         final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
         final Set<CompileFailure> compileFailures = new HashSet<>();
-        final List<ProjectFile> javaFiles = new ArrayList<>(projectFiles.files(Lang.JAVA));
+        final List<ProjectFile> javaFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.JAVA, analyzedFilePaths);
         if (!javaFiles.isEmpty()) {
             String persistDir = null;
             try {

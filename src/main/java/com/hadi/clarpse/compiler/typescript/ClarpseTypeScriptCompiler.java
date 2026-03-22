@@ -17,6 +17,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -32,10 +33,13 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
     private static final Logger LOGGER = LogManager.getLogger(ClarpseTypeScriptCompiler.class);
 
     @Override
-    public CompileResult compile(final ProjectFiles projectFiles) throws CompileException {
+    public CompileResult compile(final ProjectFiles projectFiles,
+                                 final Collection<String> analyzedFilePaths) throws CompileException {
         final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
         final Set<CompileFailure> compileFailures = new HashSet<>();
-        final List<ProjectFile> tsFiles = new ArrayList<>(projectFiles.files(Lang.TYPESCRIPT));
+        final List<ProjectFile> tsFiles = ClarpseCompiler.analyzedFiles(projectFiles,
+                Lang.TYPESCRIPT,
+                analyzedFilePaths);
 
         if (tsFiles.isEmpty()) {
             return new CompileResult(srcModel, compileFailures);

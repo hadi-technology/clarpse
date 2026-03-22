@@ -364,15 +364,6 @@ public class ProjectFiles implements AutoCloseable {
         return normalized.replace('/', File.separatorChar);
     }
 
-    public void filter(Collection<String> filterFilePaths) {
-        this.langToFilesMap.forEach((lang, files) -> new ArrayList<>(files).forEach(file -> {
-            if (!filterFilePaths.contains(file.path())) {
-                this.langToFilesMap.get(lang).remove(file);
-                size -= 1;
-            }
-        }));
-    }
-
     public Set<ProjectFile> matchingFilesByName(String matchName) {
         Set<ProjectFile> result = new HashSet<>();
         this.langToFilesMap.forEach((lang, files) -> result.addAll(files.stream().filter(
