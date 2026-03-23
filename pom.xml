@@ -3,7 +3,7 @@
 
 	<groupId>io.github.hadi-technology</groupId>
 	<artifactId>clarpse</artifactId>
-	<version>9.2.5</version>
+	<version>9.2.6</version>
 	<packaging>jar</packaging>
 
 	<name>${project.groupId}:${project.artifactId}</name>
@@ -12,6 +12,7 @@
 
 	<properties>
 		<java.version>17</java.version>
+		<checkstyle.config.location>checkstyle-config.xml</checkstyle.config.location>
 	</properties>
 
 	<licenses>
@@ -147,7 +148,6 @@
 						<configuration>
 							<excludes>com/hadi/test</excludes>
 							<failOnViolation>true</failOnViolation>
-							<configLocation>src/main/resources/clarpsecheckstyleconfig.xml</configLocation>
 							<violationSeverity>warning</violationSeverity>
 							<consoleOutput>true</consoleOutput>
 						</configuration>

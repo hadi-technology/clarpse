@@ -108,18 +108,6 @@ public class ProjectFilesTest {
     }
 
     @Test
-    public void testFilterByNonExistentPath() {
-        ProjectFiles projectFiles = new ProjectFiles();
-        ProjectFile projectFile = new ProjectFile("/test/lol/cakes.java", "{}");
-        projectFiles.insertFile(projectFile);
-        ArrayList<String> filterPaths = new ArrayList<>();
-        filterPaths.add("/");
-        projectFiles.filter(filterPaths);
-        // Should remove everything...
-        assertEquals(0, projectFiles.size());
-    }
-
-    @Test
     public void testProjectFilesSize() {
         ProjectFiles pfs = new ProjectFiles();
         pfs.insertFile(new ProjectFile("/test.java", "{}"));
@@ -157,15 +145,6 @@ public class ProjectFilesTest {
     }
 
     @Test
-    public void testProjectFilesSizeAfterFilter() {
-        ProjectFiles pfs = new ProjectFiles();
-        pfs.insertFile(new ProjectFile("/test.java", "{}"));
-        pfs.insertFile(new ProjectFile("/tester.java", "{}"));
-        pfs.filter(List.of("/test.java"));
-        assertEquals(1, pfs.size());
-    }
-
-    @Test
     public void testMatchingFilesByName() {
         ProjectFiles pfs = new ProjectFiles();
         pfs.insertFile(new ProjectFile("/test.java", "{}"));
@@ -177,17 +156,6 @@ public class ProjectFilesTest {
         ProjectFiles pfs = new ProjectFiles();
         pfs.insertFile(new ProjectFile("/test.java", "{}"));
         assertEquals(0, pfs.matchingFilesByName("missing.java").size());
-    }
-
-    @Test
-    public void testFilterByExistentPath() {
-        ProjectFiles projectFiles = new ProjectFiles();
-        ProjectFile projectFile = new ProjectFile("/test/lol/cakes.java", "{}");
-        projectFiles.insertFile(projectFile);
-        ArrayList<String> filterFilePaths = new ArrayList<>();
-        filterFilePaths.add("/test/lol/cakes.java");
-        projectFiles.filter(filterFilePaths);
-        assertEquals(1, projectFiles.size());
     }
 
     @Test

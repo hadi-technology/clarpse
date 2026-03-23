@@ -17,6 +17,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -40,10 +41,11 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
     private static final int MIN_FILES_FOR_PARALLEL = 8;
 
     @Override
-    public CompileResult compile(final ProjectFiles projectFiles) throws CompileException {
+    public CompileResult compile(final ProjectFiles projectFiles,
+                                 final Collection<String> analyzedFilePaths) throws CompileException {
         final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
         final Set<CompileFailure> compileFailures = new HashSet<>();
-        final List<ProjectFile> pyFiles = new ArrayList<>(projectFiles.files(Lang.PYTHON));
+        final List<ProjectFile> pyFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.PYTHON, analyzedFilePaths);
 
         if (pyFiles.isEmpty()) {
             return new CompileResult(srcModel, compileFailures);
