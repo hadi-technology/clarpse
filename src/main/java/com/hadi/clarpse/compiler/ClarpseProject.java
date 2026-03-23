@@ -24,14 +24,14 @@ public class ClarpseProject {
 
     public ClarpseProject(final ProjectFiles pfs,
                           final Lang lang,
-                          final Collection<String> analyzedFilePaths) {
+                          final Collection<String> pathsToAnalyze) {
         validateInput(lang);
         this.projectFiles = pfs;
         this.lang = lang;
-        if (analyzedFilePaths == null) {
+        if (pathsToAnalyze == null) {
             this.analyzedFilePaths = null;
         } else {
-            this.analyzedFilePaths = List.copyOf(analyzedFilePaths);
+            this.analyzedFilePaths = List.copyOf(pathsToAnalyze);
         }
     }
 
