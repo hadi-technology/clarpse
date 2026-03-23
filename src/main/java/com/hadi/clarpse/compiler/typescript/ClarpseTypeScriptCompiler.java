@@ -16,7 +16,7 @@ import com.hadi.clarpse.sourcemodel.Package;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.ArrayList;
+
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashSet;

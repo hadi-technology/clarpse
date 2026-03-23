@@ -12,6 +12,7 @@
 
 	<properties>
 		<java.version>17</java.version>
+		<checkstyle.config.location>checkstyle-config.xml</checkstyle.config.location>
 	</properties>
 
 	<licenses>
@@ -147,7 +148,6 @@
 						<configuration>
 							<excludes>com/hadi/test</excludes>
 							<failOnViolation>true</failOnViolation>
-							<configLocation>src/main/resources/clarpsecheckstyleconfig.xml</configLocation>
 							<violationSeverity>warning</violationSeverity>
 							<consoleOutput>true</consoleOutput>
 						</configuration>
