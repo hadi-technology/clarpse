@@ -44,7 +44,7 @@ public final class PythonDaemon implements AutoCloseable {
             return envVar.trim();
         }
         // Fall back to bundled properties file
-        return String.valueOf(com.hadi.clarpse.compiler.ClarpseProperties.getInt(NODE_HEAP_SIZE_PROP, 4096));
+        return String.valueOf(ClarpseProperties.getInt(NODE_HEAP_SIZE_PROP, 4096));
     }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
