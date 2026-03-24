@@ -169,10 +169,30 @@ function buildPrograms(ts, repoRoot, configPaths) {
       // Extends couldn't be resolved (e.g., in node_modules), use local config only
       console.warn(`[clarpse] Config at ${configPath} has 'extends' that couldn't be resolved. Using local compilerOptions only.`);
       const rawConfig = configFile.config;
-      options = Object.assign({}, rawConfig.compilerOptions || {}, { allowJs: false, checkJs: false });
       const configDir = path.dirname(configPath);
+
+      // Parse compilerOptions from JSON using TypeScript's converter to get proper enum values
+      const convertedOpts = ts.convertCompilerOptionsFromJson(
+        rawConfig.compilerOptions || {},
+        configDir,
+        ts.sys.readFile
+      );
+      options = Object.assign({}, convertedOpts.options || {}, { allowJs: false, checkJs: false });
+
+      // Resolve project references relative to config directory
+      const rawRefs = rawConfig.references || [];
+      projectReferences = rawRefs.map(ref => {
+        if (typeof ref === 'string') {
+          const refPath = path.resolve(configDir, ref);
+          return { path: refPath };
+        }
+        if (ref && ref.path) {
+          return { path: path.resolve(configDir, ref.path) };
+        }
+        return ref;
+      });
+
       rootNames = findTypeScriptFiles(configDir);
-      projectReferences = rawConfig.references || [];
     } else {
       options = Object.assign({}, config.options, { allowJs: false, checkJs: false });
       rootNames = filterTypeScriptRoots(config.fileNames);
