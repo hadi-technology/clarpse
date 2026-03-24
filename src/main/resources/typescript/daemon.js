@@ -86,6 +86,32 @@ function findTsconfigs(root) {
   return results;
 }
 
+function findTypeScriptFiles(configDir) {
+  const results = [];
+  const stack = [configDir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (err) {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name === "node_modules" || entry.name === ".git") {
+        continue;
+      }
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (entry.isFile() && isTypeScriptFile(entry.name)) {
+        results.push(fullPath);
+      }
+    }
+  }
+  return results;
+}
+
 function isTypeScriptFile(filePath) {
   if (!filePath) {
     return false;
@@ -119,22 +145,44 @@ function buildPrograms(ts, repoRoot, configPaths) {
       invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
       continue;
     }
-    const config = ts.parseJsonConfigFileContent(
-      configFile.config,
-      ts.sys,
-      path.dirname(configPath)
+    let config;
+    try {
+      config = ts.parseJsonConfigFileContent(
+        configFile.config,
+        ts.sys,
+        path.dirname(configPath)
+      );
+    } catch (err) {
+      // parseJsonConfigFileContent threw an exception - likely extends resolution failed
+      config = null;
+    }
+    const hasExtendErrors = config && config.errors && config.errors.some(e =>
+      e.messageText && (e.messageText.includes("extends") || e.code === 6075 || e.code === 18003)
     );
-    if (config.errors && config.errors.length > 0) {
+    if (!config || (config.errors && config.errors.length > 0 && !hasExtendErrors)) {
+      // Failed for reasons other than extends - mark as invalid
       invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
       continue;
     }
-    const rootNames = filterTypeScriptRoots(config.fileNames);
-    const options = Object.assign({}, config.options, { allowJs: false, checkJs: false });
+    let options, rootNames, projectReferences;
+    if (hasExtendErrors) {
+      // Extends couldn't be resolved (e.g., in node_modules), use local config only
+      console.warn(`[clarpse] Config at ${configPath} has 'extends' that couldn't be resolved. Using local compilerOptions only.`);
+      const rawConfig = configFile.config;
+      options = Object.assign({}, rawConfig.compilerOptions || {}, { allowJs: false, checkJs: false });
+      const configDir = path.dirname(configPath);
+      rootNames = findTypeScriptFiles(configDir);
+      projectReferences = rawConfig.references || [];
+    } else {
+      options = Object.assign({}, config.options, { allowJs: false, checkJs: false });
+      rootNames = filterTypeScriptRoots(config.fileNames);
+      projectReferences = config.projectReferences || [];
+    }
     try {
       const program = ts.createProgram({
         rootNames,
         options,
-        projectReferences: config.projectReferences
+        projectReferences
       });
       programs.push({ configPath, program, options, checker: program.getTypeChecker() });
     } catch (err) {
