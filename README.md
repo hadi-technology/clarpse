@@ -103,6 +103,14 @@ Clarpse includes configurable limits for zip processing to prevent resource exha
 ## Node.js Configuration
 - `CLARPSE_NODE_PATH` or `-Dclarpse.node.path=<path>` sets a custom Node.js executable path.
 - `CLARPSE_NODE_DISABLED` or `-Dclarpse.node.disabled=true` disables Node.js (TypeScript and Python parsing will fail).
+- `CLARPSE_NODE_HEAP_SIZE` or `-Dclarpse.node.heapSize=<MB>` sets Node.js heap size in MB (default: 4096). Increase for large TypeScript/Python projects.
+
+Example for large projects:
+```bash
+CLARPSE_NODE_HEAP_SIZE=8192 mvn test
+# or
+java -Dclarpse.node.heapSize=8192 -jar app.jar
+```
 
 # Repo Tour
 Key areas of the repository:
