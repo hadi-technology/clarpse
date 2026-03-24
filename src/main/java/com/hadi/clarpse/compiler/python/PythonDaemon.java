@@ -3,6 +3,7 @@ package com.hadi.clarpse.compiler.python;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.hadi.clarpse.compiler.ClarpseProperties;
 import com.hadi.clarpse.compiler.DaemonResourceExtractor;
 import com.hadi.clarpse.compiler.python.model.PythonFileModel;
 import com.hadi.clarpse.compiler.typescript.NodeRuntime;
@@ -28,6 +29,23 @@ public final class PythonDaemon implements AutoCloseable {
     private static final String DAEMON_RESOURCE = "python/daemon.js";
     private static final String PYRIGHT_BUNDLE_RESOURCE = "python/pyright-bundle.zip";
     private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
+    private static final String NODE_HEAP_SIZE_ENV = "CLARPSE_NODE_HEAP_SIZE";
+    private static final String NODE_HEAP_SIZE_PROP = "clarpse.node.heapSize";
+
+    private static String resolveNodeHeapSize() {
+        // System property overrides everything
+        final String systemProp = System.getProperty(NODE_HEAP_SIZE_PROP);
+        if (systemProp != null && !systemProp.trim().isEmpty()) {
+            return systemProp.trim();
+        }
+        // Environment variable next
+        final String envVar = System.getenv(NODE_HEAP_SIZE_ENV);
+        if (envVar != null && !envVar.trim().isEmpty()) {
+            return envVar.trim();
+        }
+        // Fall back to bundled properties file
+        return String.valueOf(ClarpseProperties.getInt(NODE_HEAP_SIZE_PROP, 4096));
+    }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private Process process;
@@ -46,7 +64,8 @@ public final class PythonDaemon implements AutoCloseable {
                     PythonDaemonException.CODE_NODE_NOT_FOUND);
         }
         final Path daemonScript = extractDaemonScript();
-        final ProcessBuilder builder = new ProcessBuilder(nodeCommand, daemonScript.toString());
+        final List<String> command = List.of(nodeCommand, "--max-old-space-size=" + resolveNodeHeapSize(), daemonScript.toString());
+        final ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectError(ProcessBuilder.Redirect.INHERIT);
         try {
             process = builder.start();
