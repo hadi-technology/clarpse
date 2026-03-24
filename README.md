@@ -33,7 +33,7 @@ Clarpse is a multi-language parsing and analysis library that converts source co
 # Requirements
  - Java 17
  - Maven 3.x
- - Node.js 18/20/22 (required for TypeScript and Python parsing)
+ - Node.js 18/20/22/25 (required for TypeScript and Python parsing)
  - No global `typescript` or `pyright` install is required (both are bundled)
  - No local Python interpreter is required for Python parsing
 
