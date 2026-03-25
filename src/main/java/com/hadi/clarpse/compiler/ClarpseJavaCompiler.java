@@ -52,6 +52,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
         return new CompileResult(srcModel, compileFailures);
     }
 
+    @SuppressWarnings("PMD.CloseResource")
     private ParseResults parseJavaFiles(final List<ProjectFile> files, final String persistDir) {
         final int parallelism = resolveParallelism(files.size());
         if (parallelism > 1) {
