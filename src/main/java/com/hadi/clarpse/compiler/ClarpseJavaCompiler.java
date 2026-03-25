@@ -1,16 +1,13 @@
 package com.hadi.clarpse.compiler;
 
 import com.github.javaparser.JavaParser;
-import com.github.javaparser.ParseStart;
-import com.github.javaparser.ParserConfiguration;
-import com.github.javaparser.StringProvider;
-import com.github.javaparser.ast.CompilationUnit;
-import com.github.javaparser.ast.Node;
-import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
-import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
-import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
-import com.hadi.clarpse.listener.JavaTreeListener;
+import com.hadi.clarpse.compiler.java.FileParser;
+import com.hadi.clarpse.compiler.java.JavaParserFactory;
+import com.hadi.clarpse.compiler.java.ParseOutcome;
+import com.hadi.clarpse.compiler.java.ParseResults;
+import com.hadi.clarpse.compiler.java.ParseTask;
+import com.hadi.clarpse.compiler.java.ParserContext;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -20,7 +17,6 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -47,8 +43,8 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             try {
                 persistDir = projectFiles.projectDir();
                 final ParseResults parseResults = parseJavaFiles(javaFiles, persistDir);
-                srcModel.merge(parseResults.model);
-                compileFailures.addAll(parseResults.failures);
+                srcModel.merge(parseResults.model());
+                compileFailures.addAll(parseResults.failures());
             } catch (Exception e) {
                 throw new CompileException("An error occurred while parsing!", e);
             } finally {
@@ -73,14 +69,13 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
     private ParseResults parseJavaFilesSerial(final List<ProjectFile> files, final String persistDir) {
         final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
         final Set<CompileFailure> compileFailures = new HashSet<>();
-        final CombinedTypeSolver typeSolver = setupTypeSolver(persistDir);
-        final ParserConfiguration parserConfiguration = setupParserConfig(typeSolver);
-        final JavaParser parser = new JavaParser(parserConfiguration);
+        final CombinedTypeSolver typeSolver = JavaParserFactory.setupTypeSolver(persistDir);
+        final JavaParser parser = new JavaParser(JavaParserFactory.setupParserConfig(typeSolver));
         for (final ProjectFile file : files) {
-            final ParseOutcome outcome = parseSingleFile(parser, typeSolver, file);
-            srcModel.merge(outcome.model);
-            if (outcome.failure != null) {
-                compileFailures.add(outcome.failure);
+            final ParseOutcome outcome = FileParser.parseFile(parser, typeSolver, file, -1);
+            srcModel.merge(outcome.model());
+            if (outcome.failure() != null) {
+                compileFailures.add(outcome.failure());
             }
         }
         return new ParseResults(srcModel, compileFailures);
@@ -95,9 +90,8 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                     () -> new ParserContext(persistDir));
             final List<Future<ParseOutcome>> futures = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
-                final int index = i;
                 final ProjectFile file = files.get(i);
-                futures.add(executor.submit(new ParseTask(parserContext, file, index)));
+                futures.add(executor.submit(new ParseTask(parserContext, file, i)));
             }
             final List<ParseOutcome> outcomes = new ArrayList<>();
             for (final Future<ParseOutcome> future : futures) {
@@ -110,58 +104,31 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                     throw new IllegalStateException("Failed while parsing Java files in parallel.", e);
                 }
             }
-            outcomes.sort((a, b) -> Integer.compare(a.index, b.index));
+            outcomes.sort((a, b) -> Integer.compare(a.index(), b.index()));
             final OOPSourceCodeModel mergedModel = new OOPSourceCodeModel();
             final Set<CompileFailure> compileFailures = new HashSet<>();
             for (final ParseOutcome outcome : outcomes) {
-                mergedModel.merge(outcome.model);
-                if (outcome.failure != null) {
-                    compileFailures.add(outcome.failure);
+                mergedModel.merge(outcome.model());
+                if (outcome.failure() != null) {
+                    compileFailures.add(outcome.failure());
                 }
             }
             return new ParseResults(mergedModel, compileFailures);
         } finally {
-            executor.shutdown();
-            try {
-                if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
-                    executor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                executor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
+            shutdownExecutor(executor);
         }
     }
 
-    private ParseOutcome parseSingleFile(final JavaParser parser,
-                                         final CombinedTypeSolver typeSolver,
-                                         final ProjectFile file) {
-        final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
-        CompileFailure failure = null;
+    private void shutdownExecutor(final ExecutorService executor) {
+        executor.shutdown();
         try {
-            var parseResult = parser.parse(ParseStart.COMPILATION_UNIT,
-                    new StringProvider(file.content())).getResult();
-            if (parseResult.isEmpty()) {
-                LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
-                failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
-            } else {
-                final CompilationUnit cu = parseResult.get();
-                if (cu.getParsed() == Node.Parsedness.UNPARSABLE || file.content().isEmpty()) {
-                    LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
-                    failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
-                } else {
-                    new JavaTreeListener(localModel, file, typeSolver).visit(cu, null);
-                }
+            if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
             }
-        } catch (final Throwable e) {
-            LOGGER.error("Failed to parse file " + file.path() + ".", e);
-            String message = e.getMessage();
-            if (message == null || message.isEmpty()) {
-                message = e.getClass().getSimpleName();
-            }
-            failure = new CompileFailure(file, message, FailureCode.PARSE_FAILED);
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
         }
-        return new ParseOutcome(-1, localModel, failure);
     }
 
     private int resolveParallelism(final int fileCount) {
@@ -177,99 +144,10 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                 }
                 return Math.min(requested, fileCount);
             } catch (NumberFormatException ignored) {
+                // Use default parallelism
             }
         }
         final int available = Runtime.getRuntime().availableProcessors();
         return Math.max(1, Math.min(available, fileCount));
-    }
-
-    private static CombinedTypeSolver setupTypeSolver(String persistDir) {
-        final CombinedTypeSolver typeSolver = new CombinedTypeSolver();
-        typeSolver.add(new ReflectionTypeSolver());
-        typeSolver.add(new JavaParserTypeSolver(persistDir));
-        return typeSolver;
-    }
-
-    private static ParserConfiguration setupParserConfig(CombinedTypeSolver typeSolver) {
-        final ParserConfiguration parserConfiguration = new ParserConfiguration();
-        parserConfiguration.setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE);
-        parserConfiguration.setSymbolResolver(new JavaSymbolSolver(typeSolver));
-        parserConfiguration.setIgnoreAnnotationsWhenAttributingComments(true);
-        return parserConfiguration;
-    }
-
-    private static final class ParserContext {
-        private final CombinedTypeSolver typeSolver;
-        private final JavaParser parser;
-
-        private ParserContext(final String persistDir) {
-            this.typeSolver = setupTypeSolver(persistDir);
-            this.parser = new JavaParser(setupParserConfig(this.typeSolver));
-        }
-    }
-
-    private static final class ParseResults {
-        private final OOPSourceCodeModel model;
-        private final Set<CompileFailure> failures;
-
-        private ParseResults(final OOPSourceCodeModel model, final Set<CompileFailure> failures) {
-            this.model = model;
-            this.failures = failures;
-        }
-    }
-
-    private static final class ParseOutcome {
-        private final int index;
-        private final OOPSourceCodeModel model;
-        private final CompileFailure failure;
-
-        private ParseOutcome(final int index, final OOPSourceCodeModel model, final CompileFailure failure) {
-            this.index = index;
-            this.model = model;
-            this.failure = failure;
-        }
-    }
-
-    private static final class ParseTask implements Callable<ParseOutcome> {
-        private final ThreadLocal<ParserContext> context;
-        private final ProjectFile file;
-        private final int index;
-
-        private ParseTask(final ThreadLocal<ParserContext> context, final ProjectFile file, final int index) {
-            this.context = context;
-            this.file = file;
-            this.index = index;
-        }
-
-        @Override
-        public ParseOutcome call() {
-            final ParserContext parserContext = context.get();
-            final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
-            CompileFailure failure = null;
-            try {
-                var parseResult = parserContext.parser.parse(ParseStart.COMPILATION_UNIT,
-                        new StringProvider(file.content())).getResult();
-                if (parseResult.isEmpty()) {
-                    LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
-                    failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
-                } else {
-                    final CompilationUnit cu = parseResult.get();
-                    if (cu.getParsed() == Node.Parsedness.UNPARSABLE || file.content().isEmpty()) {
-                        LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
-                        failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
-                    } else {
-                        new JavaTreeListener(localModel, file, parserContext.typeSolver).visit(cu, null);
-                    }
-                }
-            } catch (final Throwable e) {
-                LOGGER.error("Failed to parse file " + file.path() + ".", e);
-                String message = e.getMessage();
-                if (message == null || message.isEmpty()) {
-                    message = e.getClass().getSimpleName();
-                }
-                failure = new CompileFailure(file, message, FailureCode.PARSE_FAILED);
-            }
-            return new ParseOutcome(index, localModel, failure);
-        }
     }
 }
