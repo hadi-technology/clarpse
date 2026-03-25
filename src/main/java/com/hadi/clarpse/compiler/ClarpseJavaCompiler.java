@@ -1,7 +1,5 @@
 package com.hadi.clarpse.compiler;
 
-import com.hadi.clarpse.compiler.java.FileParser;
-import com.hadi.clarpse.compiler.java.JavaParserFactory;
 import com.hadi.clarpse.compiler.java.ParseOutcome;
 import com.hadi.clarpse.compiler.java.ParseResults;
 import com.hadi.clarpse.compiler.java.ParseTask;
