@@ -139,18 +139,25 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
         final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
         CompileFailure failure = null;
         try {
-            final CompilationUnit cu = parser.parse(ParseStart.COMPILATION_UNIT,
-                    new StringProvider(file.content())).getResult().get();
-            if (cu.getParsed() == Node.Parsedness.UNPARSABLE || file.content().isEmpty()) {
+            var parseResult = parser.parse(ParseStart.COMPILATION_UNIT,
+                    new StringProvider(file.content())).getResult();
+            if (parseResult.isEmpty()) {
                 LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
                 failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
+            } else {
+                final CompilationUnit cu = parseResult.get();
+                if (cu.getParsed() == Node.Parsedness.UNPARSABLE || file.content().isEmpty()) {
+                    LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
+                    failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
+                } else {
+                    new JavaTreeListener(localModel, file, typeSolver).visit(cu, null);
+                }
             }
-            new JavaTreeListener(localModel, file, typeSolver).visit(cu, null);
-        } catch (final Exception e) {
+        } catch (final Throwable e) {
             LOGGER.error("Failed to parse file " + file.path() + ".", e);
             String message = e.getMessage();
             if (message == null || message.isEmpty()) {
-                message = "PARSE_FAILED";
+                message = e.getClass().getSimpleName();
             }
             failure = new CompileFailure(file, message, FailureCode.PARSE_FAILED);
         }
@@ -240,18 +247,25 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
             CompileFailure failure = null;
             try {
-                final CompilationUnit cu = parserContext.parser.parse(ParseStart.COMPILATION_UNIT,
-                        new StringProvider(file.content())).getResult().get();
-                if (cu.getParsed() == Node.Parsedness.UNPARSABLE || file.content().isEmpty()) {
+                var parseResult = parserContext.parser.parse(ParseStart.COMPILATION_UNIT,
+                        new StringProvider(file.content())).getResult();
+                if (parseResult.isEmpty()) {
                     LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
                     failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
+                } else {
+                    final CompilationUnit cu = parseResult.get();
+                    if (cu.getParsed() == Node.Parsedness.UNPARSABLE || file.content().isEmpty()) {
+                        LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
+                        failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
+                    } else {
+                        new JavaTreeListener(localModel, file, parserContext.typeSolver).visit(cu, null);
+                    }
                 }
-                new JavaTreeListener(localModel, file, parserContext.typeSolver).visit(cu, null);
-            } catch (final Exception e) {
+            } catch (final Throwable e) {
                 LOGGER.error("Failed to parse file " + file.path() + ".", e);
                 String message = e.getMessage();
                 if (message == null || message.isEmpty()) {
-                    message = "PARSE_FAILED";
+                    message = e.getClass().getSimpleName();
                 }
                 failure = new CompileFailure(file, message, FailureCode.PARSE_FAILED);
             }

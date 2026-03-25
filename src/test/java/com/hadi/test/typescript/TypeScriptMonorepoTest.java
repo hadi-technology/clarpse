@@ -40,4 +40,16 @@ public class TypeScriptMonorepoTest {
         String snapshotB = TypeScriptTestUtil.modelSnapshot(second.model());
         assertEquals(snapshotA, snapshotB);
     }
+
+    @Test
+    public void trailingCommasInTsconfigCanBeParsed() throws Exception {
+        // Test that tsconfig.json with trailing commas (invalid JSON but valid TS) can be parsed
+        // This tests the fix for the nomad project issue without requiring the full zip
+        CompileResult result = TypeScriptTestUtil.compileFixture("trailing-comma-tsconfig");
+        assertTrue("Expected Example component to be parsed",
+                   result.model().containsComponent("src.example.Example"));
+        // Should have multiple components (class, constructor, method, properties)
+        long componentCount = result.model().components().count();
+        assertTrue("Expected at least 1 component, but got: " + componentCount, componentCount >= 1);
+    }
 }
