@@ -133,51 +133,104 @@ function filterTypeScriptRoots(fileNames) {
 function buildPrograms(ts, repoRoot, configPaths) {
   const programs = [];
   const invalidConfigs = [];
+
+  // Wrapper around ts.sys.readFile that normalizes tsconfig JSON
+  const readAndNormalizeConfig = (filePath) => {
+    const content = ts.sys.readFile(filePath);
+    if (content === undefined) {
+      return undefined;
+    }
+    // Remove trailing commas from JSON to handle non-standard tsconfig files
+    // Pattern: comma followed by optional whitespace then closing brace or bracket
+    const normalized = content.replace(/,(\s*[}\]])/g, '$1');
+    return normalized;
+  };
+
   for (const configPath of configPaths) {
     let configFile;
     try {
-      configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+      configFile = ts.readConfigFile(configPath, readAndNormalizeConfig);
     } catch (err) {
-      invalidConfigs.push({ configPath, error: "CONFIG_READ_FAILED" });
-      continue;
+      // Check if the read failure is extends-related
+      const errStr = err.toString();
+      if (errStr.includes("extends") || err.code === 6075 || err.code === 18003 || err.code === 6053) {
+        // Treat as extends error - will use minimal options
+        configFile = null;
+      } else {
+        invalidConfigs.push({ configPath, error: "CONFIG_READ_FAILED" });
+        continue;
+      }
     }
-    if (configFile.error) {
+
+    // If there's a configFile.error, check if it's extends-related
+    if (configFile && configFile.error) {
+      const errStr = configFile.error.toString();
+      if (errStr.includes("extends") || (configFile.error.code && (configFile.error.code === 6075 || configFile.error.code === 18003 || configFile.error.code === 6053))) {
+        // Treat as extends error - will use minimal options
+      } else {
+        invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
+        continue;
+      }
+    }
+
+    let config;
+    let hasExtendErrors = false;
+    if (configFile) {
+      try {
+        config = ts.parseJsonConfigFileContent(
+          configFile.config,
+          ts.sys,
+          path.dirname(configPath)
+        );
+        hasExtendErrors = config && config.errors && config.errors.some(e =>
+          e.messageText && (e.messageText.includes("extends") || e.code === 6075 || e.code === 18003 || e.code === 6053)
+        );
+      } catch (err) {
+        // parseJsonConfigFileContent threw an exception - check if it's extends-related
+        const errStr = err.toString();
+        if (errStr.includes("extends") || err.code === 6075 || err.code === 18003 || err.code === 6053) {
+          hasExtendErrors = true;
+          config = null;
+        } else {
+          // Failed for reasons other than extends - mark as invalid
+          invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
+          continue;
+        }
+      }
+    }
+    if (!config && !hasExtendErrors) {
+      // Completely failed to parse, not due to extends
       invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
       continue;
     }
-    let config;
-    try {
-      config = ts.parseJsonConfigFileContent(
-        configFile.config,
-        ts.sys,
-        path.dirname(configPath)
-      );
-    } catch (err) {
-      // parseJsonConfigFileContent threw an exception - likely extends resolution failed
-      config = null;
-    }
-    const hasExtendErrors = config && config.errors && config.errors.some(e =>
-      e.messageText && (e.messageText.includes("extends") || e.code === 6075 || e.code === 18003)
-    );
-    if (!config || (config.errors && config.errors.length > 0 && !hasExtendErrors)) {
-      // Failed for reasons other than extends - mark as invalid
+    if (config && config.errors && config.errors.length > 0 && !hasExtendErrors) {
+      // Has non-extends errors
       invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
       continue;
     }
     let options, rootNames, projectReferences;
     if (hasExtendErrors) {
-      // Extends couldn't be resolved (e.g., in node_modules), use local config only
-      console.warn(`[clarpse] Config at ${configPath} has 'extends' that couldn't be resolved. Using local compilerOptions only.`);
-      const rawConfig = configFile.config;
+      // Extends couldn't be resolved (e.g., missing base config in node_modules)
+      // Use minimal compiler options that will work
+      // configFile might be null if readConfigFile threw an extends-related exception
+      const rawConfig = configFile ? configFile.config : {};
       const configDir = path.dirname(configPath);
 
-      // Parse compilerOptions from JSON using TypeScript's converter to get proper enum values
-      const convertedOpts = ts.convertCompilerOptionsFromJson(
-        rawConfig.compilerOptions || {},
-        configDir,
-        ts.sys.readFile
-      );
-      options = Object.assign({}, convertedOpts.options || {}, { allowJs: false, checkJs: false });
+      const baseOptions = {
+        allowJs: false,
+        checkJs: false,
+        strict: false,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        jsx: ts.JsxEmit.React,
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2015,
+        moduleResolution: ts.ModuleResolutionKind.Node10,
+        lib: []
+      };
+      options = baseOptions;
+
+      console.warn(`[clarpse] Config at ${configPath} has 'extends' that couldn't be resolved. Using minimal compiler options.`);
 
       // Resolve project references relative to config directory
       const rawRefs = rawConfig.references || [];
@@ -206,6 +259,7 @@ function buildPrograms(ts, repoRoot, configPaths) {
       });
       programs.push({ configPath, program, options, checker: program.getTypeChecker() });
     } catch (err) {
+      console.error("[CLARPSE-DEBUG] PROGRAM_CREATE_FAILED for", configPath, err.message);
       invalidConfigs.push({ configPath, error: "PROGRAM_CREATE_FAILED" });
     }
   }

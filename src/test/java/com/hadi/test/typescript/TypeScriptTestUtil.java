@@ -38,6 +38,14 @@ public final class TypeScriptTestUtil {
         return result;
     }
 
+    public static CompileResult compileZipFixture(final String zipFileName) throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        Path zipPath = Paths.get("src/test/resources", zipFileName).toAbsolutePath();
+        ProjectFiles projectFiles = new ProjectFiles(zipPath.toString());
+        CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+        return result;
+    }
+
     public static String signature(final String name, final String... paramTypes) {
         if (paramTypes == null || paramTypes.length == 0) {
             return name + "()";

@@ -33,7 +33,26 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Represents source files to be parsed.
+ * Represents a collection of source files to be parsed by Clarpse.
+ *
+ * <p>This class handles loading source files from various sources including:
+ * <ul>
+ *   <li>Local directories</li>
+ *   <li>ZIP archives</li>
+ *   <li>Individual files</li>
+ * </ul>
+ *
+ * <p>Files are organized by programming language and can be filtered by
+ * language when needed. The class also manages temporary directories for
+ * extracted archives and ensures proper cleanup via {@link AutoCloseable}.
+ *
+ * <p>Usage example:
+ * <pre>{@code
+ * try (ProjectFiles files = new ProjectFiles("/path/to/project")) {
+ *     List<ProjectFile> javaFiles = files.files(Lang.JAVA);
+ *     // Process files...
+ * }
+ * }</pre>
  */
 public class ProjectFiles implements AutoCloseable {
 
