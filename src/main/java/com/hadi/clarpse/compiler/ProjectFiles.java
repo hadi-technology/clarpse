@@ -171,29 +171,38 @@ public class ProjectFiles implements AutoCloseable {
                 if (entryCounter > MAX_ZIP_ENTRIES) {
                     throw new IllegalArgumentException("Zip contains too many entries.");
                 }
-                if (!entry.isDirectory()) {
-                    String safeName = sanitizeEntryName(entry.getName());
-                    if (safeName == null) {
-                        throw new IllegalArgumentException("Unsafe zip entry path: " + entry.getName());
+                try {
+                    if (!entry.isDirectory()) {
+                        String safeName = sanitizeEntryName(entry.getName());
+                        if (safeName == null) {
+                            throw new IllegalArgumentException("Unsafe zip entry path: " + entry.getName());
+                        }
+                        byte[] content = readEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, safeName);
+                        totalBytes += content.length;
+                        if (totalBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
+                            throw new IllegalArgumentException("Zip exceeds maximum uncompressed size.");
+                        }
+                        String fileName = Paths.get(safeName).getFileName().toString();
+                        String textContent = new String(content, StandardCharsets.UTF_8);
+                        handlePotentialConfigFile(safeName, textContent);
+                        Lang lang = Lang.langFromExtn(FilenameUtils.getExtension(fileName));
+                        if (lang != null) {
+                            ProjectFile newFile = new ProjectFile(
+                                    File.separator + safeName.replace(" ", "_"),
+                                    textContent);
+                            LOGGER.debug("Extracted project file " + newFile + ".");
+                            this.insertFile(newFile);
+                            filesCounter += 1;
+                        }
                     }
-                    byte[] content = readEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, safeName);
-                    totalBytes += content.length;
-                    if (totalBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
-                        throw new IllegalArgumentException("Zip exceeds maximum uncompressed size.");
-                    }
-                    String fileName = Paths.get(safeName).getFileName().toString();
-                    handlePotentialConfigFile(safeName, new String(content, StandardCharsets.UTF_8));
-                    Lang lang = Lang.langFromExtn(FilenameUtils.getExtension(fileName));
-                    if (lang != null) {
-                        ProjectFile newFile = new ProjectFile(
-                                File.separator + safeName.replace(" ", "_"),
-                                new String(content, StandardCharsets.UTF_8));
-                        LOGGER.debug("Extracted project file " + newFile + ".");
-                        this.insertFile(newFile);
-                        filesCounter += 1;
-                    }
+                } catch (final IllegalArgumentException e) {
+                    LOGGER.warn("Skipping problematic zip entry {}: {}", entry.getName(), e.getMessage());
                 }
-                zis.closeEntry();
+                try {
+                    zis.closeEntry();
+                } catch (final IOException e) {
+                    LOGGER.warn("Failed closing zip entry {}.", entry.getName(), e);
+                }
                 entry = zis.getNextEntry();
             }
         } catch (final IllegalArgumentException e) {

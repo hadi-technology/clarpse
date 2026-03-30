@@ -358,28 +358,63 @@ public class ProjectFilesTest {
     }
 
     @Test
-    public void testOversizedZipEntryIncludesEntryNameInError() throws Exception {
+    public void testOversizedZipEntryIsSkippedAndRemainingEntriesStillLoad() throws Exception {
         Path zipPath = Files.createTempFile("clarpse-large-entry", ".zip");
         byte[] oversized = new byte[10 * 1024 * 1024 + 1];
         try {
             try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
-                ZipEntry entry = new ZipEntry("project/big.json");
+                ZipEntry entry = new ZipEntry("project/big.py");
                 zos.putNextEntry(entry);
                 zos.write(oversized);
                 zos.closeEntry();
+
+                ZipEntry validEntry = new ZipEntry("project/good.py");
+                zos.putNextEntry(validEntry);
+                zos.write("class Good:\n    pass\n".getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
             }
 
-            IllegalArgumentException ex = null;
+            ProjectFiles projectFiles;
             try (var in = Files.newInputStream(zipPath)) {
-                try {
-                    new ProjectFiles(in);
-                } catch (IllegalArgumentException e) {
-                    ex = e;
-                }
+                projectFiles = new ProjectFiles(in);
             }
 
-            assertTrue(ex != null);
-            assertTrue(ex.getMessage().contains("project/big.json"));
+            assertEquals(1, projectFiles.size());
+            assertTrue(projectFiles.files(Lang.PYTHON).stream()
+                    .anyMatch(file -> "/project/good.py".equals(file.path())));
+            assertFalse(projectFiles.files(Lang.PYTHON).stream()
+                    .anyMatch(file -> "/project/big.py".equals(file.path())));
+        } finally {
+            Files.deleteIfExists(zipPath);
+        }
+    }
+
+    @Test
+    public void testUnsafeZipEntryIsSkippedAndRemainingEntriesStillLoad() throws Exception {
+        Path zipPath = Files.createTempFile("clarpse-unsafe-entry", ".zip");
+        try {
+            try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+                ZipEntry unsafeEntry = new ZipEntry("../escape.py");
+                zos.putNextEntry(unsafeEntry);
+                zos.write("class Escape:\n    pass\n".getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+
+                ZipEntry validEntry = new ZipEntry("project/ok.py");
+                zos.putNextEntry(validEntry);
+                zos.write("class Ok:\n    pass\n".getBytes(StandardCharsets.UTF_8));
+                zos.closeEntry();
+            }
+
+            ProjectFiles projectFiles;
+            try (var in = Files.newInputStream(zipPath)) {
+                projectFiles = new ProjectFiles(in);
+            }
+
+            assertEquals(1, projectFiles.size());
+            assertTrue(projectFiles.files(Lang.PYTHON).stream()
+                    .anyMatch(file -> "/project/ok.py".equals(file.path())));
+            assertFalse(projectFiles.files(Lang.PYTHON).stream()
+                    .anyMatch(file -> file.path().contains("escape.py")));
         } finally {
             Files.deleteIfExists(zipPath);
         }
