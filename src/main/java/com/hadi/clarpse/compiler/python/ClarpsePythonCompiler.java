@@ -27,6 +27,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -39,6 +40,67 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
     private static final String PARALLELISM_PROP = "clarpse.python.parallelism";
     private static final int DEFAULT_MAX_PARALLELISM = 4;
     private static final int MIN_FILES_FOR_PARALLEL = 8;
+
+    // ── Shared daemon infrastructure ──
+    private static PythonDaemon sharedDaemon = null;
+    private static final Object DAEMON_LOCK = new Object();
+    private static volatile long lastUsedTimestamp = 0;
+
+    /**
+     * Acquires a shared Python daemon instance, creating one if necessary.
+     */
+    private static PythonDaemon acquireDaemon() throws PythonDaemonException {
+        synchronized (DAEMON_LOCK) {
+            if (sharedDaemon != null) {
+                lastUsedTimestamp = System.currentTimeMillis();
+                return sharedDaemon;
+            }
+            PythonDaemon daemon = new PythonDaemon();
+            daemon.start();
+            sharedDaemon = daemon;
+            lastUsedTimestamp = System.currentTimeMillis();
+            return daemon;
+        }
+    }
+
+    /**
+     * Releases the shared daemon. Call when switching between unrelated
+     * projects or during shutdown.
+     */
+    public static void releaseDaemon() {
+        synchronized (DAEMON_LOCK) {
+            if (sharedDaemon != null) {
+                closeQuietly(sharedDaemon);
+                sharedDaemon = null;
+            }
+        }
+    }
+
+    private static void closeQuietly(PythonDaemon daemon) {
+        try { daemon.close(); } catch (Exception ignored) { }
+    }
+
+    // Auto-close after idle timeout
+    private static final ScheduledExecutorService IDLE_CHECKER =
+        Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "python-daemon-idle-checker");
+            t.setDaemon(true);
+            return t;
+        });
+
+    static {
+        long idleMs = Long.getLong("clarpse.daemon.idleTimeout", 30) * 60_000L;
+        IDLE_CHECKER.scheduleAtFixedRate(() -> {
+            synchronized (DAEMON_LOCK) {
+                if (sharedDaemon != null
+                        && System.currentTimeMillis() - lastUsedTimestamp > idleMs) {
+                    LOGGER.info("Closing idle Python daemon.");
+                    closeQuietly(sharedDaemon);
+                    sharedDaemon = null;
+                }
+            }
+        }, 5, 5, TimeUnit.MINUTES);
+    }
 
     @Override
     public CompileResult compile(final ProjectFiles projectFiles,
@@ -86,8 +148,9 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
                                                 final String pythonVersionOverride) throws CompileException {
         final OOPSourceCodeModel model = new OOPSourceCodeModel();
         final Set<CompileFailure> failures = new HashSet<>();
-        try (PythonDaemon daemon = new PythonDaemon()) {
-            daemon.start();
+        PythonDaemon daemon;
+        try {
+            daemon = acquireDaemon();
             daemon.initRepo(persistDir, pythonVersionOverride);
             for (int i = 0; i < files.size(); i += 1) {
                 final ParseOutcome outcome = parseSingleFile(files.get(i), i, persistDir, daemon);
@@ -96,7 +159,10 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
                     failures.add(outcome.failure);
                 }
             }
+            // Update last used timestamp on successful parsing
+            lastUsedTimestamp = System.currentTimeMillis();
         } catch (final PythonDaemonException e) {
+            releaseDaemon();
             throw new CompileException("Python resolver failed: " + e.getMessage(), e);
         }
         return new ParseResults(model, failures);
@@ -301,14 +367,17 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         @Override
         public List<ParseOutcome> call() {
             final List<ParseOutcome> outcomes = new ArrayList<>();
-            try (PythonDaemon daemon = new PythonDaemon()) {
-                daemon.start();
+            PythonDaemon daemon;
+            try {
+                daemon = acquireDaemon();
                 daemon.initRepo(persistDir, pythonVersionOverride);
                 for (final IndexedProjectFile indexedFile : files) {
                     outcomes.add(parseSingleFile(indexedFile.file, indexedFile.index, persistDir, daemon));
                 }
+                // Note: don't update lastUsedTimestamp here as it's shared across threads
                 return outcomes;
             } catch (PythonDaemonException e) {
+                releaseDaemon();
                 throw new IllegalStateException("Python resolver failed: " + e.getMessage(), e);
             }
         }

@@ -22,6 +22,9 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -31,6 +34,67 @@ import java.nio.file.Paths;
 public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
 
     private static final Logger LOGGER = LogManager.getLogger(ClarpseTypeScriptCompiler.class);
+
+    // ── Shared daemon infrastructure ──
+    private static TypeScriptDaemon sharedDaemon = null;
+    private static final Object DAEMON_LOCK = new Object();
+    private static volatile long lastUsedTimestamp = 0;
+
+    /**
+     * Acquires a shared TypeScript daemon instance, creating one if necessary.
+     */
+    private static TypeScriptDaemon acquireDaemon() throws TypeScriptDaemonException {
+        synchronized (DAEMON_LOCK) {
+            if (sharedDaemon != null) {
+                lastUsedTimestamp = System.currentTimeMillis();
+                return sharedDaemon;
+            }
+            TypeScriptDaemon daemon = new TypeScriptDaemon();
+            daemon.start();
+            sharedDaemon = daemon;
+            lastUsedTimestamp = System.currentTimeMillis();
+            return daemon;
+        }
+    }
+
+    /**
+     * Releases the shared daemon. Call when switching between unrelated
+     * projects or during shutdown.
+     */
+    public static void releaseDaemon() {
+        synchronized (DAEMON_LOCK) {
+            if (sharedDaemon != null) {
+                closeQuietly(sharedDaemon);
+                sharedDaemon = null;
+            }
+        }
+    }
+
+    private static void closeQuietly(TypeScriptDaemon daemon) {
+        try { daemon.close(); } catch (Exception ignored) { }
+    }
+
+    // Auto-close after idle timeout
+    private static final ScheduledExecutorService IDLE_CHECKER =
+        Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "ts-daemon-idle-checker");
+            t.setDaemon(true);
+            return t;
+        });
+
+    static {
+        long idleMs = Long.getLong("clarpse.daemon.idleTimeout", 30) * 60_000L;
+        IDLE_CHECKER.scheduleAtFixedRate(() -> {
+            synchronized (DAEMON_LOCK) {
+                if (sharedDaemon != null
+                        && System.currentTimeMillis() - lastUsedTimestamp > idleMs) {
+                    LOGGER.info("Closing idle TS daemon.");
+                    closeQuietly(sharedDaemon);
+                    sharedDaemon = null;
+                }
+            }
+        }, 5, 5, TimeUnit.MINUTES);
+    }
 
     @Override
     public CompileResult compile(final ProjectFiles projectFiles,
@@ -56,8 +120,21 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         }
 
         final String persistDir = projectFiles.projectDir();
-        try (TypeScriptDaemon daemon = new TypeScriptDaemon()) {
-            daemon.start();
+        TypeScriptDaemon daemon;
+        try {
+            daemon = acquireDaemon();
+        } catch (TypeScriptDaemonException e) {
+            // Node.js not available or daemon startup failed
+            for (final ProjectFile file : tsFiles) {
+                compileFailures.add(new CompileFailure(
+                    file,
+                    "Failed to acquire TypeScript daemon: " + e.getMessage(),
+                    TypeScriptDaemonException.CODE_DAEMON_ERROR));
+            }
+            return new CompileResult(srcModel, compileFailures);
+        }
+
+        try {
             final TypeScriptDaemon.InitResult initResult = daemon.initRepo(persistDir);
             addInvalidConfigFailures(initResult, compileFailures, persistDir);
             for (final ProjectFile file : tsFiles) {
@@ -86,7 +163,11 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                     OOPSourceModelConstants.ComponentType.CLASS,
                     OOPSourceModelConstants.ComponentType.ENUM));
             CompilerSupport.classifyReferences(srcModel);
+            // Update last used timestamp on successful compilation
+            lastUsedTimestamp = System.currentTimeMillis();
         } catch (final TypeScriptDaemonException e) {
+            // On catastrophic failure, release the daemon so next call gets a fresh one
+            releaseDaemon();
             final int code;
             if (e.code() == 0) {
                 code = TypeScriptDaemonException.CODE_DAEMON_ERROR;
@@ -97,10 +178,6 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 compileFailures.add(new CompileFailure(file, e.getMessage(), code));
             }
             LOGGER.warn("TypeScript resolver initialization failed (code={}).", code, e);
-        } finally {
-            if (LOGGER.isDebugEnabled()) {
-                LOGGER.debug("ProjectFiles cleanup handled by caller.");
-            }
         }
         return new CompileResult(srcModel, compileFailures);
     }
