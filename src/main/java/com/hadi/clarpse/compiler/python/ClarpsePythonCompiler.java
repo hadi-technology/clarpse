@@ -77,7 +77,11 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
     }
 
     private static void closeQuietly(PythonDaemon daemon) {
-        try { daemon.close(); } catch (Exception ignored) { }
+        try {
+            daemon.close();
+        } catch (Exception ignored) {
+            // ignored
+        }
     }
 
     // Auto-close after idle timeout

@@ -64,66 +64,6 @@ private static Set<String> findReferrersTo(
 }
 ```
 
-## Striff-lib Integration
-
-### 1. ChangeSet Constructor Overload
-
-`ChangeSet` now accepts pre-computed relations to avoid redundant extraction:
-
-```java
-public ChangeSet(
-    OOPSourceCodeModel oldModel,
-    OOPSourceCodeModel newModel,
-    RelationsMap oldExtractedRels,
-    RelationsMap newExtractedRels
-)
-```
-
-### 2. CodeDiff Optimization
-
-`CodeDiff` now extracts relationships once on the merged model:
-
-```java
-// Phase 1: Extract once instead of 3 times
-this.relationsMap = new ExtractedRelationships(this.mergedModel).result();
-RelationsMap oldFilteredRels = this.relationsMap.filteredRelations(oldComponentNames);
-RelationsMap newFilteredRels = this.relationsMap.filteredRelations(newComponentNames);
-this.changeSet = new ChangeSet(olderModel, newerModel, oldFilteredRels, newFilteredRels);
-```
-
-### 3. ExtractedRelationships Targeted Constructor
-
-Allows extracting relationships for a specific subset of components:
-
-```java
-public ExtractedRelationships(OOPSourceCodeModel fullModel, Set<String> targetComponents)
-```
-
-### 4. ExtractedRelationships.updateRelations()
-
-Incremental relationship update for cached relations:
-
-```java
-public static RelationsMap updateRelations(
-    OOPSourceCodeModel fullModel,
-    RelationsMap cachedRelations,
-    Set<String> changedComponentNames
-)
-```
-
-### 5. StriffOperation Incremental Constructor
-
-```java
-public StriffOperation(
-    OOPSourceCodeModel baseModel,
-    Map<String, String> changedFiles,
-    Set<String> deletedFiles,
-    Lang lang,
-    StriffConfig config,
-    RelationsMap cachedRelations  // nullable
-)
-```
-
 ## Daemon Reuse
 
 ### TypeScript and Python Daemons
@@ -215,11 +155,3 @@ Test coverage includes:
 - **OOPSourceCodeModel:** Not thread-safe for concurrent modification. Create copies for concurrent use.
 - **Shared daemons:** Thread-safe with synchronized access. Multiple threads can share the same daemon.
 - **Incremental updates:** Single-threaded. For concurrent incremental updates, use separate models.
-
-## Future Enhancements
-
-Potential areas for further optimization:
-1. **Server-side model caching** - Cache parsed models on the server for multiple clients
-2. **Parallel file parsing** - Parse changed files in parallel (already done for Java)
-3. **Smart change detection** - Detect actual semantic changes vs. whitespace-only changes
-4. **Delta-based relationship updates** - Update only changed relationships rather than re-extracting

@@ -119,8 +119,12 @@ public class ClarpseProject {
         if (baseModel == null) {
             throw new IllegalArgumentException("baseModel cannot be null");
         }
-        if (changedFiles == null) changedFiles = Map.of();
-        if (deletedFiles == null) deletedFiles = Set.of();
+        if (changedFiles == null) {
+            changedFiles = Map.of();
+        }
+        if (deletedFiles == null) {
+            deletedFiles = Set.of();
+        }
         if (lang == null) {
             lang = detectLanguage(changedFiles.keySet());
         }
@@ -235,7 +239,9 @@ public class ClarpseProject {
             int dotIndex = path.lastIndexOf('.');
             if (dotIndex > 0) {
                 Lang lang = Lang.langFromExtn(path.substring(dotIndex + 1));
-                if (lang != null) return lang;
+                if (lang != null) {
+                    return lang;
+                }
             }
         }
         throw new IllegalArgumentException(

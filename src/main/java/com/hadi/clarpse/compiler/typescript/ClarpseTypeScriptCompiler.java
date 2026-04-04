@@ -71,7 +71,11 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
     }
 
     private static void closeQuietly(TypeScriptDaemon daemon) {
-        try { daemon.close(); } catch (Exception ignored) { }
+        try {
+            daemon.close();
+        } catch (Exception ignored) {
+            // ignored
+        }
     }
 
     // Auto-close after idle timeout
