@@ -204,6 +204,15 @@ public final class PythonDaemon implements AutoCloseable {
         }
     }
 
+    /**
+     * Checks if the daemon process is still alive.
+     *
+     * @return true if the daemon process is running, false otherwise
+     */
+    public boolean isProcessAlive() {
+        return process != null && process.isAlive();
+    }
+
     public static final class InitResult {
         private final String effectivePythonVersion;
         private final String configSource;

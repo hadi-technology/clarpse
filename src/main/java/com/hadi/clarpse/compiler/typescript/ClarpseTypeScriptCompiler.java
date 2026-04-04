@@ -16,11 +16,12 @@ import com.hadi.clarpse.sourcemodel.Package;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-
 import java.util.Collection;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -30,43 +31,88 @@ import java.nio.file.Paths;
 
 /**
  * TypeScript compiler backed by the Node daemon bridge.
+ *
+ * <p>Uses per-project daemon caching to ensure thread safety and support
+ * concurrent compilation of different projects without interference.</p>
  */
 public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
 
     private static final Logger LOGGER = LogManager.getLogger(ClarpseTypeScriptCompiler.class);
 
-    // ── Shared daemon infrastructure ──
-    private static TypeScriptDaemon sharedDaemon = null;
-    private static final Object DAEMON_LOCK = new Object();
-    private static volatile long lastUsedTimestamp = 0;
+    // ── Per-project daemon cache ──
+    private static final Map<String, ProjectDaemon> DAEMON_CACHE = new HashMap<>();
+    private static final Object CACHE_LOCK = new Object();
+
+    // Auto-close after idle timeout (default 30 minutes)
+    private static final long IDLE_TIMEOUT_MS = Long.getLong("clarpse.daemon.idleTimeout", 30) * 60_000L;
 
     /**
-     * Acquires a shared TypeScript daemon instance, creating one if necessary.
+     * Holds a daemon along with its metadata.
      */
-    private static TypeScriptDaemon acquireDaemon() throws TypeScriptDaemonException {
-        synchronized (DAEMON_LOCK) {
-            if (sharedDaemon != null) {
-                lastUsedTimestamp = System.currentTimeMillis();
-                return sharedDaemon;
+    private static class ProjectDaemon {
+        final TypeScriptDaemon daemon;
+        final String projectDir;
+        volatile long lastUsedTimestamp;
+        final Object lock = new Object();
+
+        ProjectDaemon(String projectDir, TypeScriptDaemon daemon) {
+            this.projectDir = projectDir;
+            this.daemon = daemon;
+            this.lastUsedTimestamp = System.currentTimeMillis();
+        }
+
+        boolean isProcessAlive() {
+            try {
+                return daemon.isProcessAlive();
+            } catch (Exception e) {
+                return false;
             }
-            TypeScriptDaemon daemon = new TypeScriptDaemon();
-            daemon.start();
-            sharedDaemon = daemon;
-            lastUsedTimestamp = System.currentTimeMillis();
-            return daemon;
         }
     }
 
     /**
-     * Releases the shared daemon. Call when switching between unrelated
-     * projects or during shutdown.
+     * Acquires a daemon for the specific project directory.
+     * Creates a new daemon if one doesn't exist for this project.
+     * The returned daemon must be used with its lock held for thread safety.
      */
-    public static void releaseDaemon() {
-        synchronized (DAEMON_LOCK) {
-            if (sharedDaemon != null) {
-                closeQuietly(sharedDaemon);
-                sharedDaemon = null;
+    private static ProjectDaemon acquireDaemon(String projectDir) throws TypeScriptDaemonException {
+        synchronized (CACHE_LOCK) {
+            ProjectDaemon projectDaemon = DAEMON_CACHE.get(projectDir);
+            if (projectDaemon == null || !projectDaemon.daemon.isProcessAlive()) {
+                if (projectDaemon != null) {
+                    closeQuietly(projectDaemon.daemon);
+                }
+                TypeScriptDaemon daemon = new TypeScriptDaemon();
+                daemon.start();
+                projectDaemon = new ProjectDaemon(projectDir, daemon);
+                DAEMON_CACHE.put(projectDir, projectDaemon);
             }
+            projectDaemon.lastUsedTimestamp = System.currentTimeMillis();
+            return projectDaemon;
+        }
+    }
+
+    /**
+     * Releases all daemons for the given project directory.
+     */
+    public static void releaseDaemon(String projectDir) {
+        synchronized (CACHE_LOCK) {
+            ProjectDaemon projectDaemon = DAEMON_CACHE.remove(projectDir);
+            if (projectDaemon != null) {
+                closeQuietly(projectDaemon.daemon);
+            }
+        }
+    }
+
+    /**
+     * Releases all cached daemons. Call during shutdown.
+     */
+    public static void releaseAllDaemons() {
+        synchronized (CACHE_LOCK) {
+            for (ProjectDaemon projectDaemon : DAEMON_CACHE.values()) {
+                closeQuietly(projectDaemon.daemon);
+            }
+            DAEMON_CACHE.clear();
         }
     }
 
@@ -78,7 +124,7 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         }
     }
 
-    // Auto-close after idle timeout
+    // Auto-close idle daemons
     private static final ScheduledExecutorService IDLE_CHECKER =
         Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "ts-daemon-idle-checker");
@@ -87,15 +133,18 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         });
 
     static {
-        long idleMs = Long.getLong("clarpse.daemon.idleTimeout", 30) * 60_000L;
         IDLE_CHECKER.scheduleAtFixedRate(() -> {
-            synchronized (DAEMON_LOCK) {
-                if (sharedDaemon != null
-                        && System.currentTimeMillis() - lastUsedTimestamp > idleMs) {
-                    LOGGER.info("Closing idle TS daemon.");
-                    closeQuietly(sharedDaemon);
-                    sharedDaemon = null;
-                }
+            long now = System.currentTimeMillis();
+            synchronized (CACHE_LOCK) {
+                DAEMON_CACHE.entrySet().removeIf(entry -> {
+                    ProjectDaemon pd = entry.getValue();
+                    if (now - pd.lastUsedTimestamp > IDLE_TIMEOUT_MS) {
+                        LOGGER.info("Closing idle TS daemon for project: {}", pd.projectDir);
+                        closeQuietly(pd.daemon);
+                        return true;
+                    }
+                    return false;
+                });
             }
         }, 5, 5, TimeUnit.MINUTES);
     }
@@ -124,9 +173,9 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         }
 
         final String persistDir = projectFiles.projectDir();
-        TypeScriptDaemon daemon;
+        ProjectDaemon projectDaemon;
         try {
-            daemon = acquireDaemon();
+            projectDaemon = acquireDaemon(persistDir);
         } catch (TypeScriptDaemonException e) {
             // Node.js not available or daemon startup failed
             for (final ProjectFile file : tsFiles) {
@@ -138,15 +187,18 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             return new CompileResult(srcModel, compileFailures);
         }
 
-        try {
-            final TypeScriptDaemon.InitResult initResult = daemon.initRepo(persistDir);
-            addInvalidConfigFailures(initResult, compileFailures, persistDir);
-            for (final ProjectFile file : tsFiles) {
-                final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
-                final TypeScriptFileModel fileModel;
-                try {
-                    fileModel = daemon.getFileModel(diskPath);
-                } catch (final TypeScriptDaemonException e) {
+        // Hold the per-project daemon lock for the entire compile operation
+        // to prevent concurrent operations on the same project from interfering
+        synchronized (projectDaemon.lock) {
+            try {
+                final TypeScriptDaemon.InitResult initResult = projectDaemon.daemon.initRepo(persistDir);
+                addInvalidConfigFailures(initResult, compileFailures, persistDir);
+                for (final ProjectFile file : tsFiles) {
+                    final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
+                    final TypeScriptFileModel fileModel;
+                    try {
+                        fileModel = projectDaemon.daemon.getFileModel(diskPath);
+                    } catch (final TypeScriptDaemonException e) {
                     if (e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM) {
                         LOGGER.debug("Skipping TypeScript file outside program scope: {}", file.path());
                         continue;
@@ -167,11 +219,9 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                     OOPSourceModelConstants.ComponentType.CLASS,
                     OOPSourceModelConstants.ComponentType.ENUM));
             CompilerSupport.classifyReferences(srcModel);
-            // Update last used timestamp on successful compilation
-            lastUsedTimestamp = System.currentTimeMillis();
         } catch (final TypeScriptDaemonException e) {
             // On catastrophic failure, release the daemon so next call gets a fresh one
-            releaseDaemon();
+            releaseDaemon(persistDir);
             final int code;
             if (e.code() == 0) {
                 code = TypeScriptDaemonException.CODE_DAEMON_ERROR;
@@ -182,6 +232,7 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 compileFailures.add(new CompileFailure(file, e.getMessage(), code));
             }
             LOGGER.warn("TypeScript resolver initialization failed (code={}).", code, e);
+            }
         }
         return new CompileResult(srcModel, compileFailures);
     }
