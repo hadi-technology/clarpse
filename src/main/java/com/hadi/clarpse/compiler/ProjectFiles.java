@@ -99,6 +99,32 @@ public class ProjectFiles implements AutoCloseable {
     public ProjectFiles() {
     }
 
+    /**
+     * Copy constructor - creates a deep copy of an existing ProjectFiles instance.
+     *
+     * @param other the ProjectFiles instance to copy
+     */
+    public ProjectFiles(final ProjectFiles other) {
+        this.projectDir = other.projectDir;
+        this.tempProjectDir = false; // Copy doesn't own the temp dir
+        this.size = other.size;
+        // Deep copy langToFilesMap
+        other.langToFilesMap.forEach((lang, files) ->
+            this.langToFilesMap.put(lang, new ArrayList<>(files))
+        );
+        // Deep copy configFiles
+        this.configFiles.putAll(other.configFiles);
+    }
+
+    /**
+     * Creates a deep copy of this ProjectFiles instance.
+     *
+     * @return a new ProjectFiles instance with the same files
+     */
+    public ProjectFiles copy() {
+        return new ProjectFiles(this);
+    }
+
     private void initFilesFromZipPath(File projectFiles) throws Exception {
         try (InputStream io = FileUtils.openInputStream(projectFiles)) {
             LOGGER.info("Converted zip path to an input stream..");
@@ -293,6 +319,40 @@ public class ProjectFiles implements AutoCloseable {
         }
         this.size += 1;
         LOGGER.debug("Inserted file " + file + ".");
+    }
+
+    /**
+     * Removes a file from this ProjectFiles instance by path.
+     *
+     * @param path the path of the file to remove
+     * @return true if the file was found and removed, false otherwise
+     */
+    public boolean removeFile(final String path) {
+        boolean removed = false;
+        for (Map.Entry<Lang, List<ProjectFile>> entry : this.langToFilesMap.entrySet()) {
+            List<ProjectFile> files = entry.getValue();
+            if (files.removeIf(file -> file.path().equals(path))) {
+                removed = true;
+            }
+        }
+        if (removed) {
+            this.size -= 1;
+            LOGGER.debug("Removed file at path: " + path + ".");
+        }
+        return removed;
+    }
+
+    /**
+     * Removes a file from this ProjectFiles instance.
+     *
+     * @param file the ProjectFile to remove
+     * @return true if the file was found and removed, false otherwise
+     */
+    public boolean removeFile(final ProjectFile file) {
+        if (file == null) {
+            return false;
+        }
+        return removeFile(file.path());
     }
 
     public final Collection<ProjectFile> files(Lang language) {
