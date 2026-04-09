@@ -108,10 +108,14 @@ public class ProjectFiles implements AutoCloseable {
         this.projectDir = other.projectDir;
         this.tempProjectDir = false; // Copy doesn't own the temp dir
         this.size = other.size;
-        // Deep copy langToFilesMap
-        other.langToFilesMap.forEach((lang, files) ->
-            this.langToFilesMap.put(lang, new ArrayList<>(files))
-        );
+        // Deep copy langToFilesMap with cloned ProjectFile instances
+        other.langToFilesMap.forEach((lang, files) -> {
+            List<ProjectFile> copiedFiles = new ArrayList<>();
+            for (ProjectFile file : files) {
+                copiedFiles.add(file.copy());
+            }
+            this.langToFilesMap.put(lang, copiedFiles);
+        });
         // Deep copy configFiles
         this.configFiles.putAll(other.configFiles);
     }
@@ -328,18 +332,18 @@ public class ProjectFiles implements AutoCloseable {
      * @return true if the file was found and removed, false otherwise
      */
     public boolean removeFile(final String path) {
-        boolean removed = false;
+        int removedCount = 0;
         for (Map.Entry<Lang, List<ProjectFile>> entry : this.langToFilesMap.entrySet()) {
             List<ProjectFile> files = entry.getValue();
-            if (files.removeIf(file -> file.path().equals(path))) {
-                removed = true;
-            }
+            int beforeSize = files.size();
+            files.removeIf(file -> file.path().equals(path));
+            removedCount += (beforeSize - files.size());
         }
-        if (removed) {
-            this.size -= 1;
-            LOGGER.debug("Removed file at path: " + path + ".");
+        if (removedCount > 0) {
+            this.size -= removedCount;
+            LOGGER.debug("Removed " + removedCount + " file(s) at path: " + path + ".");
         }
-        return removed;
+        return removedCount > 0;
     }
 
     /**
