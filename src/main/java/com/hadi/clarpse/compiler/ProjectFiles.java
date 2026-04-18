@@ -178,7 +178,7 @@ public class ProjectFiles implements AutoCloseable {
         Iterator<File> it = FileUtils.iterateFiles(projectFiles, null, true);
         while (it.hasNext()) {
             File nextFile = it.next();
-            if (nextFile.isFile()) {
+            if (nextFile.isFile() && shouldLoadPath(nextFile.getAbsolutePath())) {
                 String content = FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8);
                 this.insertFile(new ProjectFile(nextFile.getAbsolutePath(), content));
             }
@@ -279,11 +279,8 @@ public class ProjectFiles implements AutoCloseable {
 
     private void handlePotentialConfigFile(String safeName, String content) {
         String normalizedSafeName = safeName.replace("\\", "/");
-        String lower = normalizedSafeName.toLowerCase(Locale.ROOT);
-        if (lower.endsWith("tsconfig.json")
-                || lower.endsWith("pyrightconfig.json")
-                || lower.endsWith("pyproject.toml")) {
-            this.configFiles.put(normalizedSafeName, content);
+        if (isConfigFile(normalizedSafeName)) {
+            insertConfigFile(new ProjectFile(normalizedSafeName, content));
         }
     }
 
@@ -499,6 +496,14 @@ public class ProjectFiles implements AutoCloseable {
                 || normalized.endsWith("/pyrightconfig.json")
                 || normalized.equals("pyproject.toml")
                 || normalized.endsWith("/pyproject.toml");
+    }
+
+    private boolean shouldLoadPath(String path) {
+        if (path == null || path.isBlank()) {
+            return false;
+        }
+        return isConfigFile(path)
+                || Lang.langFromExtn(FilenameUtils.getExtension(path)) != null;
     }
 
     private String normalizeConfigPath(String path) {

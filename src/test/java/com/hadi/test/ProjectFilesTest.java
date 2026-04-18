@@ -243,6 +243,27 @@ public class ProjectFilesTest {
     }
 
     @Test
+    public void testZipLoadedConfigFileCountsTowardSizeAndCanBeRemoved() throws Exception {
+        Path zipPath = Files.createTempFile("zip-config-only", ".zip");
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+            ZipEntry configEntry = new ZipEntry("project/tsconfig.json");
+            zos.putNextEntry(configEntry);
+            zos.write("{\"compilerOptions\":{}}".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+
+        ProjectFiles projectFiles;
+        try (var in = Files.newInputStream(zipPath)) {
+            projectFiles = new ProjectFiles(in);
+        }
+
+        assertEquals(1, projectFiles.size());
+        assertTrue(projectFiles.removeFile("/project/tsconfig.json"));
+        assertEquals(0, projectFiles.size());
+        assertEquals(0, projectFiles.files().size());
+    }
+
+    @Test
     public void testConfigFilesFromDirAreExposed() throws Exception {
         Path tempDir = Files.createTempDirectory("clarpse-project-files");
         try {
