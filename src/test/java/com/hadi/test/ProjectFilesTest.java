@@ -5,6 +5,7 @@ import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.compiler.typescript.NodeRuntime;
+import org.apache.commons.io.FileUtils;
 import org.junit.BeforeClass;
 import org.junit.Assume;
 import org.junit.Test;
@@ -139,6 +140,24 @@ public class ProjectFilesTest {
     }
 
     @Test
+    public void testInsertConfigFileIsExposedByFiles() {
+        ProjectFiles pfs = new ProjectFiles();
+        pfs.insertFile(new ProjectFile("/tsconfig.json", "{}"));
+        assertEquals(1, pfs.size());
+        assertEquals(1, pfs.files().size());
+        assertTrue(pfs.files().stream().anyMatch(file -> "/tsconfig.json".equals(file.path())));
+    }
+
+    @Test
+    public void testRemoveConfigFileRemovesItFromAllFiles() {
+        ProjectFiles pfs = new ProjectFiles();
+        pfs.insertFile(new ProjectFile("/package.json", "{\"name\":\"demo\"}"));
+        assertTrue(pfs.removeFile("/package.json"));
+        assertEquals(0, pfs.size());
+        assertEquals(0, pfs.files().size());
+    }
+
+    @Test
     public void testEmptyProjectFilesSize() {
         ProjectFiles pfs = new ProjectFiles();
         assertEquals(0, pfs.size());
@@ -156,6 +175,13 @@ public class ProjectFilesTest {
         ProjectFiles pfs = new ProjectFiles();
         pfs.insertFile(new ProjectFile("/test.java", "{}"));
         assertEquals(0, pfs.matchingFilesByName("missing.java").size());
+    }
+
+    @Test
+    public void testMatchingFilesByNameIncludesConfigFiles() {
+        ProjectFiles pfs = new ProjectFiles();
+        pfs.insertFile(new ProjectFile("/tsconfig.json", "{}"));
+        assertEquals(1, pfs.matchingFilesByName("tsconfig.json").size());
     }
 
     @Test
@@ -214,6 +240,24 @@ public class ProjectFilesTest {
         assertTrue("tsconfig should be persisted", Files.exists(tsconfig));
         assertEquals("{\"compilerOptions\":{\"allowJs\":true}}",
                 Files.readString(tsconfig, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void testConfigFilesFromDirAreExposed() throws Exception {
+        Path tempDir = Files.createTempDirectory("clarpse-project-files");
+        try {
+            Files.writeString(tempDir.resolve("tsconfig.json"), "{\"compilerOptions\":{}}", StandardCharsets.UTF_8);
+            Files.createDirectories(tempDir.resolve("src"));
+            Files.writeString(tempDir.resolve("src").resolve("app.ts"), "export const app = 1;", StandardCharsets.UTF_8);
+
+            ProjectFiles projectFiles = new ProjectFiles(tempDir.toString());
+
+            assertEquals(2, projectFiles.size());
+            assertTrue(projectFiles.files().stream().anyMatch(file -> "tsconfig.json".equals(file.name())));
+            assertTrue(projectFiles.files(Lang.TYPESCRIPT).stream().anyMatch(file -> "app.ts".equals(file.name())));
+        } finally {
+            FileUtils.deleteQuietly(tempDir.toFile());
+        }
     }
 
     @Test

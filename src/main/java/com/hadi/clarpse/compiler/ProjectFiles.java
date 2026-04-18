@@ -178,11 +178,9 @@ public class ProjectFiles implements AutoCloseable {
         Iterator<File> it = FileUtils.iterateFiles(projectFiles, null, true);
         while (it.hasNext()) {
             File nextFile = it.next();
-            if (nextFile.isFile() && Lang.langFromExtn(FilenameUtils.getExtension(nextFile.getName())) != null) {
-                this.insertFile(new ProjectFile(
-                        nextFile.getAbsolutePath(),
-                        FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8))
-                );
+            if (nextFile.isFile()) {
+                String content = FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8);
+                this.insertFile(new ProjectFile(nextFile.getAbsolutePath(), content));
             }
         }
         LOGGER.info("Read " + this.size + " files.");
@@ -309,6 +307,8 @@ public class ProjectFiles implements AutoCloseable {
         Lang fileLang = Lang.langFromExtn(file.extension());
         if (fileLang != null) {
             this.insertFile(file, fileLang);
+        } else if (isConfigFile(file.path())) {
+            this.insertConfigFile(file);
         } else {
             LOGGER.debug("Skipping file: " + file.path() + ".");
         }
@@ -323,6 +323,12 @@ public class ProjectFiles implements AutoCloseable {
         }
         this.size += 1;
         LOGGER.debug("Inserted file " + file + ".");
+    }
+
+    private void insertConfigFile(final ProjectFile file) {
+        this.configFiles.put(normalizeConfigPath(file.path()), file.content());
+        this.size += 1;
+        LOGGER.debug("Inserted config file " + file + ".");
     }
 
     /**
@@ -342,8 +348,15 @@ public class ProjectFiles implements AutoCloseable {
         if (removedCount > 0) {
             this.size -= removedCount;
             LOGGER.debug("Removed " + removedCount + " file(s) at path: " + path + ".");
+            return true;
         }
-        return removedCount > 0;
+        String normalizedConfigPath = normalizeConfigPath(path);
+        if (this.configFiles.remove(normalizedConfigPath) != null) {
+            this.size -= 1;
+            LOGGER.debug("Removed config file at path: " + normalizedConfigPath + ".");
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -366,6 +379,7 @@ public class ProjectFiles implements AutoCloseable {
     public final Collection<ProjectFile> files() {
         Set<ProjectFile> allFiles = new HashSet<>();
         this.langToFilesMap.forEach((lang, files) -> allFiles.addAll(files));
+        this.configFiles.forEach((path, content) -> allFiles.add(new ProjectFile(path, content)));
         return Set.copyOf(allFiles);
     }
 
@@ -460,6 +474,48 @@ public class ProjectFiles implements AutoCloseable {
         Set<ProjectFile> result = new HashSet<>();
         this.langToFilesMap.forEach((lang, files) -> result.addAll(files.stream().filter(
                 file -> file.name().equals(matchName)).collect(Collectors.toList())));
+        this.configFiles.forEach((path, content) -> {
+            ProjectFile file = new ProjectFile(path, content);
+            if (file.name().equals(matchName)) {
+                result.add(file);
+            }
+        });
         return result;
+    }
+
+    private boolean isConfigFile(String path) {
+        if (path == null || path.isBlank()) {
+            return false;
+        }
+        String normalized = normalizeConfigPath(path).toLowerCase(Locale.ROOT);
+        return normalized.equals("tsconfig.json")
+                || normalized.endsWith("/tsconfig.json")
+                || normalized.matches(".*/tsconfig\\.[^/]+\\.json$")
+                || normalized.equals("jsconfig.json")
+                || normalized.endsWith("/jsconfig.json")
+                || normalized.equals("package.json")
+                || normalized.endsWith("/package.json")
+                || normalized.equals("pyrightconfig.json")
+                || normalized.endsWith("/pyrightconfig.json")
+                || normalized.equals("pyproject.toml")
+                || normalized.endsWith("/pyproject.toml");
+    }
+
+    private String normalizeConfigPath(String path) {
+        if (path == null || path.isBlank()) {
+            return path;
+        }
+        String normalized = path.replace('\\', '/');
+        if (CompilerSupport.isAbsolutePath(normalized)) {
+            if (normalized.length() > 2
+                    && Character.isLetter(normalized.charAt(0))
+                    && normalized.charAt(1) == ':') {
+                normalized = normalized.substring(2);
+            }
+        }
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        return normalized;
     }
 }
