@@ -109,7 +109,8 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         if (e == null) {
             return false;
         }
-        return e.code() == TypeScriptDaemonException.CODE_FILE_NOT_FOUND;
+        return e.code() == TypeScriptDaemonException.CODE_FILE_NOT_FOUND
+                || e.code() == TypeScriptDaemonException.CODE_RESOLUTION_FAILED;
     }
 
     private static void addInvalidConfigFailures(final TypeScriptDaemon.InitResult initResult,

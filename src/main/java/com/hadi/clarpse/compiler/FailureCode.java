@@ -16,6 +16,7 @@ public final class FailureCode {
     public static final int PARSE_FAILED = 2003;
     public static final int DAEMON_ERROR = 2004;
     public static final int FILE_EXCLUDED = 2005;
+    public static final int RESOLUTION_FAILED = 2006;
 
     private FailureCode() {
     }
