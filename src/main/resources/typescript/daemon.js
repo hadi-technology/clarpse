@@ -8,8 +8,11 @@ const ERROR_CODES = {
   CONFIG_PARSE_FAILED: 1003,
   PROGRAM_CREATE_FAILED: 1004,
   FILE_NOT_IN_PROGRAM: 2001,
-  FILE_NOT_FOUND: 2002
+  FILE_NOT_FOUND: 2002,
+  RESOLUTION_FAILED: 2006
 };
+
+const MAX_TYPE_DEPTH = 10;
 
 let state = {
   repoRoot: null,
@@ -383,9 +386,13 @@ function getReturnTypeObject(checker, node) {
   return checker.getReturnTypeOfSignature(signature);
 }
 
-function normalizeReturnType(type, checker) {
+function normalizeReturnType(type, checker, depth) {
   if (!type || !checker || !state.ts) {
     return "";
+  }
+  depth = depth || 0;
+  if (depth >= MAX_TYPE_DEPTH) {
+    return checker.typeToString(type);
   }
   const ts = state.ts;
   const flags = type.flags || 0;
@@ -406,7 +413,7 @@ function normalizeReturnType(type, checker) {
   if (type.isUnion && type.isUnion() && Array.isArray(type.types)) {
     const parts = [];
     for (const subType of type.types) {
-      const normalized = normalizeReturnType(subType, checker);
+      const normalized = normalizeReturnType(subType, checker, depth + 1);
       if (!normalized) {
         continue;
       }
@@ -419,7 +426,7 @@ function normalizeReturnType(type, checker) {
   if (type.isIntersection && type.isIntersection() && Array.isArray(type.types)) {
     const parts = [];
     for (const subType of type.types) {
-      const normalized = normalizeReturnType(subType, checker);
+      const normalized = normalizeReturnType(subType, checker, depth + 1);
       if (!normalized) {
         continue;
       }
@@ -467,13 +474,21 @@ function resolveSymbolName(symbol, checker) {
   return actual.getName();
 }
 
-function collectSymbolEntries(type, checker, entries) {
+function collectSymbolEntries(type, checker, entries, depth) {
   if (!type) {
+    return;
+  }
+  depth = depth || 0;
+  if (depth >= MAX_TYPE_DEPTH) {
+    const symbol = type.aliasSymbol || type.symbol;
+    if (symbol) {
+      entries.push({ symbol, type });
+    }
     return;
   }
   if (type.isUnionOrIntersection && type.isUnionOrIntersection()) {
     for (const sub of type.types) {
-      collectSymbolEntries(sub, checker, entries);
+      collectSymbolEntries(sub, checker, entries, depth + 1);
     }
     return;
   }
@@ -482,7 +497,7 @@ function collectSymbolEntries(type, checker, entries) {
       if (arg && arg.isThisType) {
         continue;
       }
-      collectSymbolEntries(arg, checker, entries);
+      collectSymbolEntries(arg, checker, entries, depth + 1);
     }
   }
   if (type.typeArguments) {
@@ -490,7 +505,7 @@ function collectSymbolEntries(type, checker, entries) {
       if (arg && arg.isThisType) {
         continue;
       }
-      collectSymbolEntries(arg, checker, entries);
+      collectSymbolEntries(arg, checker, entries, depth + 1);
     }
   }
   const symbol = type.aliasSymbol || type.symbol;
@@ -499,13 +514,17 @@ function collectSymbolEntries(type, checker, entries) {
   }
 }
 
-function collectDisplayNames(type, checker, names) {
+function collectDisplayNames(type, checker, names, depth) {
   if (!type) {
+    return;
+  }
+  depth = depth || 0;
+  if (depth >= MAX_TYPE_DEPTH) {
     return;
   }
   if (type.isUnionOrIntersection && type.isUnionOrIntersection()) {
     for (const sub of type.types) {
-      collectDisplayNames(sub, checker, names);
+      collectDisplayNames(sub, checker, names, depth + 1);
     }
     return;
   }
@@ -514,7 +533,7 @@ function collectDisplayNames(type, checker, names) {
       if (arg && arg.isThisType) {
         continue;
       }
-      collectDisplayNames(arg, checker, names);
+      collectDisplayNames(arg, checker, names, depth + 1);
     }
   }
   if (type.typeArguments) {
@@ -522,7 +541,7 @@ function collectDisplayNames(type, checker, names) {
       if (arg && arg.isThisType) {
         continue;
       }
-      collectDisplayNames(arg, checker, names);
+      collectDisplayNames(arg, checker, names, depth + 1);
     }
   }
   const symbol = type.aliasSymbol || type.symbol;
@@ -1057,7 +1076,17 @@ async function handleGetFileModel(params) {
     throw err;
   }
   const checker = entryInfo.entry.checker || entryInfo.entry.program.getTypeChecker();
-  const declarations = collectTopLevelDeclarations(ts, entryInfo.source, checker);
+  let declarations;
+  try {
+    declarations = collectTopLevelDeclarations(ts, entryInfo.source, checker);
+  } catch (err) {
+    if (err instanceof RangeError || (err.message && err.message.includes("Maximum call stack size exceeded"))) {
+      console.warn(`[clarpse] Stack overflow during type resolution for ${filePath}. Returning partial model.`);
+      declarations = [];
+    } else {
+      throw err;
+    }
+  }
   return {
     filePath: normalized,
     declarations
@@ -1084,7 +1113,9 @@ async function handleRequest(request) {
       const result = await handleGetFileModel(params);
       writeResponse(id, result);
     } catch (err) {
-      if (err.code) {
+      if (err instanceof RangeError || (err.message && err.message.includes("Maximum call stack size exceeded"))) {
+        writeError(id, ERROR_CODES.RESOLUTION_FAILED, "Maximum call stack size exceeded");
+      } else if (err.code) {
         writeError(id, err.code, err.message, err.data);
       } else {
         writeError(id, ERROR_CODES.PROGRAM_CREATE_FAILED, err.message);
