@@ -45,4 +45,15 @@ public class FailureCodeContractTest {
         CompileFailure failure = result.failures().iterator().next();
         assertEquals(Integer.valueOf(FailureCode.PARSE_FAILED), failure.errorCode());
     }
+
+    @Test
+    public void csharpParseFailureUsesLanguageAgnosticCode() throws Exception {
+        ProjectFiles projectFiles = new ProjectFiles();
+        projectFiles.insertFile(new ProjectFile("/src/Broken.cs", "namespace Demo; public class Broken {"));
+
+        CompileResult result = new ClarpseProject(projectFiles, Lang.CSHARP).result();
+        assertEquals(1, result.failures().size());
+        CompileFailure failure = result.failures().iterator().next();
+        assertEquals(Integer.valueOf(FailureCode.PARSE_FAILED), failure.errorCode());
+    }
 }

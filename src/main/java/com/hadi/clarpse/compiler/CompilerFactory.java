@@ -2,6 +2,7 @@ package com.hadi.clarpse.compiler;
 
 import com.hadi.clarpse.compiler.typescript.ClarpseTypeScriptCompiler;
 import com.hadi.clarpse.compiler.python.ClarpsePythonCompiler;
+import com.hadi.clarpse.compiler.csharp.ClarpseCSharpCompiler;
 
 /**
  * Factory to retrieve appropriate parsing tool for our projects.
@@ -13,6 +14,8 @@ public class CompilerFactory {
 
             case JAVA:
             return new ClarpseJavaCompiler();
+            case CSHARP:
+            return new ClarpseCSharpCompiler();
             case TYPESCRIPT:
             return new ClarpseTypeScriptCompiler();
             case PYTHON:
