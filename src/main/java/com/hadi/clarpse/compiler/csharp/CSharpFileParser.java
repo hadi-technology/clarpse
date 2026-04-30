@@ -866,7 +866,10 @@ final class CSharpFileParser {
 
     private static String combineNamespace(final String currentNamespace, final String declaredNamespace) {
         if (currentNamespace == null || currentNamespace.isEmpty()) {
-            return declaredNamespace == null ? "" : declaredNamespace;
+            if (declaredNamespace == null) {
+                return "";
+            }
+            return declaredNamespace;
         }
         if (declaredNamespace == null || declaredNamespace.isEmpty()) {
             return currentNamespace;
