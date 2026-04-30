@@ -2,11 +2,13 @@ package com.hadi.test.typescript;
 
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.typescript.NodeRuntime;
+import com.hadi.clarpse.compiler.typescript.TypeScriptDaemonException;
 import com.hadi.clarpse.sourcemodel.Component;
 import org.junit.Assume;
 import org.junit.Test;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -64,8 +66,9 @@ public class TypeScriptRecursiveTypeTest {
         CompileResult result = TypeScriptTestUtil.compileFixture("recursive-types");
 
         assertNotNull(result);
-        // If there are failures, the compilation should still produce results
-        // rather than throwing an exception
         assertTrue(result.model().components().count() > 0);
+        result.failures().forEach(failure ->
+                assertEquals(TypeScriptDaemonException.CODE_RESOLUTION_FAILED,
+                        failure.errorCode().intValue()));
     }
 }

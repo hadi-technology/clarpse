@@ -7,6 +7,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class CSharpNamespaceAndModuleTest {
 
@@ -35,5 +36,20 @@ public class CSharpNamespaceAndModuleTest {
     public void fileNameBecomesModule() {
         final Component component = model.getComponent("Demo.Feature.User").get();
         assertEquals("User", component.module());
+    }
+
+    @Test
+    public void nestedNamespaceBlocksPreserveParentNamespace() throws Exception {
+        final OOPSourceCodeModel nestedNamespaceModel = CSharpTestUtil.compileInline(
+                new ProjectFile("/src/App/Nested.cs", """
+                        namespace Demo {
+                          namespace Feature {
+                            public class NestedUser {}
+                          }
+                        }
+                        """)
+        ).model();
+
+        assertTrue(nestedNamespaceModel.getComponent("Demo.Feature.NestedUser").isPresent());
     }
 }

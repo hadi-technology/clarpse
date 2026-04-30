@@ -140,7 +140,7 @@ final class CSharpFileParser {
         final String type = node.type;
         if ("cs:namespace-file-scope-declaration".equals(type)
                 || "cs:namespace-block-declaration".equals(type)) {
-            final String namespaceName = namespaceName(node);
+            final String namespaceName = combineNamespace(currentNamespace, namespaceName(node));
             for (final SyntaxNode child : node.children) {
                 if ("cs:block-list".equals(child.type)) {
                     for (final SyntaxNode nested : child.children) {
@@ -862,6 +862,20 @@ final class CSharpFileParser {
             return null;
         }
         return normalizeWhitespace(child.text);
+    }
+
+    private static String combineNamespace(final String currentNamespace, final String declaredNamespace) {
+        if (currentNamespace == null || currentNamespace.isEmpty()) {
+            return declaredNamespace == null ? "" : declaredNamespace;
+        }
+        if (declaredNamespace == null || declaredNamespace.isEmpty()) {
+            return currentNamespace;
+        }
+        if (declaredNamespace.equals(currentNamespace)
+                || declaredNamespace.startsWith(currentNamespace + ".")) {
+            return declaredNamespace;
+        }
+        return currentNamespace + "." + declaredNamespace;
     }
 
     private static SyntaxNode firstChild(final SyntaxNode node, final String type) {
