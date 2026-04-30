@@ -65,7 +65,7 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
         if (parallelism > 1) {
             LOGGER.info("Parsing C# files in parallel using " + parallelism + " threads.");
         }
-        final ExecutorService executor = Executors.newFixedThreadPool(parallelism);
+        final ExecutorService executor = Executors.newFixedThreadPool(parallelism); // NOPMD CloseResource - closed in finally
         try {
             final List<Future<CSharpModel.ParseOutcome>> futures = new ArrayList<>();
             for (int i = 0; i < files.size(); i += 1) {
