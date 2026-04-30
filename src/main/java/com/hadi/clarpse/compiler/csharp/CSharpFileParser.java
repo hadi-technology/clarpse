@@ -22,6 +22,12 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Syntax-first C# file parser that converts JetBrains PSI productions into
+ * lightweight Clarpse intermediate models. This stage is responsible for
+ * declaration extraction, local/body token harvesting, and cheap structural
+ * validation before the model assembler performs repo-local resolution.
+ */
 final class CSharpFileParser {
 
     private static final Set<String> TYPE_DECLARATIONS = Set.of(

@@ -22,6 +22,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
 
+/**
+ * Builds the final {@link OOPSourceCodeModel} from parsed C# file models.
+ * This stage merges partial declarations, applies global imports, constructs
+ * components, and performs fast repo-local type/member resolution using a
+ * precomputed index rather than repeated tree scans.
+ */
 final class CSharpModelAssembler {
 
     private static final Map<String, String> BUILTIN_TYPES = Map.ofEntries(

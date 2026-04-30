@@ -24,7 +24,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 /**
- * C# compiler backed by the JetBrains JVM parser and Clarpse-owned resolution.
+ * Entry point for C# compilation in Clarpse. It parallelizes per-file parsing,
+ * collects parse failures without aborting the full language pass, and then
+ * delegates to the assembler for partial merging, resolution, and final source
+ * model construction.
  */
 public final class ClarpseCSharpCompiler implements ClarpseCompiler {
 

@@ -4,7 +4,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Shared helpers for compiler worker-pool sizing and shutdown behavior.
+ * Shared helpers for compiler worker-pool sizing and shutdown behavior. Java
+ * and C# use this to honor the same environment-variable override and the same
+ * executor termination policy.
  */
 public final class CompilerParallelismSupport {
 

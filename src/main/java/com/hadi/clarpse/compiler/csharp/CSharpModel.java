@@ -9,6 +9,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * Internal data-transfer models shared between the C# parse phase and the
+ * assembler phase. These types intentionally keep syntax extraction separate
+ * from final component creation so parsing can remain lightweight and parallel.
+ */
 final class CSharpModel {
 
     private CSharpModel() {
