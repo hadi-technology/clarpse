@@ -19,6 +19,7 @@ import java.util.Set;
 public enum Lang {
 
     JAVA("java", new HashSet<>(List.of("java")), Collections.emptySet()),
+    CSHARP("csharp", new HashSet<>(List.of("cs")), Collections.emptySet()),
     TYPESCRIPT("typescript", new HashSet<>(List.of("ts", "tsx")), Collections.emptySet()),
     PYTHON("python", new HashSet<>(List.of("py")), Collections.emptySet());
 
@@ -26,6 +27,7 @@ public enum Lang {
 
     static {
         NAMES_MAP.put(JAVA.value, JAVA);
+        NAMES_MAP.put(CSHARP.value, CSHARP);
         NAMES_MAP.put(TYPESCRIPT.value, TYPESCRIPT);
         NAMES_MAP.put(PYTHON.value, PYTHON);
     }

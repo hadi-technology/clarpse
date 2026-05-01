@@ -1081,11 +1081,12 @@ async function handleGetFileModel(params) {
     declarations = collectTopLevelDeclarations(ts, entryInfo.source, checker);
   } catch (err) {
     if (err instanceof RangeError || (err.message && err.message.includes("Maximum call stack size exceeded"))) {
-      console.warn(`[clarpse] Stack overflow during type resolution for ${filePath}. Returning partial model.`);
-      declarations = [];
+      console.warn(`[clarpse] Stack overflow during type resolution for ${filePath}.`);
+      err.code = ERROR_CODES.RESOLUTION_FAILED;
     } else {
       throw err;
     }
+    throw err;
   }
   return {
     filePath: normalized,

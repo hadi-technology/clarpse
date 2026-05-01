@@ -3,7 +3,7 @@
 
 	<groupId>io.github.hadi-technology</groupId>
 	<artifactId>clarpse</artifactId>
-	<version>9.5.4</version>
+	<version>9.6.0</version>
 	<packaging>jar</packaging>
 
 	<name>${project.groupId}:${project.artifactId}</name>
@@ -37,6 +37,13 @@
 		<developerConnection>scm:git:ssh://github.com/hadi-technology/clarpse.git</developerConnection>
 		<url>https://github.com/hadi-technology/clarpse.git</url>
 	</scm>
+
+	<repositories>
+		<repository>
+			<id>jetbrains-intellij-deps</id>
+			<url>https://packages.jetbrains.team/maven/p/ij/intellij-dependencies</url>
+		</repository>
+	</repositories>
 
 	<dependencies>
 		<!-- https://mvnrepository.com/artifact/com.tunnelvisionlabs/antlr4-runtime -->
@@ -82,6 +89,31 @@
 			<groupId>commons-io</groupId>
 			<artifactId>commons-io</artifactId>
 			<version>2.18.0</version>
+		</dependency>
+		<dependency>
+			<groupId>org.jetbrains</groupId>
+			<artifactId>csharp-parser</artifactId>
+			<version>0.3.355</version>
+		</dependency>
+		<dependency>
+			<groupId>org.jetbrains</groupId>
+			<artifactId>ij-parsing-core</artifactId>
+			<version>0.3.355</version>
+		</dependency>
+		<dependency>
+			<groupId>org.jetbrains.kotlin</groupId>
+			<artifactId>kotlin-stdlib</artifactId>
+			<version>2.2.20-RC</version>
+		</dependency>
+		<dependency>
+			<groupId>org.jetbrains</groupId>
+			<artifactId>annotations</artifactId>
+			<version>26.0.2</version>
+		</dependency>
+		<dependency>
+			<groupId>org.jetbrains.intellij.deps.fastutil</groupId>
+			<artifactId>intellij-deps-fastutil</artifactId>
+			<version>8.5.4-9</version>
 		</dependency>
 	</dependencies>
 

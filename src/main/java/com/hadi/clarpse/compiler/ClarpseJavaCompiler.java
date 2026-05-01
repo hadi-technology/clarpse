@@ -17,7 +17,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 
 /**
  * JavaParser based compiler to process source code.
@@ -25,7 +24,6 @@ import java.util.concurrent.TimeUnit;
 public class ClarpseJavaCompiler implements ClarpseCompiler {
 
     private static final Logger LOGGER = LogManager.getLogger(ClarpseJavaCompiler.class);
-    private static final String PARALLELISM_ENV = "CLARPSE_PARALLELISM";
 
     @Override
     public CompileResult compile(final ProjectFiles projectFiles,
@@ -54,7 +52,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
     @SuppressWarnings("PMD.CloseResource")
     private ParseResults parseJavaFiles(final List<ProjectFile> files, final String persistDir) {
-        final int parallelism = resolveParallelism(files.size());
+        final int parallelism = CompilerParallelismSupport.resolveParallelism(files.size());
         if (parallelism > 1) {
             LOGGER.info("Parsing Java files in parallel using " + parallelism + " threads.");
         }
@@ -90,39 +88,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             }
             return new ParseResults(mergedModel, compileFailures);
         } finally {
-            shutdownExecutor(executor);
+            CompilerParallelismSupport.shutdownExecutor(executor);
         }
-    }
-
-    private void shutdownExecutor(final ExecutorService executor) {
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    private int resolveParallelism(final int fileCount) {
-        if (fileCount == 0) {
-            return 1;
-        }
-        final String override = System.getenv(PARALLELISM_ENV);
-        if (override != null) {
-            try {
-                final int requested = Integer.parseInt(override.trim());
-                if (requested <= 0) {
-                    return 1;
-                }
-                return Math.min(requested, fileCount);
-            } catch (NumberFormatException ignored) {
-                // Use default parallelism
-            }
-        }
-        final int available = Runtime.getRuntime().availableProcessors();
-        return Math.min(available, fileCount);
     }
 }
