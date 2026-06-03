@@ -298,6 +298,14 @@ final class PythonModelAssembler {
                 component.insertCmpRef(ref);
             }
         }
+        if (method.bodyReferences != null) {
+            for (final PythonTypeRefModel bodyRef : method.bodyReferences) {
+                final ComponentReference ref = buildReference(bodyRef, false);
+                if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
+                    component.insertCmpRef(ref);
+                }
+            }
+        }
         return component;
     }
 
@@ -332,6 +340,14 @@ final class PythonModelAssembler {
             final ComponentReference ref = buildReference(function.returnType, false);
             if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
                 component.insertCmpRef(ref);
+            }
+        }
+        if (function.bodyReferences != null) {
+            for (final PythonTypeRefModel bodyRef : function.bodyReferences) {
+                final ComponentReference ref = buildReference(bodyRef, false);
+                if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
+                    component.insertCmpRef(ref);
+                }
             }
         }
         return component;
