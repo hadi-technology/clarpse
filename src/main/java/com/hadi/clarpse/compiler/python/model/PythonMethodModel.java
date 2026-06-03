@@ -22,4 +22,7 @@ public class PythonMethodModel {
 
     @JsonProperty("return")
     public PythonTypeRefModel returnType;
+
+    @JsonProperty("bodyReferences")
+    public List<PythonTypeRefModel> bodyReferences = new ArrayList<>();
 }

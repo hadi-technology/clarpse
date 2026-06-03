@@ -1683,6 +1683,60 @@ function extractParams(funcNode, ctx, parseNodeType) {
   return params;
 }
 
+function collectBodyReferences(suite, ctx, parseNodeType) {
+  if (!suite || !suite.d) {
+    return [];
+  }
+  const refs = [];
+  const seen = new Set();
+
+  function walk(node) {
+    if (!node || typeof node !== 'object' || !node.d) return;
+
+    if (isClassNode(node, parseNodeType) || isFunctionNode(node, parseNodeType)) return;
+
+    if (parseNodeType && parseNodeType.Call !== undefined && node.nodeType === parseNodeType.Call) {
+      const calleeNode = node.d.leftExpr;
+      if (calleeNode) {
+        const calleeText = textForNode(calleeNode, ctx.fileText);
+        if (calleeText && !seen.has(calleeText)) {
+          seen.add(calleeText);
+          const resolved = resolveTypeFromRaw(calleeText, ctx);
+          if (resolved) {
+            refs.push({ raw: calleeText, targetUniqueName: resolved, externalLabel: resolved });
+          } else {
+            const dotIdx = calleeText.indexOf('.');
+            if (dotIdx > 0) {
+              const base = calleeText.substring(0, dotIdx);
+              const baseResolved = resolveTypeFromRaw(base, ctx);
+              if (baseResolved) {
+                refs.push({ raw: calleeText, targetUniqueName: null, externalLabel: baseResolved + calleeText.substring(dotIdx) });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          walk(item);
+        }
+      } else if (child && typeof child === 'object' && child.d) {
+        walk(child);
+      }
+    }
+  }
+
+  const statements = getStatementsFromSuite(suite);
+  for (const stmt of statements) {
+    walk(stmt);
+  }
+  return refs;
+}
+
 function extractMethod(methodNode, ctx, parseNodeType) {
   const name = nameFromNode(methodNode.d && methodNode.d.name ? methodNode.d.name : null);
   if (!name) {
@@ -1703,6 +1757,7 @@ function extractMethod(methodNode, ctx, parseNodeType) {
   const implementationHash = stableImplementationHash(
     methodNode && methodNode.d && methodNode.d.suite ? textForNode(methodNode.d.suite, ctx.fileText) : ''
   );
+  const bodyReferences = collectBodyReferences(methodNode.d ? methodNode.d.suite : null, ctx, parseNodeType);
   return {
     name,
     signature,
@@ -1713,7 +1768,8 @@ function extractMethod(methodNode, ctx, parseNodeType) {
     classMethod: isClassMethod,
     staticMethod: isStaticMethod,
     params,
-    return: returnRef
+    return: returnRef,
+    bodyReferences
   };
 }
 
@@ -1737,6 +1793,7 @@ function extractFunction(functionNode, ctx, parseNodeType) {
   const implementationHash = stableImplementationHash(
     functionNode && functionNode.d && functionNode.d.suite ? textForNode(functionNode.d.suite, ctx.fileText) : ''
   );
+  const bodyReferences = collectBodyReferences(functionNode.d ? functionNode.d.suite : null, ctx, parseNodeType);
   return {
     name,
     signature,
@@ -1747,7 +1804,8 @@ function extractFunction(functionNode, ctx, parseNodeType) {
     classMethod: false,
     staticMethod: false,
     params,
-    return: returnRef
+    return: returnRef,
+    bodyReferences
   };
 }
 
