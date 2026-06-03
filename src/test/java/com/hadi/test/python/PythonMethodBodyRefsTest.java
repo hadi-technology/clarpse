@@ -23,9 +23,7 @@ public class PythonMethodBodyRefsTest {
 
     @Test
     public void get_user_callsUserDao() {
-        String methodName = PythonTestUtil.uniqueName(PACKAGE_PATH, "service",
-                "UserService.get_user(user_id: int) : User");
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = getMethod("UserService.get_user(user_id: int) : User");
         Assert.assertTrue("get_user should reference UserDao",
                 containsInvokedName(method.internalDependencies(),
                         PythonTestUtil.uniqueName(PACKAGE_PATH, "dao", "UserDao")));
@@ -33,9 +31,7 @@ public class PythonMethodBodyRefsTest {
 
     @Test
     public void get_user_callsAddress() {
-        String methodName = PythonTestUtil.uniqueName(PACKAGE_PATH, "service",
-                "UserService.get_user(user_id: int) : User");
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = getMethod("UserService.get_user(user_id: int) : User");
         Assert.assertTrue("get_user should reference Address",
                 containsInvokedName(method.internalDependencies(),
                         PythonTestUtil.uniqueName(PACKAGE_PATH, "types", "Address")));
@@ -43,31 +39,30 @@ public class PythonMethodBodyRefsTest {
 
     @Test
     public void get_user_callsBuildName() {
-        String methodName = PythonTestUtil.uniqueName(PACKAGE_PATH, "service",
-                "UserService.get_user(user_id: int) : User");
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = getMethod("UserService.get_user(user_id: int) : User");
         Assert.assertTrue("get_user should reference build_name",
                 containsInvokedName(method.externalDependencies(),
                         "src.types.build_name"));
     }
 
     @Test
+    public void get_user_ignoresLocalVariableCalls() {
+        Component method = getMethod("UserService.get_user(user_id: int) : User");
+        // dao = UserDao(); dao.find_by_id(...) — 'dao' is a local variable, not an import
+        Assert.assertFalse("dao.find_by_id should NOT resolve as src.dao.find_by_id",
+                containsInvokedName(method.externalDependencies(), "src.dao.find_by_id"));
+    }
+
+    @Test
     public void process_hasNoBodyRefs_beyondBuiltin() {
-        String methodName = PythonTestUtil.uniqueName(PACKAGE_PATH, "service",
-                "UserService.process(data: str) : str");
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = getMethod("UserService.process(data: str) : str");
         Assert.assertEquals("process should have no internal body refs", 0,
                 countRefsContaining(method.internalDependencies(), "src."));
     }
 
-    @Test
-    public void userDaoCallsFindById_bodyRef() {
-        String methodName = PythonTestUtil.uniqueName(PACKAGE_PATH, "dao",
-                "UserDao.find_by_id(user_id: int) : str");
-        Component method = model.getComponent(methodName).orElseThrow();
-        // find_by_id has pass — no body refs
-        Assert.assertEquals("find_by_id should have no internal refs", 0,
-                countRefsContaining(method.internalDependencies(), "src."));
+    private static Component getMethod(String symbolPath) {
+        return model.getComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "service", symbolPath))
+                .orElseThrow();
     }
 
     private static boolean containsInvokedName(final Iterable<ComponentReference> refs,

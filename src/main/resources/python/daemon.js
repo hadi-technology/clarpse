@@ -1690,6 +1690,34 @@ function collectBodyReferences(suite, ctx, parseNodeType) {
   const refs = [];
   const seen = new Set();
 
+  function isKnownImport(baseName) {
+    if (!baseName) return false;
+    if (ctx.importedModules && ctx.importedModules.has(baseName)) return true;
+    if (ctx.importedSymbols && ctx.importedSymbols.has(baseName)) return true;
+    if (ctx.localClasses && ctx.localClasses.has(baseName)) return true;
+    return false;
+  }
+
+  function addRef(calleeText) {
+    if (!calleeText || seen.has(calleeText)) return;
+    seen.add(calleeText);
+    const dotIdx = calleeText.indexOf('.');
+    if (dotIdx > 0) {
+      const base = calleeText.substring(0, dotIdx);
+      if (isKnownImport(base)) {
+        const resolved = resolveTypeFromRaw(base, ctx);
+        if (resolved) {
+          refs.push({ raw: calleeText, targetUniqueName: null, externalLabel: resolved + calleeText.substring(dotIdx) });
+        }
+      }
+    } else {
+      const resolved = resolveTypeFromRaw(calleeText, ctx);
+      if (resolved) {
+        refs.push({ raw: calleeText, targetUniqueName: resolved, externalLabel: resolved });
+      }
+    }
+  }
+
   function walk(node) {
     if (!node || typeof node !== 'object' || !node.d) return;
 
@@ -1698,23 +1726,7 @@ function collectBodyReferences(suite, ctx, parseNodeType) {
     if (parseNodeType && parseNodeType.Call !== undefined && node.nodeType === parseNodeType.Call) {
       const calleeNode = node.d.leftExpr;
       if (calleeNode) {
-        const calleeText = textForNode(calleeNode, ctx.fileText);
-        if (calleeText && !seen.has(calleeText)) {
-          seen.add(calleeText);
-          const resolved = resolveTypeFromRaw(calleeText, ctx);
-          if (resolved) {
-            refs.push({ raw: calleeText, targetUniqueName: resolved, externalLabel: resolved });
-          } else {
-            const dotIdx = calleeText.indexOf('.');
-            if (dotIdx > 0) {
-              const base = calleeText.substring(0, dotIdx);
-              const baseResolved = resolveTypeFromRaw(base, ctx);
-              if (baseResolved) {
-                refs.push({ raw: calleeText, targetUniqueName: null, externalLabel: baseResolved + calleeText.substring(dotIdx) });
-              }
-            }
-          }
-        }
+        addRef(textForNode(calleeNode, ctx.fileText));
       }
     }
 
