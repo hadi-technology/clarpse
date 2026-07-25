@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hadi.clarpse.compiler.ClarpseProperties;
 import com.hadi.clarpse.compiler.DaemonResourceExtractor;
+import com.hadi.clarpse.compiler.NodeDaemonGate;
 import com.hadi.clarpse.compiler.python.model.PythonFileModel;
 import com.hadi.clarpse.compiler.typescript.NodeRuntime;
 import org.apache.commons.io.FileUtils;
@@ -53,6 +54,7 @@ public final class PythonDaemon implements AutoCloseable {
     private BufferedReader reader;
     private int nextId = 1;
     private Path tempDir;
+    private boolean permitHeld;
 
     public void start() throws PythonDaemonException {
         if (process != null && process.isAlive()) {
@@ -67,13 +69,30 @@ public final class PythonDaemon implements AutoCloseable {
         final List<String> command = List.of(nodeCommand, "--max-old-space-size=" + resolveNodeHeapSize(), daemonScript.toString());
         final ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectError(ProcessBuilder.Redirect.INHERIT);
+        // The daemon's heap allowance is large by necessity; what keeps a constrained
+        // host alive is bounding how many daemons exist at once (see NodeDaemonGate).
+        try {
+            NodeDaemonGate.acquire();
+        } catch (final IllegalStateException e) {
+            throw new PythonDaemonException(e.getMessage(),
+                    PythonDaemonException.CODE_RESOLVER_START_FAILED, e);
+        }
+        permitHeld = true;
         try {
             process = builder.start();
             writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
             reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
         } catch (final IOException e) {
+            releasePermit();
             throw new PythonDaemonException("Failed to start Python daemon.",
                     PythonDaemonException.CODE_RESOLVER_START_FAILED, e);
+        }
+    }
+
+    private void releasePermit() {
+        if (permitHeld) {
+            permitHeld = false;
+            NodeDaemonGate.release();
         }
     }
 
@@ -202,6 +221,7 @@ public final class PythonDaemon implements AutoCloseable {
             FileUtils.deleteQuietly(tempDir.toFile());
             tempDir = null;
         }
+        releasePermit();
     }
 
     public static final class InitResult {
