@@ -549,4 +549,31 @@ public class ProjectFilesTest {
         }
         return tmp;
     }
+
+    /**
+     * A persisted temp dir whose owner never calls {@link ProjectFiles#close()} must still be removed
+     * by the JVM-shutdown hook, so an interrupted or crashed process cannot leak extracted-source
+     * temp dirs. Runs a child JVM that persists and exits without closing, then asserts the dir is gone.
+     */
+    @Test
+    public void leakedTempDirIsDeletedByJvmShutdownHook() throws Exception {
+        String javaBin = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java";
+        String classpath = System.getProperty("java.class.path");
+        Process proc = new ProcessBuilder(javaBin, "-cp", classpath, "com.hadi.test.TempDirLeakHelper")
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(proc.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        proc.waitFor();
+
+        String tempDir = null;
+        for (String line : output.split("\\R")) {
+            if (line.startsWith("TEMPDIR:")) {
+                tempDir = line.substring("TEMPDIR:".length()).trim();
+            }
+        }
+        assertTrue("helper did not report a temp dir; child output:\n" + output,
+                tempDir != null && !tempDir.isEmpty());
+        assertFalse("temp dir leaked despite the shutdown hook: " + tempDir,
+                Files.exists(Paths.get(tempDir)));
+    }
 }

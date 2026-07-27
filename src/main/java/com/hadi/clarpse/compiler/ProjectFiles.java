@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -57,6 +58,24 @@ import java.util.zip.ZipInputStream;
 public class ProjectFiles implements AutoCloseable {
 
     private static final Logger LOGGER = LogManager.getLogger(ProjectFiles.class);
+
+    /**
+     * Temp dirs created by {@link #persistDir()} that have not yet been cleaned up. A single
+     * JVM-shutdown hook deletes whatever remains, so an interrupted or crashed process can no longer
+     * leak extracted-source temp dirs. Normal cleanup is still {@link #close()} (and the in-place
+     * cleanup in {@link #shiftSubDirsLeft()}), which also deregister here — so in steady state this
+     * set only holds currently-open projects and does not grow.
+     */
+    private static final Set<String> PENDING_TEMP_DIRS = ConcurrentHashMap.newKeySet();
+
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            for (final String dir : PENDING_TEMP_DIRS) {
+                FileUtils.deleteQuietly(new File(dir));
+            }
+        }, "clarpse-projectfiles-tempdir-cleanup"));
+    }
+
     private static final int MAX_ZIP_ENTRIES = ClarpseProperties.getInt("clarpse.zip.maxEntries", 100000);
     private static final long MAX_TOTAL_UNCOMPRESSED_BYTES =
             ClarpseProperties.getLong("clarpse.zip.maxTotalUncompressedBytes", 200L * 1024 * 1024);
@@ -162,6 +181,7 @@ public class ProjectFiles implements AutoCloseable {
         this.configFiles.putAll(shiftedConfigFiles);
         if (this.tempProjectDir && this.projectDir != null && !this.projectDir.isEmpty()) {
             FileUtils.deleteQuietly(new File(this.projectDir));
+            PENDING_TEMP_DIRS.remove(this.projectDir);
             this.tempProjectDir = false;
             this.projectDir = null;
         }
@@ -397,6 +417,7 @@ public class ProjectFiles implements AutoCloseable {
     public void close() {
         if (this.tempProjectDir && this.projectDir != null && !this.projectDir.isEmpty()) {
             FileUtils.deleteQuietly(new File(this.projectDir));
+            PENDING_TEMP_DIRS.remove(this.projectDir);
             this.tempProjectDir = false;
         }
     }
@@ -444,6 +465,7 @@ public class ProjectFiles implements AutoCloseable {
         LOGGER.info(this.size() + " files were persisted in " + elapsedTime + " ms");
         this.projectDir = rootDir;
         this.tempProjectDir = true;
+        PENDING_TEMP_DIRS.add(rootDir);   // shutdown-hook backstop if close() never runs
     }
 
     private String resolvePersistedRelativePath(final String projectPath) {
