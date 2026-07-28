@@ -335,7 +335,7 @@ final class CSharpFileParser {
                 typeModel.kind = "recordStruct";
             }
         }
-        typeModel.name = firstIdentifier(node);
+        typeModel.name = eraseTypeParameterList(firstIdentifier(node));
         if (namespaceName == null) {
             typeModel.namespaceName = "";
         } else {
@@ -840,6 +840,26 @@ final class CSharpFileParser {
 
     private static String firstIdentifier(final SyntaxNode node) {
         return firstDirectChildText(node, "cs:id-role");
+    }
+
+    /**
+     * Generic type declarations carry their type-parameter list in the identifier text
+     * ("Repo&lt;T&gt;"), but references are resolved against the erased name ("Repo").
+     * Register declarations under the erased name so generic types are reachable as
+     * reference targets; without this every generic class or interface is an orphan
+     * component with zero afferent coupling. C#'s arity-overloaded types (IFoo and
+     * IFoo&lt;T&gt;) collapse onto one component, which matches how references, which
+     * carry no arity, are resolved anyway.
+     */
+    private static String eraseTypeParameterList(final String identifier) {
+        if (identifier == null) {
+            return "";
+        }
+        final int typeParamStart = identifier.indexOf('<');
+        if (typeParamStart < 0) {
+            return identifier;
+        }
+        return identifier.substring(0, typeParamStart).trim();
     }
 
     private static String namespaceName(final SyntaxNode node) {
