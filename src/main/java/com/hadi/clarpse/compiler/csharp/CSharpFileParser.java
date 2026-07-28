@@ -856,7 +856,10 @@ final class CSharpFileParser {
             return "";
         }
         final int typeParamStart = identifier.indexOf('<');
-        return typeParamStart < 0 ? identifier : identifier.substring(0, typeParamStart).trim();
+        if (typeParamStart < 0) {
+            return identifier;
+        }
+        return identifier.substring(0, typeParamStart).trim();
     }
 
     private static String namespaceName(final SyntaxNode node) {
