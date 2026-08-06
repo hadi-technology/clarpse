@@ -19,7 +19,6 @@ public final class OOPSourceModelConstants {
     static final Map<String, String> JAVA_COLLECTIONS = new HashMap<String, String>();
 
     static final Map<String, String> JAVA_ANNOTATIONS = new HashMap<String, String>();
-    private static final Map<AccessModifiers, String> JAVA_ACCESS_MODIFIER_MAP = new HashMap<AccessModifiers, String>();
     private static final Map<AccessModifiers, String> ACCESS_MODIFIER_MAP = new HashMap<AccessModifiers, String>();
     private static final Map<ComponentType, String> COMPONENT_TYPES = new HashMap<ComponentType, String>();
     public static final String JAVA_DEFAULT_PKG = "java.lang.";
@@ -193,26 +192,23 @@ public final class OOPSourceModelConstants {
     }
 
     static {
-        getJavaAccessModifierMap().put(AccessModifiers.PRIVATE, "private");
-        getJavaAccessModifierMap().put(AccessModifiers.PROTECTED, "protected");
-        getJavaAccessModifierMap().put(AccessModifiers.PUBLIC, "public");
-        getJavaAccessModifierMap().put(AccessModifiers.VOLATILE, "volatile");
-        getJavaAccessModifierMap().put(AccessModifiers.TRANSIENT, "transient");
-        getJavaAccessModifierMap().put(AccessModifiers.SYNCHRONIZED, "synchronized");
-        getJavaAccessModifierMap().put(AccessModifiers.STRICTFP, "strictfp");
-        getJavaAccessModifierMap().put(AccessModifiers.STATIC, "static");
-        getJavaAccessModifierMap().put(AccessModifiers.NATIVE, "native");
-        getJavaAccessModifierMap().put(AccessModifiers.ABSTRACT, "abstract");
-        getJavaAccessModifierMap().put(AccessModifiers.INTERFACE, "interface");
-        getJavaAccessModifierMap().put(AccessModifiers.FINAL, "final");
-        getJavaAccessModifierMap().put(AccessModifiers.DEFAULT, "default");
-        getJavaAccessModifierMap().put(AccessModifiers.SEALED, "sealed");
-        getJavaAccessModifierMap().put(AccessModifiers.NON_SEALED, "non-sealed");
-        getJavaAccessModifierMap().put(AccessModifiers.TRANSITIVE, "transitive");
-    }
-
-    static {
-        ACCESS_MODIFIER_MAP.putAll(JAVA_ACCESS_MODIFIER_MAP);
+        // Java
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.PRIVATE, "private");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.PROTECTED, "protected");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.PUBLIC, "public");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.VOLATILE, "volatile");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.TRANSIENT, "transient");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.SYNCHRONIZED, "synchronized");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.STRICTFP, "strictfp");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.STATIC, "static");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.NATIVE, "native");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.ABSTRACT, "abstract");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.INTERFACE, "interface");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.FINAL, "final");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.DEFAULT, "default");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.SEALED, "sealed");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.NON_SEALED, "non-sealed");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.TRANSITIVE, "transitive");
         // C#
         ACCESS_MODIFIER_MAP.put(AccessModifiers.INTERNAL, "internal");
         ACCESS_MODIFIER_MAP.put(AccessModifiers.PARTIAL, "partial");
@@ -253,14 +249,10 @@ public final class OOPSourceModelConstants {
         return JAVA_DEFAULT_CLASSES;
     }
 
-    public static Map<AccessModifiers, String> getJavaAccessModifierMap() {
-        return JAVA_ACCESS_MODIFIER_MAP;
-    }
-
     /**
-     * Every modifier token the model accepts, across all supported languages. This is a superset of
-     * {@link #getJavaAccessModifierMap()} and is the vocabulary {@code Component} validates against,
-     * so that a C# {@code partial} or a TypeScript {@code export} is as legal as a Java {@code final}.
+     * Every modifier token the model accepts, across all supported languages, and the vocabulary
+     * {@code Component} validates against - so that a C# {@code partial} or a TypeScript
+     * {@code export} is as legal as a Java {@code final}.
      *
      * @return Mapping of modifier enum to its lower-case source token.
      */

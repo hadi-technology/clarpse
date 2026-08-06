@@ -8,7 +8,7 @@ Clarpse is a multi-language architectural code analysis library for building bet
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-<version>9.9.0</version>
+<version>10.0.0</version>
 </dependency>
 ```
 

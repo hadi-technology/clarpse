@@ -5,6 +5,7 @@ import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.AccessModifiers;
 import org.junit.Test;
 
+import java.util.Collection;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
@@ -57,8 +58,15 @@ public class ComponentModifierContractTest {
     }
 
     @Test
-    public void theVocabularyIsASupersetOfJava() {
-        assertTrue(OOPSourceModelConstants.getAccessModifierMap().entrySet()
-                .containsAll(OOPSourceModelConstants.getJavaAccessModifierMap().entrySet()));
+    public void theVocabularyCoversEveryLanguage() {
+        final Collection<String> vocabulary = OOPSourceModelConstants.getAccessModifierMap().values();
+        assertTrue("java", vocabulary.containsAll(
+                List.of("public", "protected", "private", "static", "final", "abstract", "synchronized",
+                        "native", "strictfp", "transient", "volatile", "default", "sealed", "non-sealed",
+                        "transitive")));
+        assertTrue("c#", vocabulary.containsAll(
+                List.of("internal", "partial", "readonly", "virtual", "override", "unsafe", "async", "const")));
+        assertTrue("typescript", vocabulary.containsAll(
+                List.of("export", "declare", "const", "let", "var", "get", "set", "async")));
     }
 }
