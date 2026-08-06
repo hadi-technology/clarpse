@@ -1675,14 +1675,16 @@ function extractParams(funcNode, ctx, parseNodeType) {
       continue;
     }
     const annotationNode = getNodeProp(param, ['typeAnnotation', 'annotation', 'typeExpression']);
+    // `Any` is what an unannotated parameter *displays* as, not something the author depended on, so it
+    // stays in the signature but yields no reference.
     const rawType = annotationNode ? textForNode(annotationNode, ctx.fileText) : 'Any';
-    const ref = resolveTypeRef(annotationNode, rawType, ctx);
+    const ref = annotationNode ? resolveTypeRef(annotationNode, rawType, ctx) : null;
     params.push({
       name: paramName,
       rawType: ref ? ref.raw : rawType,
       implementationHash: stableImplementationHash(textForNode(param, ctx.fileText)),
       targetUniqueName: ref ? ref.targetUniqueName : null,
-      externalLabel: ref ? ref.externalLabel : (rawType || 'Any')
+      externalLabel: ref ? ref.externalLabel : null
     });
   }
   return params;
@@ -1769,7 +1771,8 @@ function extractMethod(methodNode, ctx, parseNodeType) {
   const returnRaw = normalizePythonTypeDisplay(returnRawText || 'Any');
   const signature = buildSignature(name, params, returnRaw || 'Any');
   const uniqueName = ctx.classUniqueName + '.' + signature;
-  const returnRef = resolveTypeRef(returnNode, returnRaw || 'Any', ctx);
+  // An absent return annotation displays as `Any` but is not a dependency on anything.
+  const returnRef = returnNode ? resolveTypeRef(returnNode, returnRaw || 'Any', ctx) : null;
   const cyclo = computeCyclo(methodNode, ctx.fileText);
   // The whole def, not just its suite: a changed signature or decorator is a change too.
   const implementationHash = stableImplementationHash(textForNode(methodNode, ctx.fileText));
@@ -1804,7 +1807,8 @@ function extractFunction(functionNode, ctx, parseNodeType) {
     ? ctx.packageName + '.' + ctx.moduleName
     : ctx.moduleName;
   const uniqueName = moduleUniqueName + '.' + signature;
-  const returnRef = resolveTypeRef(returnNode, returnRaw || 'Any', ctx);
+  // An absent return annotation displays as `Any` but is not a dependency on anything.
+  const returnRef = returnNode ? resolveTypeRef(returnNode, returnRaw || 'Any', ctx) : null;
   const cyclo = computeCyclo(functionNode, ctx.fileText);
   // The whole def, not just its suite: a changed signature or decorator is a change too.
   const implementationHash = stableImplementationHash(textForNode(functionNode, ctx.fileText));
@@ -1848,7 +1852,7 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
     rawType: ref ? ref.raw : rawType,
     implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
     targetUniqueName: ref ? ref.targetUniqueName : null,
-    externalLabel: ref ? ref.externalLabel : (rawType || 'Any')
+    externalLabel: ref ? ref.externalLabel : null
   };
 }
 
@@ -1895,7 +1899,7 @@ function extractInstanceFieldFromStatement(statement, ctx) {
     rawType: ref ? ref.raw : rawType,
     implementationHash: stableImplementationHash(statementText),
     targetUniqueName: ref ? ref.targetUniqueName : null,
-    externalLabel: ref ? ref.externalLabel : (rawType || 'Any')
+    externalLabel: ref ? ref.externalLabel : null
   };
 }
 
