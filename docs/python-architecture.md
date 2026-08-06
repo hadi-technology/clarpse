@@ -75,6 +75,8 @@ and can be mapped through imports or local class declarations.
 - Docstrings are extracted and attached to the component's comment field.
 - Cyclomatic complexity is calculated and stored in the component's cyclo field.
 - Every component carries a non-zero code hash, derived from its full declaration, for change detection.
+- Type-system placeholders (`Any`, `None`, `NoReturn`) never become references; a missing annotation is
+  displayed as `Any` but is not a dependency on anything.
 - Visibility is inferred from naming: `__` is private, `_` is protected, everything else is public.
 - `@staticmethod` and `@classmethod` are reported as `static`.
 

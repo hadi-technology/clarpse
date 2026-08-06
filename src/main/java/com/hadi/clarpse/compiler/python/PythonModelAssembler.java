@@ -16,6 +16,7 @@ import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.Package;
 
+import java.util.Locale;
 import java.util.Set;
 import java.util.Stack;
 
@@ -476,20 +477,44 @@ final class PythonModelAssembler {
         }
     }
 
+    /**
+     * Annotations that stand in for "no type at all". These are type-system constructs rather than
+     * things a declaration depends on, and clarpse itself substitutes {@code Any} wherever an annotation
+     * is missing - so recording them would put an external dependency on essentially every Python
+     * component, and any rule of the form "this must not depend on anything external" would fire
+     * everywhere. Only consulted for annotations that did not resolve inside the repo, so a repo class
+     * that happens to be named {@code Any} is still a real dependency.
+     */
+    private static final Set<String> TYPE_SYSTEM_PLACEHOLDERS = Set.of(
+            "any", "none", "nonetype", "noreturn", "ellipsis");
+
+    private static boolean isTypeSystemPlaceholder(final String invoked) {
+        String name = invoked.trim();
+        if (name.startsWith("typing.")) {
+            name = name.substring("typing.".length());
+        }
+        return TYPE_SYSTEM_PLACEHOLDERS.contains(name.toLowerCase(Locale.ROOT));
+    }
+
     private static ComponentReference buildReference(final PythonTypeRefModel ref,
                                                      final boolean isExtends) {
         if (ref == null) {
             return null;
         }
         String invoked = null;
+        boolean resolvedInRepo = false;
         if (ref.targetUniqueName != null && !ref.targetUniqueName.isEmpty()) {
             invoked = ref.targetUniqueName;
+            resolvedInRepo = true;
         } else if (ref.externalLabel != null && !ref.externalLabel.isEmpty()) {
             invoked = ref.externalLabel;
         } else if (ref.raw != null && !ref.raw.isEmpty()) {
             invoked = ref.raw;
         }
         if (invoked == null || invoked.isEmpty()) {
+            return null;
+        }
+        if (!resolvedInRepo && isTypeSystemPlaceholder(invoked)) {
             return null;
         }
         if (isExtends) {
