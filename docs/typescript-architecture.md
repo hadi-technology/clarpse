@@ -136,6 +136,18 @@ TypeScript's parameter properties are fully supported:
 ## Code Fragment Support
 Method and function signatures are captured as code fragments for display and analysis purposes.
 
+## Code Hashing
+Every component carries a non-zero code hash for change detection:
+- The daemon hashes the whole declaration - a class body, a method including its signature, a property,
+  a parameter - so an implementation edit changes the hash while a reformat does not.
+- If there was nothing to hash, the code fragment is used as a fallback, then the component's name, so
+  a hash of zero is never emitted and means "never computed".
+
+## Export as Visibility
+`export` puts a declaration on the module's public surface, so an exported declaration reports both
+`export` and `public`. A module-private declaration reports neither, matching the way a package-private
+Java type reports no visibility at all.
+
 # Non-Goals
 - No heuristic or string-based fallback resolution; symbol/type resolution is compiler-backed only.
 - No fallback parsing.

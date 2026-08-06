@@ -7,6 +7,7 @@ import com.hadi.clarpse.reference.TypeImplementationReference;
 
 import java.io.Serializable;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -19,6 +20,7 @@ public final class OOPSourceModelConstants {
 
     static final Map<String, String> JAVA_ANNOTATIONS = new HashMap<String, String>();
     private static final Map<AccessModifiers, String> JAVA_ACCESS_MODIFIER_MAP = new HashMap<AccessModifiers, String>();
+    private static final Map<AccessModifiers, String> ACCESS_MODIFIER_MAP = new HashMap<AccessModifiers, String>();
     private static final Map<ComponentType, String> COMPONENT_TYPES = new HashMap<ComponentType, String>();
     public static final String JAVA_DEFAULT_PKG = "java.lang.";
     static final Map<String, String> JAVA_DEFAULT_CLASSES = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
@@ -203,7 +205,31 @@ public final class OOPSourceModelConstants {
         getJavaAccessModifierMap().put(AccessModifiers.ABSTRACT, "abstract");
         getJavaAccessModifierMap().put(AccessModifiers.INTERFACE, "interface");
         getJavaAccessModifierMap().put(AccessModifiers.FINAL, "final");
+        getJavaAccessModifierMap().put(AccessModifiers.DEFAULT, "default");
+        getJavaAccessModifierMap().put(AccessModifiers.SEALED, "sealed");
+        getJavaAccessModifierMap().put(AccessModifiers.NON_SEALED, "non-sealed");
+        getJavaAccessModifierMap().put(AccessModifiers.TRANSITIVE, "transitive");
+    }
 
+    static {
+        ACCESS_MODIFIER_MAP.putAll(JAVA_ACCESS_MODIFIER_MAP);
+        // C#
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.INTERNAL, "internal");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.PARTIAL, "partial");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.READONLY, "readonly");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.VIRTUAL, "virtual");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.OVERRIDE, "override");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.UNSAFE, "unsafe");
+        // C# and TypeScript
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.ASYNC, "async");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.CONST, "const");
+        // TypeScript
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.EXPORT, "export");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.DECLARE, "declare");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.LET, "let");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.VAR, "var");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.GET, "get");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.SET, "set");
     }
 
     static {
@@ -231,6 +257,37 @@ public final class OOPSourceModelConstants {
         return JAVA_ACCESS_MODIFIER_MAP;
     }
 
+    /**
+     * Every modifier token the model accepts, across all supported languages. This is a superset of
+     * {@link #getJavaAccessModifierMap()} and is the vocabulary {@code Component} validates against,
+     * so that a C# {@code partial} or a TypeScript {@code export} is as legal as a Java {@code final}.
+     *
+     * @return Mapping of modifier enum to its lower-case source token.
+     */
+    public static Map<AccessModifiers, String> getAccessModifierMap() {
+        return ACCESS_MODIFIER_MAP;
+    }
+
+    /**
+     * Resolves a modifier token to its enum, so callers can reach
+     * {@link AccessModifiers#getUMLClassDigramSymbol()} without guessing at the enum name.
+     *
+     * @param modifier Modifier token, in any case.
+     * @return The matching enum, or {@code null} if the token is not a supported modifier.
+     */
+    public static AccessModifiers accessModifier(final String modifier) {
+        if (modifier == null) {
+            return null;
+        }
+        final String normalized = modifier.toLowerCase(Locale.ROOT).trim();
+        for (final Map.Entry<AccessModifiers, String> entry : ACCESS_MODIFIER_MAP.entrySet()) {
+            if (entry.getValue().equals(normalized)) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
     public static Map<ComponentType, String> getJavaComponentTypes() {
         return COMPONENT_TYPES;
     }
@@ -240,7 +297,10 @@ public final class OOPSourceModelConstants {
      */
     public enum AccessModifiers {
         FINAL(""), ABSTRACT(""), INTERFACE(""), NATIVE(""), PRIVATE("-"), PROTECTED("#"), PUBLIC("+"), STATIC(
-                ""), STRICTFP(""), SYNCHRONIZED(""), TRANSIENT(""), NONE("~"), VOLATILE("");
+                ""), STRICTFP(""), SYNCHRONIZED(""), TRANSIENT(""), NONE("~"), VOLATILE(""),
+        DEFAULT(""), SEALED(""), NON_SEALED(""), TRANSITIVE(""),
+        INTERNAL("~"), PARTIAL(""), READONLY(""), VIRTUAL(""), OVERRIDE(""), UNSAFE(""),
+        ASYNC(""), CONST(""), EXPORT(""), DECLARE(""), LET(""), VAR(""), GET(""), SET("");
 
         private String umlClassDigramSymbol = null;
 

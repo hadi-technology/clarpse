@@ -7,6 +7,7 @@ public class PythonFieldModel {
 
     public String name;
     public String rawType;
+    public int implementationHash;
     public String targetUniqueName;
     public String externalLabel;
 }

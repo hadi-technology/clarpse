@@ -81,6 +81,9 @@ final class CSharpModelAssembler {
                 continue;
             }
             existing.partial = existing.partial || typeModel.partial;
+            // Summed rather than folded in sequence, so that the merged hash does not depend on the
+            // order the partial declarations happened to be parsed in.
+            existing.implementationHash += typeModel.implementationHash;
             existing.baseTypes.addAll(typeModel.baseTypes);
             existing.members.addAll(typeModel.members);
             existing.nestedTypes.addAll(typeModel.nestedTypes);
@@ -196,9 +199,6 @@ final class CSharpModelAssembler {
         for (final CSharpModel.CSharpMemberModel member : members) {
             insertMember(member, typeModel, typeIndex, model, stack);
         }
-        if (typeComponent.componentType().isMethodComponent() && typeModel.codeFragment != null) {
-            typeComponent.setCodeHash(typeModel.codeFragment.hashCode());
-        }
         model.insertComponent(typeComponent);
         stack.pop();
         ParseUtil.copyRefsToParents(typeComponent, stack);
@@ -221,9 +221,28 @@ final class CSharpModelAssembler {
         component.setAccessModifiers(typeModel.modifiers);
         if (typeModel.codeFragment != null && !typeModel.codeFragment.isEmpty()) {
             component.setCodeFragment(typeModel.codeFragment);
-            component.setCodeHash(typeModel.codeFragment.hashCode());
         }
+        applyCodeHash(component, typeModel.implementationHash, typeModel.codeFragment);
         return component;
+    }
+
+    /**
+     * Sets the component's code hash, preferring the hash over its full declaration so that a body edit
+     * is detectable, and falling back to the component's signature when there was no text to hash. Every
+     * component ends up with a non-zero hash, so a zero unambiguously means "never computed".
+     */
+    private static void applyCodeHash(final Component component, final int implementationHash, final String fallback) {
+        int hash = implementationHash;
+        if (hash == 0 && fallback != null) {
+            hash = fallback.hashCode();
+        }
+        if (hash == 0) {
+            hash = component.componentName().hashCode();
+        }
+        if (hash == 0) {
+            hash = 1;
+        }
+        component.setCodeHash(hash);
     }
 
     private static void insertMember(final CSharpModel.CSharpMemberModel memberModel,
@@ -288,8 +307,8 @@ final class CSharpModelAssembler {
         component.setComponentName(ownerType.componentName + "." + memberComponentIdentifier(memberModel, ownerType));
         if (memberModel.codeFragment != null && !memberModel.codeFragment.isEmpty()) {
             component.setCodeFragment(memberModel.codeFragment);
-            component.setCodeHash(memberModel.codeFragment.hashCode());
         }
+        applyCodeHash(component, memberModel.implementationHash, memberModel.codeFragment);
         return component;
     }
 
@@ -313,6 +332,7 @@ final class CSharpModelAssembler {
         if (parameter.declaredType != null && !parameter.declaredType.isEmpty()) {
             component.setCodeFragment(parameter.declaredType);
         }
+        applyCodeHash(component, parameter.implementationHash, parameter.declaredType);
         return component;
     }
 
@@ -331,6 +351,7 @@ final class CSharpModelAssembler {
         if (localModel.codeFragment != null && !localModel.codeFragment.isEmpty()) {
             component.setCodeFragment(localModel.codeFragment);
         }
+        applyCodeHash(component, localModel.implementationHash, localModel.codeFragment);
         return component;
     }
 

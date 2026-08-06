@@ -11,6 +11,7 @@ public class PythonClassModel {
     public String className;
     public String uniqueName;
     public String comment;
+    public int implementationHash;
     public List<PythonTypeRefModel> bases = new ArrayList<>();
     public List<PythonMethodModel> methods = new ArrayList<>();
     public List<PythonFieldModel> fields = new ArrayList<>();

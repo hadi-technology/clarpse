@@ -1347,11 +1347,15 @@ function textForNode(node, fileText) {
 
 function stableImplementationHash(text) {
   const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
+  if (!normalized.length) {
+    return 0;
+  }
   let hash = 0;
   for (let i = 0; i < normalized.length; i += 1) {
     hash = ((hash * 31) + normalized.charCodeAt(i)) | 0;
   }
-  return hash;
+  // Zero is reserved for "nothing to hash", so that the Java side can tell a real hash from a missing one.
+  return hash === 0 ? 1 : hash;
 }
 
 function decodeDocStringLiteral(statementText) {
@@ -1676,6 +1680,7 @@ function extractParams(funcNode, ctx, parseNodeType) {
     params.push({
       name: paramName,
       rawType: ref ? ref.raw : rawType,
+      implementationHash: stableImplementationHash(textForNode(param, ctx.fileText)),
       targetUniqueName: ref ? ref.targetUniqueName : null,
       externalLabel: ref ? ref.externalLabel : (rawType || 'Any')
     });
@@ -1766,9 +1771,8 @@ function extractMethod(methodNode, ctx, parseNodeType) {
   const uniqueName = ctx.classUniqueName + '.' + signature;
   const returnRef = resolveTypeRef(returnNode, returnRaw || 'Any', ctx);
   const cyclo = computeCyclo(methodNode, ctx.fileText);
-  const implementationHash = stableImplementationHash(
-    methodNode && methodNode.d && methodNode.d.suite ? textForNode(methodNode.d.suite, ctx.fileText) : ''
-  );
+  // The whole def, not just its suite: a changed signature or decorator is a change too.
+  const implementationHash = stableImplementationHash(textForNode(methodNode, ctx.fileText));
   const bodyReferences = collectBodyReferences(methodNode.d ? methodNode.d.suite : null, ctx, parseNodeType);
   return {
     name,
@@ -1802,9 +1806,8 @@ function extractFunction(functionNode, ctx, parseNodeType) {
   const uniqueName = moduleUniqueName + '.' + signature;
   const returnRef = resolveTypeRef(returnNode, returnRaw || 'Any', ctx);
   const cyclo = computeCyclo(functionNode, ctx.fileText);
-  const implementationHash = stableImplementationHash(
-    functionNode && functionNode.d && functionNode.d.suite ? textForNode(functionNode.d.suite, ctx.fileText) : ''
-  );
+  // The whole def, not just its suite: a changed signature or decorator is a change too.
+  const implementationHash = stableImplementationHash(textForNode(functionNode, ctx.fileText));
   const bodyReferences = collectBodyReferences(functionNode.d ? functionNode.d.suite : null, ctx, parseNodeType);
   return {
     name,
@@ -1843,6 +1846,7 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
   return {
     name: fieldName,
     rawType: ref ? ref.raw : rawType,
+    implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
     targetUniqueName: ref ? ref.targetUniqueName : null,
     externalLabel: ref ? ref.externalLabel : (rawType || 'Any')
   };
@@ -1889,6 +1893,7 @@ function extractInstanceFieldFromStatement(statement, ctx) {
   return {
     name: fieldName,
     rawType: ref ? ref.raw : rawType,
+    implementationHash: stableImplementationHash(statementText),
     targetUniqueName: ref ? ref.targetUniqueName : null,
     externalLabel: ref ? ref.externalLabel : (rawType || 'Any')
   };
@@ -1987,6 +1992,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       className,
       uniqueName: classUniqueName,
       comment: classComment,
+      implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
       bases,
       methods,
       fields,

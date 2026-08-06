@@ -357,6 +357,7 @@ final class CSharpFileParser {
             typeModel.componentName = parentTypeComponentName + "." + typeModel.name;
         }
         typeModel.codeFragment = buildTypeCodeFragment(node.text);
+        typeModel.implementationHash = implementationHash(node.text);
 
         for (final SyntaxNode child : node.children) {
             if ("cs:type-usage-role".equals(child.type) && isDirectBaseType(child, node)) {
@@ -481,6 +482,7 @@ final class CSharpFileParser {
                     parameter.name = firstIdentifier(child);
                     parameter.declaredType = firstDirectChildText(child, "cs:type-usage-role");
                     parameter.modifiers = parseModifiers(child.text);
+                    parameter.implementationHash = implementationHash(child.text);
                     member.parameters.add(parameter);
                 }
             }
@@ -576,6 +578,7 @@ final class CSharpFileParser {
         member.endOffset = node.endOffset;
         member.imports = new LinkedHashSet<>(ownerType.imports);
         member.codeFragment = buildMemberCodeFragment(kind, name, member.declaredType, member.returnType, node.text);
+        member.implementationHash = implementationHash(node.text);
         if (member.declaredType != null && !member.declaredType.isEmpty()) {
             member.simpleTypeUsages.add(member.declaredType);
         }
@@ -600,6 +603,7 @@ final class CSharpFileParser {
                 member.declaredType = firstDirectChildText(child, "cs:type-usage-role");
                 member.modifiers = parseModifiers(child.text);
                 member.codeFragment = trimTypeText(member.declaredType);
+                member.implementationHash = implementationHash(child.text);
                 if (member.declaredType != null && !member.declaredType.isEmpty()) {
                     member.simpleTypeUsages.add(member.declaredType);
                 }
@@ -636,6 +640,26 @@ final class CSharpFileParser {
         }
         final SyntaxNode block = firstChild(parent, "cs:block-list");
         return block == null || child.endOffset <= block.startOffset;
+    }
+
+    /**
+     * Hashes a declaration's full source text - body included - with all whitespace stripped, so that
+     * reformatting is invisible but any change to the implementation is not. Zero is reserved for "no
+     * text to hash", which lets callers fall back to a signature-derived hash.
+     */
+    static int implementationHash(final String text) {
+        if (text == null) {
+            return 0;
+        }
+        final String stripped = text.replaceAll("\\s+", "");
+        if (stripped.isEmpty()) {
+            return 0;
+        }
+        final int hash = stripped.hashCode();
+        if (hash == 0) {
+            return 1;
+        }
+        return hash;
     }
 
     private static String buildTypeCodeFragment(final String text) {

@@ -95,6 +95,8 @@ final class CSharpModel {
         boolean partial;
         int startOffset;
         int endOffset;
+        /** Hash over the whole declaration, body included, so that implementation edits are visible. */
+        int implementationHash;
         List<String> modifiers = new ArrayList<>();
         List<String> baseTypes = new ArrayList<>();
         List<CSharpMemberModel> members = new ArrayList<>();
@@ -117,6 +119,8 @@ final class CSharpModel {
         int startOffset;
         int endOffset;
         int cyclo;
+        /** Hash over the whole declaration, body included, so that implementation edits are visible. */
+        int implementationHash;
         List<String> modifiers = new ArrayList<>();
         List<CSharpParameterModel> parameters = new ArrayList<>();
         List<CSharpMemberModel> locals = new ArrayList<>();
@@ -130,6 +134,8 @@ final class CSharpModel {
         String name;
         String declaredType;
         String comment = "";
+        /** Hash over the whole parameter declaration, its modifiers and default value included. */
+        int implementationHash;
         List<String> modifiers = new ArrayList<>();
     }
 }

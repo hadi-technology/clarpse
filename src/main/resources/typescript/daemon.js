@@ -35,11 +35,15 @@ function writeError(id, code, message, data) {
 
 function stableImplementationHash(text) {
   const normalized = String(text || "").replace(/\r\n/g, "\n").trim();
+  if (!normalized.length) {
+    return 0;
+  }
   let hash = 0;
   for (let i = 0; i < normalized.length; i += 1) {
     hash = ((hash * 31) + normalized.charCodeAt(i)) | 0;
   }
-  return hash;
+  // Zero is reserved for "nothing to hash", so that the Java side can tell a real hash from a missing one.
+  return hash === 0 ? 1 : hash;
 }
 
 function loadTypeScript(repoRoot) {
@@ -344,6 +348,11 @@ function collectModifiers(ts, node) {
       default:
         break;
     }
+  }
+  // `export` puts a declaration on the module's public surface. Spell that out as `public` too, so that
+  // asking "is this public?" means the same thing here as it does for Java, C# or Python.
+  if (modifiers.indexOf("export") >= 0 && modifiers.indexOf("public") < 0) {
+    modifiers.push("public");
   }
   return modifiers;
 }
@@ -703,6 +712,7 @@ function buildLocalVariableModel(declaration, checker) {
     kind: "local",
     name: declaration.name.text,
     type: checker.typeToString(variableType),
+    implementationHash: stableImplementationHash(declaration.getText()),
     modifiers: collectVariableModifiers(state.ts, declaration),
     jsDoc: getJsDoc(declaration),
     references
@@ -800,6 +810,7 @@ function buildParameterModels(parameters, checker) {
       kind: "parameter",
       name: param.name.getText(),
       type: typeToString(checker, param),
+      implementationHash: stableImplementationHash(param.getText()),
       modifiers: collectModifiers(state.ts, param),
       jsDoc: getJsDoc(param),
       references: buildReferenceModelsFromType(paramType, checker, "type")
@@ -817,6 +828,7 @@ function buildFieldModel(node, checker) {
     kind: "field",
     name: node.name.getText(),
     type: typeToString(checker, node),
+    implementationHash: stableImplementationHash(node.getText()),
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
     references: buildReferenceModelsFromType(fieldType, checker, "type")
@@ -833,7 +845,9 @@ function buildMethodModel(node, checker, kindLabel) {
     kind: kindLabel,
     name,
     signature,
-    implementationHash: stableImplementationHash(node.body ? node.body.getText() : ""),
+    // The whole declaration, not just the body: a changed return type or modifier is a change too, and a
+    // body-less declaration (an interface method, an abstract method) still gets a real hash this way.
+    implementationHash: stableImplementationHash(node.getText()),
     returnType: kindLabel === "constructor" ? "" : getReturnType(checker, node),
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
@@ -856,7 +870,7 @@ function buildAccessorModel(node, checker, accessorKind) {
     kind: "method",
     name,
     signature,
-    implementationHash: stableImplementationHash(node.body ? node.body.getText() : ""),
+    implementationHash: stableImplementationHash(node.getText()),
     returnType: accessorKind === "set" ? "" : getReturnType(checker, node),
     modifiers,
     jsDoc: getJsDoc(node),
@@ -869,11 +883,13 @@ function buildAccessorModel(node, checker, accessorKind) {
 function buildEnumModel(node) {
   const members = node.members.map((member) => ({
     kind: "enumMember",
-    name: member.name.getText()
+    name: member.name.getText(),
+    implementationHash: stableImplementationHash(member.getText())
   }));
   return {
     kind: "enum",
     name: node.name.text,
+    implementationHash: stableImplementationHash(node.getText()),
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
     members,
@@ -896,6 +912,7 @@ function buildInterfaceModel(node, checker) {
   return {
     kind: "interface",
     name: node.name.text,
+    implementationHash: stableImplementationHash(node.getText()),
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
     members,
@@ -940,6 +957,7 @@ function buildClassModel(node, checker) {
     kind: "class",
     name: node.name.text,
     signature: typeParams,
+    implementationHash: stableImplementationHash(node.getText()),
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
     members,
