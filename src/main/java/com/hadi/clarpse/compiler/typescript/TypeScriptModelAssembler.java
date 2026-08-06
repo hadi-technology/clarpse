@@ -118,11 +118,21 @@ final class TypeScriptModelAssembler {
         if (codeFragment != null && !codeFragment.isEmpty()) {
             component.setCodeFragment(codeFragment);
         }
-        if (declaration != null && declaration.implementationHash != 0) {
-            component.setCodeHash(declaration.implementationHash);
-        } else if (codeFragment != null && !codeFragment.isEmpty()) {
-            component.setCodeHash(codeFragment.hashCode());
+        int hash = 0;
+        if (declaration != null) {
+            hash = declaration.implementationHash;
         }
+        if (hash == 0 && codeFragment != null && !codeFragment.isEmpty()) {
+            hash = codeFragment.hashCode();
+        }
+        if (hash == 0) {
+            // Every component gets a non-zero hash, so that a zero unambiguously means "never computed".
+            hash = component.componentName().hashCode();
+        }
+        if (hash == 0) {
+            hash = 1;
+        }
+        component.setCodeHash(hash);
     }
 
     private static String generateComponentName(final String moduleName,

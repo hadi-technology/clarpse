@@ -173,6 +173,8 @@ final class PythonModelAssembler {
         component.setName(classModel.className);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, classModel.uniqueName));
         component.setSourceFilePath(sourcePath);
+        applyVisibility(component, classModel.className);
+        applyCodeHash(component, classModel.implementationHash, classModel.className);
         if (classModel.comment != null && !classModel.comment.isEmpty()) {
             component.setComment(classModel.comment);
         }
@@ -204,9 +206,11 @@ final class PythonModelAssembler {
         final String fieldUniqueName = CompilerSupport.uniqueNameForMember(classModel.uniqueName, field.name);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, fieldUniqueName));
         component.setSourceFilePath(sourcePath);
+        applyVisibility(component, field.name);
         if (field.rawType != null && !field.rawType.isEmpty()) {
-            applyCodeFragmentHash(component, field.name + " : " + field.rawType);
+            component.setCodeFragment(field.name + " : " + field.rawType);
         }
+        applyCodeHash(component, field.implementationHash, component.codeFragment());
         final PythonTypeRefModel typeRef = new PythonTypeRefModel();
         typeRef.raw = field.rawType;
         typeRef.targetUniqueName = field.targetUniqueName;
@@ -240,9 +244,11 @@ final class PythonModelAssembler {
         final String fieldUniqueName = CompilerSupport.uniqueNameForMember(base, field.name);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, fieldUniqueName));
         component.setSourceFilePath(sourcePath);
+        applyVisibility(component, field.name);
         if (field.rawType != null && !field.rawType.isEmpty()) {
-            applyCodeFragmentHash(component, field.name + " : " + field.rawType);
+            component.setCodeFragment(field.name + " : " + field.rawType);
         }
+        applyCodeHash(component, field.implementationHash, component.codeFragment());
         final PythonTypeRefModel typeRef = new PythonTypeRefModel();
         typeRef.raw = field.rawType;
         typeRef.targetUniqueName = field.targetUniqueName;
@@ -280,18 +286,16 @@ final class PythonModelAssembler {
         if (method.comment != null && !method.comment.isEmpty()) {
             component.setComment(method.comment);
         }
-        final String visibility = inferPythonVisibility(method.name);
-        if (visibility != null) {
-            component.insertAccessModifier(visibility);
+        applyVisibility(component, method.name);
+        // @staticmethod and @classmethod both mean "not bound to an instance", which is what `static`
+        // means everywhere else in the model.
+        if (method.staticMethod || method.classMethod) {
+            component.insertAccessModifier("static");
         }
         if (method.signature != null && !method.signature.isEmpty()) {
             component.setCodeFragment(method.signature);
         }
-        if (method.implementationHash != 0) {
-            component.setCodeHash(method.implementationHash);
-        } else if (method.signature != null && !method.signature.isEmpty()) {
-            component.setCodeHash(method.signature.hashCode());
-        }
+        applyCodeHash(component, method.implementationHash, method.signature);
         if (method.returnType != null) {
             final ComponentReference ref = buildReference(method.returnType, false);
             if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
@@ -328,14 +332,11 @@ final class PythonModelAssembler {
         if (function.comment != null && !function.comment.isEmpty()) {
             component.setComment(function.comment);
         }
+        applyVisibility(component, function.name);
         if (function.signature != null && !function.signature.isEmpty()) {
             component.setCodeFragment(function.signature);
         }
-        if (function.implementationHash != 0) {
-            component.setCodeHash(function.implementationHash);
-        } else if (function.signature != null && !function.signature.isEmpty()) {
-            component.setCodeHash(function.signature.hashCode());
-        }
+        applyCodeHash(component, function.implementationHash, function.signature);
         if (function.returnType != null) {
             final ComponentReference ref = buildReference(function.returnType, false);
             if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
@@ -378,8 +379,9 @@ final class PythonModelAssembler {
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, paramUniqueName));
         component.setSourceFilePath(sourcePath);
         if (param.rawType != null && !param.rawType.isEmpty()) {
-            applyCodeFragmentHash(component, param.rawType);
+            component.setCodeFragment(param.rawType);
         }
+        applyCodeHash(component, param.implementationHash, param.rawType);
         final PythonTypeRefModel typeRef = new PythonTypeRefModel();
         typeRef.raw = param.rawType;
         typeRef.targetUniqueName = param.targetUniqueName;
@@ -409,8 +411,9 @@ final class PythonModelAssembler {
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, paramUniqueName));
         component.setSourceFilePath(sourcePath);
         if (param.rawType != null && !param.rawType.isEmpty()) {
-            applyCodeFragmentHash(component, param.rawType);
+            component.setCodeFragment(param.rawType);
         }
+        applyCodeHash(component, param.implementationHash, param.rawType);
         final PythonTypeRefModel typeRef = new PythonTypeRefModel();
         typeRef.raw = param.rawType;
         typeRef.targetUniqueName = param.targetUniqueName;
@@ -426,14 +429,33 @@ final class PythonModelAssembler {
         return method != null && "__init__".equals(method.name);
     }
 
-    private static void applyCodeFragmentHash(final Component component, final String codeFragment) {
-        if (component == null || codeFragment == null || codeFragment.isEmpty()) {
-            return;
+    /**
+     * Sets the component's code hash, preferring the daemon's hash over the declaration's full source so
+     * that an implementation edit is detectable, and falling back to the signature when the daemon had
+     * nothing to hash. Every component ends up with a non-zero hash, so a zero unambiguously means
+     * "never computed".
+     */
+    private static void applyCodeHash(final Component component, final int implementationHash, final String fallback) {
+        int hash = implementationHash;
+        if (hash == 0 && fallback != null && !fallback.isEmpty()) {
+            hash = fallback.hashCode();
         }
-        component.setCodeFragment(codeFragment);
-        component.setCodeHash(codeFragment.hashCode());
+        if (hash == 0) {
+            hash = component.componentName().hashCode();
+        }
+        if (hash == 0) {
+            hash = 1;
+        }
+        component.setCodeHash(hash);
     }
 
+    /**
+     * Python has no visibility keywords, so visibility is read off the name: a leading double underscore
+     * is name-mangled and therefore private, a single underscore is the convention for internal use, and
+     * anything else - dunder methods included - is importable and therefore public. Spelled out
+     * explicitly rather than left empty, so that {@code modifiers().contains("public")} answers the same
+     * question here as it does for Java, C# or TypeScript.
+     */
     private static String inferPythonVisibility(final String name) {
         if (name == null || name.isEmpty()) {
             return null;
@@ -444,7 +466,14 @@ final class PythonModelAssembler {
         if (name.startsWith("_") && !name.startsWith("__")) {
             return "protected";
         }
-        return null;
+        return "public";
+    }
+
+    private static void applyVisibility(final Component component, final String name) {
+        final String visibility = inferPythonVisibility(name);
+        if (visibility != null) {
+            component.insertAccessModifier(visibility);
+        }
     }
 
     private static ComponentReference buildReference(final PythonTypeRefModel ref,

@@ -8,7 +8,7 @@ Clarpse is a multi-language architectural code analysis library for building bet
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-<version>9.5.1</version>
+<version>10.0.0</version>
 </dependency>
 ```
 
@@ -19,7 +19,7 @@ Clarpse is a multi-language parsing and analysis library that converts source co
 
 # Features
 
- - Supports **Java** with a lightweight, architecture-focused parser.
+ - Supports **Java** with a lightweight, architecture-focused parser, including records.
  - Supports **C#** with JVM-based parsing, partial type merging, namespace-aware indexing, and fast in-repo symbol resolution.
  - Supports **TypeScript** with compiler-accurate, tsconfig-aware parsing and resolution, including constructor parameter property detection and monorepo support.
  - Supports **Python** with Pyright-backed parsing, including nested classes, comment parsing, cyclomatic complexity, code hashing, and visibility inference.

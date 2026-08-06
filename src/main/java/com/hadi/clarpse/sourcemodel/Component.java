@@ -217,7 +217,7 @@ public final class Component implements Serializable {
     }
 
     public void insertAccessModifier(final String modifier) {
-        if (OOPSourceModelConstants.getJavaAccessModifierMap().containsValue(modifier.toLowerCase(Locale.ROOT))) {
+        if (OOPSourceModelConstants.getAccessModifierMap().containsValue(modifier.toLowerCase(Locale.ROOT))) {
             modifiers.add(modifier.toLowerCase(Locale.ROOT));
         } else {
             throw new IllegalArgumentException(modifier + " is an invalid modifier!");
@@ -304,9 +304,17 @@ public final class Component implements Serializable {
         sourceFile = sourceFilePath;
     }
 
+    /**
+     * Inserts every given modifier, enforcing the same vocabulary as
+     * {@link #insertAccessModifier(String)} so that {@code modifiers()} only ever holds tokens the
+     * model can resolve through {@link OOPSourceModelConstants#accessModifier(String)}.
+     *
+     * @param list Modifier tokens, in any case.
+     * @throws IllegalArgumentException If any token is not a supported modifier.
+     */
     public void setAccessModifiers(final List<String> list) {
         for (final String modifier : list) {
-            modifiers.add(modifier.toLowerCase(Locale.ROOT));
+            insertAccessModifier(modifier);
         }
     }
 

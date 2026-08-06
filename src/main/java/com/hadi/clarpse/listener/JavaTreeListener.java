@@ -7,12 +7,14 @@ import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.PackageDeclaration;
 import com.github.javaparser.ast.body.AnnotationDeclaration;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
+import com.github.javaparser.ast.body.CompactConstructorDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
 import com.github.javaparser.ast.body.EnumConstantDeclaration;
 import com.github.javaparser.ast.body.EnumDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
+import com.github.javaparser.ast.body.RecordDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.ClassExpr;
 import com.github.javaparser.ast.expr.Expression;
@@ -117,16 +119,24 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         if (node.getComment().isPresent()) {
             newCmp.setComment(node.getComment().get().toString());
         }
-        StringBuilder codeBuffer = new StringBuilder();
+        newCmp.setCodeHash(normalizedCode(node).hashCode());
+        newCmp.setSourceFilePath(file.path());
+        return newCmp;
+    }
+
+    /**
+     * The given node's source text with its comment and all whitespace stripped, so that a
+     * reformatting or a comment edit leaves the derived code hash untouched.
+     */
+    private static String normalizedCode(final Node node) {
+        final StringBuilder codeBuffer = new StringBuilder();
         final Node nodeNoComment = node.removeComment();
         nodeNoComment.getTokenRange().ifPresent(tokenRange -> tokenRange.iterator().forEachRemaining(
                 javaToken -> codeBuffer.append(javaToken.asString().replaceAll("\\s+", ""))));
         if (codeBuffer.length() == 0) {
             codeBuffer.append(nodeNoComment.toString().replaceAll("\\s+", ""));
         }
-        newCmp.setCodeHash(codeBuffer.toString().hashCode());
-        newCmp.setSourceFilePath(file.path());
-        return newCmp;
+        return codeBuffer.toString();
     }
 
     private static String moduleNameForFile(final String filePath) {
@@ -189,15 +199,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 cmp = createComponent(ctx, ComponentType.CLASS);
             }
             if (ctx.getTypeParameters().isNonEmpty()) {
-                StringBuilder fragment = new StringBuilder("<");
-                for (final Type typeParam : ctx.getTypeParameters()) {
-                    fragment.append(typeParam.asString()).append(", ");
-                }
-                fragment = new StringBuilder(fragment.toString().trim());
-                if (fragment.toString().endsWith(",")) {
-                    fragment = new StringBuilder(fragment.substring(0, fragment.length() - 1));
-                }
-                cmp.setCodeFragment(fragment + ">");
+                cmp.setCodeFragment(typeParametersCodeFragment(ctx.getTypeParameters()));
             }
 
             cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
@@ -231,16 +233,199 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
 
             componentStack.push(cmp);
-            for (final Node node : ctx.getChildNodes()) {
-                if (node instanceof FieldDeclaration || node instanceof Statement || node instanceof Expression
-                        || node instanceof MethodDeclaration || node instanceof ConstructorDeclaration
-                        || node instanceof ClassOrInterfaceDeclaration || node instanceof EnumDeclaration
-                        || node instanceof AnnotationDeclaration) {
-                    node.accept(this, arg);
-                }
-            }
+            visitTypeBody(ctx, arg);
             completeComponent();
         }
+    }
+
+    /**
+     * Visits the member declarations of the given type, leaving alone the nodes that make up its own
+     * declaration (its modifiers, type parameters and supertypes).
+     */
+    private void visitTypeBody(final Node ctx, final Object arg) {
+        for (final Node node : ctx.getChildNodes()) {
+            if (node instanceof FieldDeclaration || node instanceof Statement || node instanceof Expression
+                    || node instanceof MethodDeclaration || node instanceof ConstructorDeclaration
+                    || node instanceof ClassOrInterfaceDeclaration || node instanceof EnumDeclaration
+                    || node instanceof AnnotationDeclaration || node instanceof RecordDeclaration) {
+                node.accept(this, arg);
+            }
+        }
+    }
+
+    private static String typeParametersCodeFragment(final NodeList<? extends Type> typeParameters) {
+        final StringBuilder fragment = new StringBuilder("<");
+        for (final Type typeParam : typeParameters) {
+            fragment.append(typeParam.asString()).append(", ");
+        }
+        while (fragment.toString().endsWith(", ") || fragment.toString().endsWith(",")) {
+            fragment.setLength(fragment.length() - 1);
+        }
+        return fragment + ">";
+    }
+
+    /**
+     * Records are modelled as {@link ComponentType#CLASS} components; their record components become
+     * {@code FIELD} children, and the canonical constructor is modelled whether it is declared
+     * explicitly, declared compactly, or left implicit.
+     */
+    @Override
+    public final void visit(final RecordDeclaration ctx, final Object arg) {
+        if (!ParseUtil.componentStackContainsMethod(componentStack)) {
+            final Component cmp = createComponent(ctx, ComponentType.CLASS);
+            if (ctx.getTypeParameters().isNonEmpty()) {
+                cmp.setCodeFragment(typeParametersCodeFragment(ctx.getTypeParameters()));
+            }
+            cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
+            // A record is implicitly final, which its modifier list does not spell out.
+            cmp.insertAccessModifier("final");
+            cmp.setComponentName(ParseUtil.generateComponentName(ctx.getNameAsString(), componentStack));
+            cmp.setName(ctx.getNameAsString());
+            cmp.setImports(currentImports);
+            if (ctx.getComment().isPresent()) {
+                cmp.setComment(ctx.getComment().get().toString());
+            }
+            ParseUtil.pointParentsToGivenChild(cmp, componentStack);
+
+            for (final ClassOrInterfaceType implementedType : ctx.getImplementedTypes()) {
+                final String resolvedType = resolveType(implementedType.asString());
+                if (resolvedType != null) {
+                    ParseUtil.insertCmpRef(cmp, new TypeImplementationReference(resolvedType),
+                            this.componentStack);
+                }
+            }
+
+            componentStack.push(cmp);
+            insertRecordComponentFields(ctx, arg);
+            insertRecordCanonicalConstructor(ctx, arg);
+            visitTypeBody(ctx, arg);
+            completeComponent();
+        }
+    }
+
+    /**
+     * Each record component is an implicitly private final field of the record.
+     */
+    private void insertRecordComponentFields(final RecordDeclaration ctx, final Object arg) {
+        for (final Parameter recordComponent : ctx.getParameters()) {
+            final Component fieldCmp = createComponent(recordComponent, ComponentType.FIELD);
+            fieldCmp.setName(recordComponent.getNameAsString());
+            fieldCmp.setCodeFragment(recordComponent.getNameAsString() + " : "
+                    + recordComponent.getType().asString());
+            fieldCmp.setComponentName(ParseUtil.generateComponentName(recordComponent.getNameAsString(),
+                    componentStack));
+            fieldCmp.setAccessModifiers(Arrays.asList("private", "final"));
+            ParseUtil.pointParentsToGivenChild(fieldCmp, componentStack);
+            componentStack.push(fieldCmp);
+            // Walk the declared type the same way a field declaration's type is walked, so that a record
+            // component contributes the same dependency edges an equivalent field would.
+            recordComponent.getType().accept(this, arg);
+            completeComponent();
+        }
+    }
+
+    /**
+     * Models the record's canonical constructor. An explicitly declared one is left to
+     * {@link #visit(ConstructorDeclaration, Object)}; a compact declaration or no declaration at all is
+     * synthesized here from the record components, so that the constructor and its parameters are
+     * present either way.
+     */
+    private void insertRecordCanonicalConstructor(final RecordDeclaration ctx, final Object arg) {
+        if (declaresCanonicalConstructor(ctx)) {
+            return;
+        }
+        final List<CompactConstructorDeclaration> compactCtors = ctx.getCompactConstructors();
+        CompactConstructorDeclaration compactCtor = null;
+        if (!compactCtors.isEmpty()) {
+            compactCtor = compactCtors.get(0);
+        }
+        Node declarationNode = ctx;
+        if (compactCtor != null) {
+            declarationNode = compactCtor;
+        }
+        final Component ctorCmp = createComponent(declarationNode, ComponentType.CONSTRUCTOR);
+        ctorCmp.setName(ctx.getNameAsString());
+        final String signature = ctx.getNameAsString() + "(" + getFormalParameterTypesList(ctx.getParameters()) + ")";
+        String compactBody = "";
+        if (compactCtor != null) {
+            compactBody = normalizedCode(compactCtor);
+        }
+        // Hash the canonical signature rather than the whole record, so that an unrelated member edit
+        // does not read as a change to this constructor.
+        ctorCmp.setCodeHash((signature + compactBody).hashCode());
+        if (compactCtor != null) {
+            ctorCmp.setAccessModifiers(resolveJavaParserModifiers(compactCtor.getModifiers()));
+            for (final ReferenceType thrown : compactCtor.getThrownExceptions()) {
+                final String resolvedType = resolveType(thrown.asString());
+                if (resolvedType != null) {
+                    ParseUtil.insertCmpRef(ctorCmp, new SimpleTypeReference(resolvedType), this.componentStack);
+                }
+            }
+        } else {
+            // An implicit canonical constructor is as visible as the record itself.
+            ctorCmp.setAccessModifiers(visibilityModifiers(ctx.getModifiers()));
+        }
+        ctorCmp.setCodeFragment(signature);
+        ctorCmp.setComponentName(ParseUtil.generateComponentName(signature, componentStack));
+        ParseUtil.pointParentsToGivenChild(ctorCmp, componentStack);
+        componentStack.push(ctorCmp);
+        for (final Parameter recordComponent : ctx.getParameters()) {
+            final Component ctorParamCmp = createComponent(recordComponent,
+                    ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT);
+            ctorParamCmp.setName(recordComponent.getNameAsString());
+            ctorParamCmp.setCodeFragment(recordComponent.getType().asString());
+            ctorParamCmp.setComponentName(ParseUtil.generateComponentName(recordComponent.getNameAsString(),
+                    componentStack));
+            ctorParamCmp.setAccessModifiers(resolveJavaParserModifiers(recordComponent.getModifiers()));
+            final String resolvedType = resolveType(recordComponent.getType().asString());
+            if (resolvedType != null) {
+                ParseUtil.insertCmpRef(ctorParamCmp, new SimpleTypeReference(resolvedType), this.componentStack);
+            }
+            ParseUtil.pointParentsToGivenChild(ctorParamCmp, componentStack);
+            componentStack.push(ctorParamCmp);
+            completeComponent();
+        }
+        currCyclomaticComplexity = 1;
+        if (compactCtor != null) {
+            currCyclomaticComplexity += countLogicalBinaryOperators(compactCtor);
+            compactCtor.getBody().accept(this, arg);
+        }
+        completeComponent();
+    }
+
+    /**
+     * True if the record body declares the canonical constructor in full, in which case the regular
+     * constructor visitor models it.
+     */
+    private static boolean declaresCanonicalConstructor(final RecordDeclaration ctx) {
+        final List<String> recordComponentTypes = new ArrayList<>();
+        for (final Parameter recordComponent : ctx.getParameters()) {
+            recordComponentTypes.add(recordComponent.getType().asString());
+        }
+        for (final Node member : ctx.getMembers()) {
+            if (!(member instanceof ConstructorDeclaration)) {
+                continue;
+            }
+            final List<String> ctorParamTypes = new ArrayList<>();
+            for (final Parameter param : ((ConstructorDeclaration) member).getParameters()) {
+                ctorParamTypes.add(param.getType().asString());
+            }
+            if (ctorParamTypes.equals(recordComponentTypes)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<String> visibilityModifiers(final NodeList<Modifier> modifiers) {
+        final List<String> visibility = new ArrayList<>();
+        for (final Modifier modifier : modifiers) {
+            final String keyword = modifier.toString().toLowerCase(Locale.ROOT).trim();
+            if (keyword.equals("public") || keyword.equals("protected") || keyword.equals("private")) {
+                visibility.add(keyword);
+            }
+        }
+        return visibility;
     }
 
     @Override

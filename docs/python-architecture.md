@@ -22,7 +22,7 @@ class diagrams while treating external libraries as labels only.
 - Extract docstrings and comments for components.
 - Calculate cyclomatic complexity for methods and functions.
 - Generate code hashes for change detection.
-- Infer visibility modifiers for methods (public/private based on name prefix).
+- Infer visibility modifiers for classes and members (public/protected/private based on name prefix).
 
 # Identity and Naming
 Unique names follow the existing Clarpse rule.
@@ -74,8 +74,9 @@ and can be mapped through imports or local class declarations.
 - Nested classes are fully supported with proper unique name chaining.
 - Docstrings are extracted and attached to the component's comment field.
 - Cyclomatic complexity is calculated and stored in the component's cyclo field.
-- Code hashes are generated from implementation hashes or signature hashes for change detection.
-- Method visibility is inferred: methods starting with `_` are marked as private.
+- Every component carries a non-zero code hash, derived from its full declaration, for change detection.
+- Visibility is inferred from naming: `__` is private, `_` is protected, everything else is public.
+- `@staticmethod` and `@classmethod` are reported as `static`.
 
 # JSON Protocol
 Requests use line delimited JSON.
@@ -126,16 +127,22 @@ Python docstrings are extracted and attached to components using the standard do
 Method and function cyclomatic complexity is calculated by the Pyright daemon and stored in the component's cyclo field. This provides a measure of code complexity for architectural analysis.
 
 ## Code Hashing
-Each method and function includes a code hash for change detection:
-- If an implementation hash is provided by the daemon, it is used directly.
-- Otherwise, the signature hash is used as a fallback.
-- This enables downstream tools to detect when method implementations have changed.
+Every component carries a non-zero code hash for change detection:
+- The daemon hashes the whole declaration - a class body, a `def` including its signature and
+  decorators, a field statement, a parameter - so that an implementation edit changes the hash while a
+  reformat or comment edit does not.
+- If the daemon had nothing to hash, the signature hash is used as a fallback, and failing that the
+  component's name.
+- A hash of zero is therefore never emitted, and means "never computed".
+- This enables downstream tools to detect when implementations have changed.
 
 ## Visibility Inference
-Python methods are tagged with visibility modifiers based on naming conventions:
-- Methods starting with `_` (single underscore) are marked as private.
-- Methods starting with `__` (double underscore) are marked as private.
-- All other methods are considered public.
+Python has no visibility keywords, so members are tagged from naming conventions:
+- Names starting with `__` (double underscore, not dunder) are name-mangled, and marked private.
+- Names starting with `_` (single underscore) are marked protected.
+- Everything else - dunder methods included - is importable, and marked public explicitly.
+- This applies to classes, methods, functions, fields and module variables alike.
+- `@staticmethod` and `@classmethod` both add the `static` modifier.
 
 ## Nested Classes
 Python supports nested class definitions, and these are fully modeled:
