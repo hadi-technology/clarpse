@@ -7,6 +7,8 @@ import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.sourcemodel.Component;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
+import com.hadi.clarpse.compiler.typescript.NodeRuntime;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -81,6 +83,7 @@ public class CrossLanguageReferenceHygieneTest {
      */
     @Test
     public void typescript_recordsPrimitivesDeliberately() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
         ProjectFiles files = new ProjectFiles();
         files.insertFile(new ProjectFile("/tsconfig.json",
                 "{\"compilerOptions\":{\"target\":\"ES2020\"}}"));
@@ -102,6 +105,10 @@ public class CrossLanguageReferenceHygieneTest {
      */
     @Test
     public void python_recordsATypedFieldReference() throws Exception {
+        // Python parses through a daemon like TypeScript does, so it needs the same guard: without
+        // the runtime the compile yields nothing and the assertion would fail on the environment
+        // rather than on the behaviour.
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
         ProjectFiles files = new ProjectFiles();
         files.insertFile(new ProjectFile("/app/dep.py", "class Dep:\n    pass\n"));
         files.insertFile(new ProjectFile("/app/svc.py", String.join("\n",
