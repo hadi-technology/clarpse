@@ -782,7 +782,16 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     public final void visit(final SimpleName ctx, final Object arg) {
         if (!componentStack.isEmpty()) {
             final Component currCmp = componentStack.peek();
-            final String resolvedType = resolveType(ctx.asString());
+            // Every identifier in the file reaches here -- constants, locals, method names as
+            // well as types -- so whether an unresolved token may be assumed to name a type in
+            // this package depends on where it sits. `B` in `private B b;` is the name of a
+            // ClassOrInterfaceType and can be nothing else; `CAP` in `return CAP;` is a bare
+            // expression and is far more likely a constant. Assuming in both places is what
+            // produced references to types like `<package>.MAX_NOTES` that do not exist.
+            final boolean typePosition = ctx.getParentNode()
+                    .filter(parent -> parent instanceof ClassOrInterfaceType)
+                    .isPresent();
+            final String resolvedType = resolveType(ctx.asString(), typePosition);
             if (resolvedType != null) {
                 ParseUtil.insertCmpRef(currCmp, new SimpleTypeReference(resolvedType),
                         this.componentStack);
@@ -792,6 +801,24 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     }
 
     private String resolveType(final String type) {
+        return resolveType(type, true);
+    }
+
+    /**
+     * Resolves a token to a qualified type name.
+     *
+     * @param assumeCurrentPackage whether an unresolved token may be assumed to name a type in the
+     *     current package. True in a <em>type position</em> -- {@code B b;} really does name a
+     *     type, and if it is a sibling in the same package with no import there is nothing else it
+     *     could be, so the assumption recovers a real edge. False for a bare identifier, where the
+     *     token is as likely to be a constant, a variable or a method as a type: assuming there
+     *     turned every {@code return MAX_NOTES;} into a reference to a type
+     *     {@code <package>.MAX_NOTES} that does not exist. Measured on one repository, 528 of 1368
+     *     external symbols were constants invented this way and 249 were generic expressions.
+     *     Inventing is worse than omitting, because a missing edge reads as a coverage gap while
+     *     an invented one reads as a fact.
+     */
+    private String resolveType(final String type, final boolean assumeCurrentPackage) {
         String resolvedType = "";
         final SymbolReference<ResolvedReferenceTypeDeclaration> symbol = typeSolver.tryToSolveType(type);
         if (currentImportsMap.containsKey(type)) {
@@ -802,6 +829,9 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             resolvedType = symbol.getCorrespondingDeclaration().getQualifiedName();
         }
         if (resolvedType.isEmpty()) {
+            if (!assumeCurrentPackage) {
+                return null;
+            }
             if (currentPkg != null) {
                 resolvedType = currentPkg.path() + "." + type;
             } else {
