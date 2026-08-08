@@ -3,7 +3,7 @@
 
 	<groupId>io.github.hadi-technology</groupId>
 	<artifactId>clarpse</artifactId>
-	<version>10.0.1</version>
+	<version>10.0.2</version>
 	<packaging>jar</packaging>
 
 	<name>${project.groupId}:${project.artifactId}</name>
