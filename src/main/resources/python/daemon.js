@@ -138,14 +138,18 @@ function packageNameForPath(filePath, root) {
   return dir.split('/').filter(Boolean).join('.');
 }
 
+const INIT_SUFFIX = '.__init__';
+
 function buildModuleIndex(repoRoot, extraRoots, filesToIndex) {
   const index = new Map();
   const extraList = Array.isArray(extraRoots) ? extraRoots : [];
   const files = Array.isArray(filesToIndex) ? filesToIndex : scanRepo(repoRoot);
+  const packageAliases = [];
   for (const filePath of files) {
     const repoModule = moduleNameForPath(filePath, repoRoot);
     if (repoModule) {
       index.set(repoModule, filePath);
+      collectPackageAlias(packageAliases, repoModule, filePath);
     }
     for (const root of extraList) {
       const extraModule = moduleNameForPath(filePath, root);
@@ -153,10 +157,42 @@ function buildModuleIndex(repoRoot, extraRoots, filesToIndex) {
         if (!index.has(extraModule)) {
           index.set(extraModule, filePath);
         }
+        collectPackageAlias(packageAliases, extraModule, filePath);
       }
     }
   }
+  // Second pass so a real `pkg.py` always beats the `pkg/__init__.py` alias regardless of the
+  // order files were scanned in. Registering as we went made the winner depend on directory order.
+  for (const [packageName, filePath] of packageAliases) {
+    if (!index.has(packageName)) {
+      index.set(packageName, filePath);
+    }
+  }
   return index;
+}
+
+/**
+ * `pkg/__init__.py` IS the module `pkg` in Python, so `from pkg import Thing` must resolve to it.
+ *
+ * The index recorded it only under `pkg.__init__`, which no import ever writes, so every such
+ * import missed and the reference was dropped -- silently, since an unresolved name is simply not
+ * an internal dependency. Measured on scrapy: all 8 edges reaching a class declared in an
+ * `__init__.py` were same-file, and not one crossed a module. `TextResponse` lost its `Response`
+ * base class and `JsonRequest` lost `Request`, which is most of a package's public surface, since
+ * `__init__.py` is exactly where a package puts the names it wants imported.
+ *
+ * Only the lookup key is aliased. Component unique names still carry the `__init__` segment, and
+ * must: `resolveModuleSymbol` rebuilds them from the resolved file's own path, so the two agree by
+ * construction, and renaming components would change every identifier this library emits.
+ */
+function collectPackageAlias(into, moduleName, filePath) {
+  if (!moduleName.endsWith(INIT_SUFFIX)) {
+    return;
+  }
+  const packageName = moduleName.slice(0, -INIT_SUFFIX.length);
+  if (packageName) {
+    into.push([packageName, filePath]);
+  }
 }
 
 function parsePyrightConfig(repoRoot) {
@@ -1828,13 +1864,39 @@ function extractFunction(functionNode, ctx, parseNodeType) {
   };
 }
 
+const ANNOTATION_KEYS = ['typeAnnotation', 'annotation', 'annotationExpression', 'typeExpression'];
+
+/**
+ * The declared type of a field statement, in both of the shapes Python writes one.
+ *
+ * A bare `x: T` parses as an annotation node carrying the type directly. Adding a value --
+ * `x: T = make()`, and `self.x: T = make()` in a constructor -- parses as an ASSIGNMENT whose left
+ * expression is the annotation, so the type sits one level down and the direct lookup found
+ * nothing. The field was then typed `Any` and contributed no dependency: annotating a field and
+ * initialising it on the same line, which is the ordinary way to write one, made its type
+ * invisible to the graph.
+ */
+function annotationForFieldStatement(statement) {
+  const direct = getNodeProp(statement, ANNOTATION_KEYS);
+  if (direct) {
+    return direct;
+  }
+  const target = getNodeProp(statement, ['leftExpr', 'leftExpression']);
+  return target ? getNodeProp(target, ANNOTATION_KEYS) : null;
+}
+
 function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
   if (!statement) {
     return null;
   }
   const requireAnnotation = !options || options.requireAnnotation !== false;
-  const annotationNode = getNodeProp(statement, ['typeAnnotation', 'annotation', 'annotationExpression', 'typeExpression']);
-  const targetNode = getNodeProp(statement, ['valueExpression', 'expression', 'target', 'name', 'leftExpr', 'valueExpr']);
+  const annotationNode = annotationForFieldStatement(statement);
+  let targetNode = getNodeProp(statement, ['valueExpression', 'expression', 'target', 'name', 'leftExpr', 'valueExpr']);
+  // For `x: T = v` the target found above is the annotation node, whose own value expression is
+  // the name. Without this the field is dropped rather than mistyped.
+  if (targetNode && !nameFromNode(targetNode)) {
+    targetNode = getNodeProp(targetNode, ['valueExpr', 'valueExpression']) || targetNode;
+  }
   if (!targetNode) {
     return null;
   }
@@ -1891,7 +1953,7 @@ function extractInstanceFieldFromStatement(statement, ctx) {
   if (!fieldName) {
     return null;
   }
-  const annotationNode = getNodeProp(statement, ['typeAnnotation', 'annotation', 'annotationExpression', 'typeExpression']);
+  const annotationNode = annotationForFieldStatement(statement);
   const rawType = annotationNode ? textForNode(annotationNode, fileText) : 'Any';
   const ref = annotationNode ? resolveTypeRef(annotationNode, rawType, ctx) : null;
   return {
