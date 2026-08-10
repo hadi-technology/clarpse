@@ -1864,13 +1864,39 @@ function extractFunction(functionNode, ctx, parseNodeType) {
   };
 }
 
+const ANNOTATION_KEYS = ['typeAnnotation', 'annotation', 'annotationExpression', 'typeExpression'];
+
+/**
+ * The declared type of a field statement, in both of the shapes Python writes one.
+ *
+ * A bare `x: T` parses as an annotation node carrying the type directly. Adding a value --
+ * `x: T = make()`, and `self.x: T = make()` in a constructor -- parses as an ASSIGNMENT whose left
+ * expression is the annotation, so the type sits one level down and the direct lookup found
+ * nothing. The field was then typed `Any` and contributed no dependency: annotating a field and
+ * initialising it on the same line, which is the ordinary way to write one, made its type
+ * invisible to the graph.
+ */
+function annotationForFieldStatement(statement) {
+  const direct = getNodeProp(statement, ANNOTATION_KEYS);
+  if (direct) {
+    return direct;
+  }
+  const target = getNodeProp(statement, ['leftExpr', 'leftExpression']);
+  return target ? getNodeProp(target, ANNOTATION_KEYS) : null;
+}
+
 function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
   if (!statement) {
     return null;
   }
   const requireAnnotation = !options || options.requireAnnotation !== false;
-  const annotationNode = getNodeProp(statement, ['typeAnnotation', 'annotation', 'annotationExpression', 'typeExpression']);
-  const targetNode = getNodeProp(statement, ['valueExpression', 'expression', 'target', 'name', 'leftExpr', 'valueExpr']);
+  const annotationNode = annotationForFieldStatement(statement);
+  let targetNode = getNodeProp(statement, ['valueExpression', 'expression', 'target', 'name', 'leftExpr', 'valueExpr']);
+  // For `x: T = v` the target found above is the annotation node, whose own value expression is
+  // the name. Without this the field is dropped rather than mistyped.
+  if (targetNode && !nameFromNode(targetNode)) {
+    targetNode = getNodeProp(targetNode, ['valueExpr', 'valueExpression']) || targetNode;
+  }
   if (!targetNode) {
     return null;
   }
@@ -1927,7 +1953,7 @@ function extractInstanceFieldFromStatement(statement, ctx) {
   if (!fieldName) {
     return null;
   }
-  const annotationNode = getNodeProp(statement, ['typeAnnotation', 'annotation', 'annotationExpression', 'typeExpression']);
+  const annotationNode = annotationForFieldStatement(statement);
   const rawType = annotationNode ? textForNode(annotationNode, fileText) : 'Any';
   const ref = annotationNode ? resolveTypeRef(annotationNode, rawType, ctx) : null;
   return {
