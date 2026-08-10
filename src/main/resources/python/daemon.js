@@ -138,14 +138,18 @@ function packageNameForPath(filePath, root) {
   return dir.split('/').filter(Boolean).join('.');
 }
 
+const INIT_SUFFIX = '.__init__';
+
 function buildModuleIndex(repoRoot, extraRoots, filesToIndex) {
   const index = new Map();
   const extraList = Array.isArray(extraRoots) ? extraRoots : [];
   const files = Array.isArray(filesToIndex) ? filesToIndex : scanRepo(repoRoot);
+  const packageAliases = [];
   for (const filePath of files) {
     const repoModule = moduleNameForPath(filePath, repoRoot);
     if (repoModule) {
       index.set(repoModule, filePath);
+      collectPackageAlias(packageAliases, repoModule, filePath);
     }
     for (const root of extraList) {
       const extraModule = moduleNameForPath(filePath, root);
@@ -153,10 +157,42 @@ function buildModuleIndex(repoRoot, extraRoots, filesToIndex) {
         if (!index.has(extraModule)) {
           index.set(extraModule, filePath);
         }
+        collectPackageAlias(packageAliases, extraModule, filePath);
       }
     }
   }
+  // Second pass so a real `pkg.py` always beats the `pkg/__init__.py` alias regardless of the
+  // order files were scanned in. Registering as we went made the winner depend on directory order.
+  for (const [packageName, filePath] of packageAliases) {
+    if (!index.has(packageName)) {
+      index.set(packageName, filePath);
+    }
+  }
   return index;
+}
+
+/**
+ * `pkg/__init__.py` IS the module `pkg` in Python, so `from pkg import Thing` must resolve to it.
+ *
+ * The index recorded it only under `pkg.__init__`, which no import ever writes, so every such
+ * import missed and the reference was dropped -- silently, since an unresolved name is simply not
+ * an internal dependency. Measured on scrapy: all 8 edges reaching a class declared in an
+ * `__init__.py` were same-file, and not one crossed a module. `TextResponse` lost its `Response`
+ * base class and `JsonRequest` lost `Request`, which is most of a package's public surface, since
+ * `__init__.py` is exactly where a package puts the names it wants imported.
+ *
+ * Only the lookup key is aliased. Component unique names still carry the `__init__` segment, and
+ * must: `resolveModuleSymbol` rebuilds them from the resolved file's own path, so the two agree by
+ * construction, and renaming components would change every identifier this library emits.
+ */
+function collectPackageAlias(into, moduleName, filePath) {
+  if (!moduleName.endsWith(INIT_SUFFIX)) {
+    return;
+  }
+  const packageName = moduleName.slice(0, -INIT_SUFFIX.length);
+  if (packageName) {
+    into.push([packageName, filePath]);
+  }
 }
 
 function parsePyrightConfig(repoRoot) {
