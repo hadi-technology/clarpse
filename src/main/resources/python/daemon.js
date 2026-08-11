@@ -2219,6 +2219,18 @@ async function handleGetFileModel(params) {
   } catch (err) {
     return { error: { code: ERROR_CODES.PARSE_FAILED, message: 'Parse failed' } };
   }
+  // The imports are already resolved above -- relative forms expanded, internal-ness checked
+  // against the module index -- and were then dropped from the payload, so `imports()` was empty
+  // for every Python component while the same data drove type resolution. See issue #156.
+  const importList = [];
+  for (const moduleName of imported.importedModules.values()) {
+    if (moduleName) importList.push(moduleName);
+  }
+  for (const symbol of imported.importedSymbols.values()) {
+    if (symbol && symbol.moduleName && symbol.symbolName) {
+      importList.push(symbol.moduleName + '.' + symbol.symbolName);
+    }
+  }
   return {
     result: {
       filePath: normalized,
@@ -2227,6 +2239,7 @@ async function handleGetFileModel(params) {
       classes,
       functions,
       moduleFields,
+      imports: Array.from(new Set(importList)),
       warnings: []
     }
   };

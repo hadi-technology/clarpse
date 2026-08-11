@@ -101,6 +101,29 @@ final class PythonModelAssembler {
                 insertClass(pkg, moduleName, sourcePath, fileModel.packageName, classModel, stack, srcModel);
             }
         }
+        applyImports(sourcePath, fileModel, srcModel);
+    }
+
+    /**
+     * Attaches the file's imports to the types it declares, and to nothing else.
+     *
+     * <p>Applied after insertion rather than threaded through {@code insertClass}, which already
+     * takes seven parameters — one more trips the parameter-count rule, and bundling arguments to
+     * carry a value two frames down is worse than reading it back off the model. Only type
+     * components carry imports, matching Java: a field reporting its file's import list as its own
+     * is what made {@code imports()} mean a different thing in each language (issue #156).
+     */
+    private static void applyImports(final String sourcePath,
+                                     final PythonFileModel fileModel,
+                                     final OOPSourceCodeModel srcModel) {
+        if (fileModel.imports == null || fileModel.imports.isEmpty()) {
+            return;
+        }
+        final java.util.Set<String> imports = new java.util.LinkedHashSet<>(fileModel.imports);
+        srcModel.components()
+                .filter(component -> component.componentType().isBaseComponent())
+                .filter(component -> sourcePath.equals(component.sourceFile()))
+                .forEach(component -> component.setImports(imports));
     }
 
     private static void insertClass(final Package pkg,

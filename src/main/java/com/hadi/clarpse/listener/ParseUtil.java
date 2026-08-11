@@ -166,13 +166,33 @@ public class ParseUtil {
     }
 
     public static void insertCmpRef(final Component cmp, ComponentReference cmpRef, Stack<Component> cmpStack) {
-        // prevent self referencing coponents
+        // A component may not reference itself. It may absolutely reference the type it is declared
+        // inside: `interface Event { class Created implements Event {} }` is ordinary Java, and
+        // matching against the whole stack — which holds every enclosing component — silently
+        // dropped that edge. Reproduced in two files; the same shape is why debezium's
+        // `Field.RangeValidator implements Validator` and scrapy-style nested event classes had no
+        // inheritance edge at all, and why a documented rule about them answered "couldn't tell".
+        //
+        // Bubbling an extension or implementation up to the parent is a different hazard and is
+        // still prevented, in copyRefsToParents, so a parent cannot end up extending itself.
+        final boolean inheritance = cmpRef instanceof TypeExtensionReference
+                || cmpRef instanceof TypeImplementationReference;
+        final boolean nestedTypeInheritingEnclosing = inheritance && cmp.componentType().isBaseComponent();
         for (Component stackCmp : cmpStack) {
-            if (stackCmp.uniqueName().equals(cmpRef.invokedComponent())) {
-                LOGGER.debug("Found self-reference of " + cmpRef.invokedComponent() + " from cmp " + cmp.uniqueName()
-                        + ", not adding.");
-                return;
+            if (!stackCmp.uniqueName().equals(cmpRef.invokedComponent())) {
+                continue;
             }
+            // A type may inherit the type it is declared inside, and only that case is let through.
+            // The stack guard still applies to everything else, because it does a second job the
+            // name suggests but does not say: it stops a *member* referencing its declaring type,
+            // which is what makes `class Test { public Test() {} }` produce no reference at all.
+            // Widening it to a plain self-check broke exactly that.
+            if (nestedTypeInheritingEnclosing && !cmp.uniqueName().equals(cmpRef.invokedComponent())) {
+                continue;
+            }
+            LOGGER.debug("Found self-reference of " + cmpRef.invokedComponent() + " from cmp " + cmp.uniqueName()
+                    + ", not adding.");
+            return;
         }
         cmp.insertCmpRef(cmpRef);
     }
