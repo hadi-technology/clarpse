@@ -1,40 +1,55 @@
-# :rocket: Clarpse 
-Clarpse is a multi-language architectural code analysis library for building better software tools.
+# :rocket: Clarpse
 
-[![maintained-by](https://img.shields.io/badge/Maintained%20by-Hadi%20Technology-violet.svg)](https://haditechnology.com) [![Maven Central](https://maven-badges.herokuapp.com/maven-central/io.github.hadi-technology/clarpse/badge.svg)](https://maven-badges.herokuapp.com/maven-central/io.github.hadi-technology/clarpse) [![Java CI](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml/badge.svg?branch=master)](https://github.com/hadi-tech/clarpse/actions/workflows/ci-cd.yml) [![codecov](https://codecov.io/github/hadi-technology/clarpse/graph/badge.svg?token=7uf2jQMlH1)](https://codecov.io/github/hadi-technology/clarpse) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
+**Parse Java, C#, TypeScript and Python into one language-agnostic model of your codebase.**
 
-# Maven Dependency
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.hadi-technology/clarpse?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.hadi-technology/clarpse) [![Java CI](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml/badge.svg?branch=master)](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml) [![codecov](https://codecov.io/github/hadi-technology/clarpse/graph/badge.svg?token=7uf2jQMlH1)](https://codecov.io/github/hadi-technology/clarpse) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![maintained-by](https://img.shields.io/badge/Maintained%20by-Hadi%20Technology-violet.svg)](https://haditechnology.com) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
+
+Writing a tool that reasons about code means writing four different AST walkers, one per language, and maintaining them forever. Clarpse gives you one instead: point it at a directory, a zip, or in-memory files, and get back classes, methods, fields, and the references between them, with the same API no matter what language the source was written in.
+
+It is deliberately architecture-level. Clarpse tells you that `OrderService` calls `PaymentGateway` and lives in package `com.acme.billing`; it does not hand you a statement-level syntax tree. That tradeoff is what makes one model work across four languages.
+
+Clarpse powers [striff-lib](https://github.com/hadi-technology/striff-lib), which turns pull request diffs into architectural diagrams.
+
+## Quickstart
+
+Add the dependency (check the badge above for the latest version):
+
 ```xml
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-<version>10.0.1</version>
+  <version>10.1.1</version>
 </dependency>
 ```
 
-Clarpse facilitates the development of tools that operate over the higher level, architectural details of source code, which are exposed via an easy to use, object oriented API. Checkout the power of Clarpse in [striff-lib](https://github.com/hadi-tech/striff-lib).
+Parse a codebase and walk the model:
 
-# What is Clarpse?
-Clarpse is a multi-language parsing and analysis library that converts source code into a language-agnostic, object-oriented model. That model makes it easy to build tooling on top of architecture-level details like components, references, and structure without dealing with raw ASTs.
+```java
+ProjectFiles files = new ProjectFiles("/path/to/repo");
+CompileResult result = new ClarpseProject(files, Lang.JAVA).result();
+OOPSourceCodeModel model = result.model();
 
-# Features
+model.components().forEach(cmp ->
+        System.out.println(cmp.componentType() + " " + cmp.uniqueName()));
+```
 
- - Supports **Java** with a lightweight, architecture-focused parser, including records.
- - Supports **C#** with JVM-based parsing, partial type merging, namespace-aware indexing, and fast in-repo symbol resolution.
- - Supports **TypeScript** with compiler-accurate, tsconfig-aware parsing and resolution, including constructor parameter property detection and monorepo support.
- - Supports **Python** with Pyright-backed parsing, including nested classes, comment parsing, cyclomatic complexity, code hashing, and visibility inference.
- - Runtime configuration through bundled properties file
- - Light weight
- - Performant
- - Easy to use
- - Clean API built on top of AST
- - Support for parsing comments
- - Parallel parsing with configurable worker counts
+The same three lines work for `Lang.CSHARP`, `Lang.TYPESCRIPT`, and `Lang.PYTHON`. See [Using The API](#using-the-api) for the full surface.
+
+## Language Support
+
+| Language   | Parser                          | Node.js required | Notes                                                                                      |
+|------------|---------------------------------|:----------------:|--------------------------------------------------------------------------------------------|
+| Java       | ANTLR, architecture-focused     | No               | Includes records.                                                                            |
+| C#         | JVM-based                       | No               | Partial type merging, namespace-aware indexing, fast in-repo symbol resolution.              |
+| TypeScript | Bundled TypeScript compiler     | Yes              | tsconfig-aware resolution, constructor parameter properties, monorepo support. Needs a valid `tsconfig.json`. |
+| Python     | Bundled Pyright                 | Yes              | Nested classes, comment parsing, cyclomatic complexity, code hashing, visibility inference.  |
+
+Across every language you also get comment extraction, a clean object-oriented API over the AST, parallel parsing with configurable worker counts, and runtime configuration via environment variables, system properties, or a bundled properties file.
 
 # Requirements
  - Java 17
  - Maven 3.x
- - Node.js 18/20/22/25 (required for TypeScript and Python parsing)
+ - Node.js 18/20/22/25, only for TypeScript and Python parsing
  - No global `typescript` or `pyright` install is required (both are bundled)
  - No local Python interpreter is required for Python parsing
 
@@ -258,6 +273,7 @@ Standardized error codes:
 - `2003` File parse/model extraction failed.
 - `2004` Daemon transport/runtime error.
 - `2005` File skipped due to excluded path rules.
+
 # Adding or Updating a Language
 Checklist for adding or updating a language implementation:
 
@@ -278,3 +294,9 @@ Checklist for adding or updating a language implementation:
   - y = feature number (new features, optional bug fixes)
   - z = hotfix number (bug fixes only)
 - Submit a pull request.
+
+# License
+
+Clarpse is released under the [MIT License](LICENSE). You are free to use it in commercial and closed-source products.
+
+Maintained by [Hadi Technology](https://haditechnology.com), which also builds [Striff](https://striff.io), an architecture-aware pull request reviewer built on top of this library.
