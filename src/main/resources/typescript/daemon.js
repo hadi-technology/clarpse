@@ -1106,10 +1106,67 @@ async function handleGetFileModel(params) {
     }
     throw err;
   }
+  let imports = [];
+  try {
+    imports = collectImports(ts, entryInfo.source, checker);
+  } catch (err) {
+    imports = [];
+  }
   return {
     filePath: normalized,
-    declarations
+    declarations,
+    imports
   };
+}
+
+
+// Imports were never collected: module resolution is delegated to the TypeScript compiler's symbol
+// table, so nothing needed them and `imports()` came back empty for every TypeScript component
+// while Java and C# populated it. Issue #156.
+//
+// Resolved through the checker rather than by string manipulation on the specifier, so an import
+// that TypeScript itself cannot resolve is reported as external rather than guessed into a path.
+function collectImports(ts, source, checker) {
+  const results = [];
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !statement.moduleSpecifier) continue;
+    const specifier = statement.moduleSpecifier.text;
+    if (!specifier) continue;
+
+    let resolvedFile = null;
+    try {
+      const moduleSymbol = checker.getSymbolAtLocation(statement.moduleSpecifier);
+      const declaration = moduleSymbol && moduleSymbol.declarations && moduleSymbol.declarations[0];
+      if (declaration && declaration.getSourceFile) {
+        const fileName = declaration.getSourceFile().fileName;
+        if (fileName && isInternalFile(fileName)) resolvedFile = fileName;
+      }
+    } catch (err) {
+      resolvedFile = null;
+    }
+
+    const names = [];
+    const clause = statement.importClause;
+    if (clause) {
+      if (clause.name) names.push(clause.name.text);
+      const bindings = clause.namedBindings;
+      if (bindings) {
+        if (ts.isNamedImports(bindings)) {
+          for (const element of bindings.elements) names.push(element.name.text);
+        } else if (bindings.name) {
+          names.push(bindings.name.text);
+        }
+      }
+    }
+    if (names.length === 0) {
+      results.push({ module: specifier, filePath: resolvedFile, symbolName: null });
+      continue;
+    }
+    for (const name of names) {
+      results.push({ module: specifier, filePath: resolvedFile, symbolName: name });
+    }
+  }
+  return results;
 }
 
 async function handleRequest(request) {

@@ -42,6 +42,49 @@ final class TypeScriptModelAssembler {
         for (final TypeScriptComponentModel declaration : fileModel.declarations) {
             insertComponentTree(pkg, moduleName, sourcePath, repoRoot, declaration, srcModel);
         }
+        applyImports(repoRoot, sourcePath, fileModel, srcModel);
+    }
+
+    /**
+     * Attaches the file's imports to the types it declares, and to nothing else.
+     *
+     * <p>Only type components carry them, matching Java: a field or method reporting its file's
+     * import list as its own is what made {@code imports()} mean a different thing in each language
+     * (issue #156). An import the TypeScript compiler resolved inside the repository is recorded as
+     * the component name it refers to, so it lines up with the rest of the model; anything else
+     * keeps its specifier verbatim rather than being guessed into a path.
+     */
+    private static void applyImports(final String repoRoot,
+                                     final String sourcePath,
+                                     final TypeScriptFileModel fileModel,
+                                     final OOPSourceCodeModel srcModel) {
+        if (fileModel.imports == null || fileModel.imports.isEmpty()) {
+            return;
+        }
+        final java.util.Set<String> imports = new java.util.LinkedHashSet<>();
+        for (final com.hadi.clarpse.compiler.typescript.model.TypeScriptImportModel imported : fileModel.imports) {
+            if (imported == null) {
+                continue;
+            }
+            String value = null;
+            if (imported.filePath != null && imported.symbolName != null) {
+                value = CompilerSupport.resolveUniqueNameFromTarget(
+                        repoRoot, imported.filePath, imported.symbolName);
+            }
+            if (value == null || value.isEmpty()) {
+                value = imported.module;
+            }
+            if (value != null && !value.isEmpty()) {
+                imports.add(value);
+            }
+        }
+        if (imports.isEmpty()) {
+            return;
+        }
+        srcModel.components()
+                .filter(component -> component.componentType().isBaseComponent())
+                .filter(component -> sourcePath.equals(component.sourceFile()))
+                .forEach(component -> component.setImports(imports));
     }
 
     private static void insertComponentTree(final Package pkg,

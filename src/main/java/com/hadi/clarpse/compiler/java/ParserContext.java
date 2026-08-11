@@ -11,7 +11,11 @@ public class ParserContext {
     private final JavaParser parser;
 
     public ParserContext(final String persistDir) {
-        this.typeSolver = JavaParserFactory.setupTypeSolver(persistDir);
+        this(persistDir, java.util.List.of());
+    }
+
+    public ParserContext(final String persistDir, final java.util.Collection<String> sourceRoots) {
+        this.typeSolver = JavaParserFactory.setupTypeSolver(persistDir, sourceRoots);
         this.parser = new JavaParser(JavaParserFactory.setupParserConfig(this.typeSolver));
     }
 

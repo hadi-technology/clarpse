@@ -45,6 +45,25 @@ final class CSharpModelAssembler {
             Map.entry("void", "System.Void")
     );
 
+    /**
+     * Library type names a repository class may shadow. {@link #BUILTIN_TYPES} holds the language
+     * keywords; these are the framework generics and helpers that appear unqualified in ordinary
+     * code and are never the repository's own type unless something in scope says so.
+     *
+     * <p>Only the last-resort single-match guess consults this. A repository type genuinely called
+     * `List` still resolves by exact name, nesting, namespace or import.
+     */
+    private static final Set<String> FRAMEWORK_TYPE_NAMES = Set.of(
+            "List", "IList", "Dictionary", "IDictionary", "HashSet", "ISet", "Queue", "Stack",
+            "IEnumerable", "IEnumerator", "ICollection", "IReadOnlyList", "IReadOnlyCollection",
+            "IReadOnlyDictionary", "IQueryable", "IAsyncEnumerable",
+            "Task", "ValueTask", "Action", "Func", "Predicate", "Comparer", "EqualityComparer",
+            "Nullable", "Tuple", "ValueTuple", "KeyValuePair", "Lazy", "Span", "Memory",
+            "Array", "Object", "String", "Exception", "Attribute", "Type", "Guid", "Uri",
+            "TimeSpan", "DateTime", "DateTimeOffset", "Version", "Random", "Timer",
+            "Stream", "TextReader", "TextWriter", "Encoding", "Regex", "Match",
+            "CancellationToken", "IServiceProvider", "IDisposable", "IAsyncDisposable");
+
     private CSharpModelAssembler() {
     }
 
@@ -302,7 +321,10 @@ final class CSharpModelAssembler {
         } else {
             component.setComment(memberModel.comment);
         }
-        component.setImports(memberModel.imports);
+        // Imports belong to the file, and in the model to the type that file declares.
+        // Copying them onto members, parameters and locals made `imports()` mean something
+        // different in C# than in Java, where only type components carry them: a field would
+        // report the whole file's using list as if it were its own. See issue #156.
         component.setAccessModifiers(memberModel.modifiers);
         component.setComponentName(ownerType.componentName + "." + memberComponentIdentifier(memberModel, ownerType));
         if (memberModel.codeFragment != null && !memberModel.codeFragment.isEmpty()) {
@@ -326,7 +348,6 @@ final class CSharpModelAssembler {
         }
         component.setName(parameter.name);
         component.setSourceFilePath(memberModel.sourcePath);
-        component.setImports(memberModel.imports);
         component.setAccessModifiers(parameter.modifiers);
         component.setComponentName(ownerComponent.componentName() + "." + parameter.name);
         if (parameter.declaredType != null && !parameter.declaredType.isEmpty()) {
@@ -345,7 +366,6 @@ final class CSharpModelAssembler {
         component.setComponentType(OOPSourceModelConstants.ComponentType.LOCAL);
         component.setName(localModel.name);
         component.setSourceFilePath(localModel.sourcePath);
-        component.setImports(localModel.imports);
         component.setAccessModifiers(localModel.modifiers);
         component.setComponentName(ownerComponent.componentName() + "." + localModel.name);
         if (localModel.codeFragment != null && !localModel.codeFragment.isEmpty()) {
@@ -599,11 +619,47 @@ final class CSharpModelAssembler {
             if (namespaceCandidate != null) {
                 return namespaceCandidate;
             }
+            // Imports are consulted before any repository-wide guess. They used to come after, and
+            // `resolveNamespace` ended in a guess, so the guess always won: a file declaring
+            // `using ...Modules.Meetings.Application.Contracts;` and extending `CommandBase<Unit>`
+            // bound to Administration's `CommandBase` -- one of five identically named types, chosen
+            // by insertion order. A `using` is evidence; a name match across the repository is not.
             final String usingCandidate = resolveUsing(cleaned, ownerType.imports);
             if (usingCandidate != null) {
                 return usingCandidate;
             }
+            final String soleCandidate = soleTypeNamed(cleaned);
+            if (soleCandidate != null) {
+                return soleCandidate;
+            }
+            // Nothing in scope names this type. Returning the bare token leaves it unresolved, and
+            // striff drops an edge that points outside the codebase -- which is the right outcome.
+            // Silence costs a missing edge; a guess costs a fabricated one, and a fabricated edge
+            // has been shown to the user as the evidence under a "you broke your own documented
+            // rule" verdict.
             return cleaned;
+        }
+
+        /**
+         * The only type carrying this short name, or null when several do or the name belongs to a
+         * framework type a repository class happens to shadow.
+         *
+         * <p>The framework guard is not redundant with {@link #BUILTIN_TYPES}: that map holds the
+         * language keywords (`int`, `string`), not the library generics. `List<OrderItem>` in a
+         * Domain class bound to `Clean.Architecture.Web.Contributors.List` -- a user endpoint class
+         * in another project -- and became the witness of a false layering violation. A repository
+         * type genuinely named `List` still resolves through exact name, nesting, namespace or
+         * import; only the last-resort guess is refused.
+         */
+        private String soleTypeNamed(final String simpleName) {
+            if (FRAMEWORK_TYPE_NAMES.contains(simpleName)) {
+                return null;
+            }
+            final List<String> matches = typesBySimpleName.get(simpleName);
+            if (matches == null || matches.size() != 1) {
+                return null;
+            }
+            return matches.get(0);
         }
 
         private String resolveMember(final String ownerTypeUniqueName, final String memberName) {
@@ -644,15 +700,34 @@ final class CSharpModelAssembler {
             return null;
         }
 
+        // Namespace only. This used to fall back to `simpleLookup`, which returned
+        // `matches.get(0)` -- an arbitrary type sharing the short name, decided by insertion order.
+        // Because this method is tried before imports, that guess pre-empted the `using` that held
+        // the answer. Measured across 28 repositories, 222 of 1,490 decidable C# edges onto an
+        // ambiguous short name were resolved to the wrong type (15%, and 57% on
+        // ardalis/CleanArchitecture, 34% on kgrzybek/modular-monolith-with-ddd -- the repositories
+        // that duplicate a type per module, which is the pattern module-boundary rules exist for).
         private String resolveNamespace(final String simpleName, final String namespaceName) {
             if (namespaceName == null || namespaceName.isEmpty()) {
-                return simpleLookup(simpleName);
+                return null;
             }
             final String candidate = namespaceName + "." + simpleName;
             if (typesByUniqueName.containsKey(candidate)) {
                 return candidate;
             }
-            return simpleLookup(simpleName);
+            // Enclosing namespaces, as C# lookup does: a type in `A.B` is visible from `A.B.C`.
+            String enclosing = namespaceName;
+            while (true) {
+                final int lastDot = enclosing.lastIndexOf('.');
+                if (lastDot < 0) {
+                    return null;
+                }
+                enclosing = enclosing.substring(0, lastDot);
+                final String outer = enclosing + "." + simpleName;
+                if (typesByUniqueName.containsKey(outer)) {
+                    return outer;
+                }
+            }
         }
 
         private String resolveUsing(final String simpleName, final Set<String> imports) {
@@ -674,12 +749,5 @@ final class CSharpModelAssembler {
             return null;
         }
 
-        private String simpleLookup(final String simpleName) {
-            final List<String> matches = typesBySimpleName.get(simpleName);
-            if (matches == null || matches.isEmpty()) {
-                return null;
-            }
-            return matches.get(0);
-        }
     }
 }

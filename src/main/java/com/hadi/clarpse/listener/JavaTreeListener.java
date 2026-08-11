@@ -76,6 +76,9 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     private final TypeSolver typeSolver;
     private final OOPSourceCodeModel srcModel;
     private final Map<String, String> currentImportsMap = new HashMap<>();
+
+    /** Packages brought into scope by an on-demand import (`import a.*;`), searched by name. */
+    private final Set<String> currentWildcardImports = new HashSet<>();
     private final ProjectFile file;
     private Package currentPkg;
     private int currCyclomaticComplexity = 0;
@@ -172,7 +175,17 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         final String fullImportName = ctx.getNameAsString().trim().replaceAll(";", "");
         final String shortImportName = ctx.getName().getId().trim().replaceAll(";", "");
         currentImports.add(fullImportName);
-        currentImportsMap.put(shortImportName, fullImportName);
+        // An on-demand import names a package, not a type, so it cannot go in the short-name map:
+        // JavaParser reports `import a.*;` as name "a", which would record the useless entry
+        // a -> a and leave every type it brings into scope unresolvable. `resolveType` searches
+        // these prefixes instead. Without this, a class implementing an interface reached through
+        // a wildcard import had no edge at all -- reproduced in three files, where `import a.Base;`
+        // yields the edge and `import a.*;` yields nothing.
+        if (ctx.isAsterisk()) {
+            currentWildcardImports.add(fullImportName);
+        } else {
+            currentImportsMap.put(shortImportName, fullImportName);
+        }
         super.visit(ctx, arg);
     }
 
@@ -827,10 +840,44 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             resolvedType = OOPSourceModelConstants.getJavaDefaultClasses().get(type);
         } else if (symbol.isSolved()) {
             resolvedType = symbol.getCorrespondingDeclaration().getQualifiedName();
+        } else {
+            // On-demand imports, tried only after every exact form has failed and accepted only
+            // when the type solver confirms the type exists in that package. A prefix that does not
+            // resolve is skipped rather than assumed, so this recovers real edges without inventing
+            // any -- the same rule the `assumeCurrentPackage` note below is about.
+            for (final String wildcardPackage : currentWildcardImports) {
+                final String candidate = wildcardPackage + "." + type;
+                if (typeSolver.tryToSolveType(candidate).isSolved()) {
+                    resolvedType = candidate;
+                    break;
+                }
+            }
         }
         if (resolvedType.isEmpty()) {
             if (!assumeCurrentPackage) {
                 return null;
+            }
+            // A sibling nested type, named plainly from inside the type that declares it:
+            // `class Field { interface Validator {} static class RangeValidator implements Validator {} }`.
+            // The solver cannot see it under a bare name and the current-package assumption below
+            // turns it into `a.Validator`, which does not exist and is dropped as external -- so the
+            // relation vanished rather than being wrong, which is why it read as a coverage gap.
+            //
+            // Confined to a type position and to candidates that are themselves types. Run over
+            // bare identifiers it matched fields: `return MAX_NOTES;` inside a class found the
+            // field `<Type>.MAX_NOTES` and invented a type reference to it, which is the failure
+            // the hygiene tests exist to prevent.
+            for (int i = componentStack.size() - 1; i >= 0; i--) {
+                final Component enclosing = componentStack.get(i);
+                if (!enclosing.componentType().isBaseComponent()) {
+                    continue;
+                }
+                final String nested = enclosing.uniqueName() + "." + type;
+                final boolean isType = srcModel.getComponent(nested)
+                        .map(found -> found.componentType().isBaseComponent()).orElse(false);
+                if (isType || typeSolver.tryToSolveType(nested).isSolved()) {
+                    return nested;
+                }
             }
             if (currentPkg != null) {
                 resolvedType = currentPkg.path() + "." + type;
