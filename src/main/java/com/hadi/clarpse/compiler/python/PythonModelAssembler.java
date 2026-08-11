@@ -98,9 +98,32 @@ final class PythonModelAssembler {
         }
         if (fileModel.classes != null) {
             for (final PythonClassModel classModel : fileModel.classes) {
-                insertClass(pkg, moduleName, sourcePath, fileModel.packageName, classModel, fileModel.imports, stack, srcModel);
+                insertClass(pkg, moduleName, sourcePath, fileModel.packageName, classModel, stack, srcModel);
             }
         }
+        applyImports(sourcePath, fileModel, srcModel);
+    }
+
+    /**
+     * Attaches the file's imports to the types it declares, and to nothing else.
+     *
+     * <p>Applied after insertion rather than threaded through {@code insertClass}, which already
+     * takes seven parameters — one more trips the parameter-count rule, and bundling arguments to
+     * carry a value two frames down is worse than reading it back off the model. Only type
+     * components carry imports, matching Java: a field reporting its file's import list as its own
+     * is what made {@code imports()} mean a different thing in each language (issue #156).
+     */
+    private static void applyImports(final String sourcePath,
+                                     final PythonFileModel fileModel,
+                                     final OOPSourceCodeModel srcModel) {
+        if (fileModel.imports == null || fileModel.imports.isEmpty()) {
+            return;
+        }
+        final java.util.Set<String> imports = new java.util.LinkedHashSet<>(fileModel.imports);
+        srcModel.components()
+                .filter(component -> component.componentType().isBaseComponent())
+                .filter(component -> sourcePath.equals(component.sourceFile()))
+                .forEach(component -> component.setImports(imports));
     }
 
     private static void insertClass(final Package pkg,
@@ -108,11 +131,9 @@ final class PythonModelAssembler {
                                     final String sourcePath,
                                     final String packageName,
                                     final PythonClassModel classModel,
-                                    final java.util.List<String> fileImports,
                                     final Stack<Component> stack,
                                     final OOPSourceCodeModel srcModel) {
-        final Component classComponent = buildClassComponent(pkg, moduleName, sourcePath, packageName, classModel,
-                fileImports);
+        final Component classComponent = buildClassComponent(pkg, moduleName, sourcePath, packageName, classModel);
         insertComponent(classComponent, stack, srcModel, () -> {
             if (classModel.fields != null) {
                 for (final PythonFieldModel field : classModel.fields) {
@@ -138,7 +159,7 @@ final class PythonModelAssembler {
             }
             if (classModel.classes != null) {
                 for (final PythonClassModel nestedClass : classModel.classes) {
-                    insertClass(pkg, moduleName, sourcePath, packageName, nestedClass, fileImports, stack, srcModel);
+                    insertClass(pkg, moduleName, sourcePath, packageName, nestedClass, stack, srcModel);
                 }
             }
         });
@@ -165,8 +186,7 @@ final class PythonModelAssembler {
                                                  final String moduleName,
                                                  final String sourcePath,
                                                  final String packageName,
-                                                 final PythonClassModel classModel,
-                                                 final java.util.List<String> fileImports) {
+                                                 final PythonClassModel classModel) {
         if (classModel == null || classModel.className == null || classModel.className.isEmpty()) {
             return null;
         }
@@ -177,12 +197,6 @@ final class PythonModelAssembler {
         component.setName(classModel.className);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, classModel.uniqueName));
         component.setSourceFilePath(sourcePath);
-        // Only type components carry the file's imports, matching Java. A field or method reporting
-        // its file's import list as its own is what made `imports()` mean different things per
-        // language -- see issue #156.
-        if (fileImports != null && !fileImports.isEmpty()) {
-            component.setImports(new java.util.HashSet<>(fileImports));
-        }
         applyVisibility(component, classModel.className);
         applyCodeHash(component, classModel.implementationHash, classModel.className);
         if (classModel.comment != null && !classModel.comment.isEmpty()) {
