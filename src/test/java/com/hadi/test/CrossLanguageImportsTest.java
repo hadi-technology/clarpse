@@ -4,8 +4,10 @@ import com.hadi.clarpse.compiler.ClarpseProject;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
+import com.hadi.clarpse.compiler.typescript.NodeRuntime;
 import com.hadi.clarpse.sourcemodel.Component;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.List;
@@ -75,6 +77,10 @@ public class CrossLanguageImportsTest {
 
     @Test
     public void pythonPopulatesImports() throws Exception {
+        // The Python and TypeScript compilers drive a Node daemon. The Docker builder image has no
+        // Node, so an unguarded test here fails the image build rather than the language -- which
+        // is what the existing cross-language tests skip for.
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
         final OOPSourceCodeModel model = model(Lang.PYTHON,
                 new ProjectFile("/src/helper.py", "class Helper:\n    pass\n"),
                 new ProjectFile("/src/svc.py",
@@ -95,6 +101,7 @@ public class CrossLanguageImportsTest {
      */
     @Test
     public void typescriptPopulatesImports() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
         final OOPSourceCodeModel model = model(Lang.TYPESCRIPT,
                 new ProjectFile("/package.json", "{ \"name\": \"t\", \"version\": \"1.0.0\" }"),
                 new ProjectFile("/tsconfig.json",
