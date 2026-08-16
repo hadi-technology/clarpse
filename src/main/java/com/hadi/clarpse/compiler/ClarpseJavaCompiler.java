@@ -1,5 +1,6 @@
 package com.hadi.clarpse.compiler;
 
+import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
 import com.hadi.clarpse.compiler.java.ParseOutcome;
 import com.hadi.clarpse.compiler.java.ParseResults;
 import com.hadi.clarpse.compiler.java.ParseTask;
@@ -129,6 +130,23 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             return new ParseResults(mergedModel, compileFailures);
         } finally {
             CompilerParallelismSupport.shutdownExecutor(executor);
+            // JavaParserFacade keeps a private static Map<TypeSolver, JavaParserFacade> that
+            // get() writes to during symbol resolution and nothing ever prunes. Every entry
+            // strongly retains its solver, which retains that solver's cache of parsed
+            // CompilationUnits, which retains a whole AST -- so without this the process holds
+            // every AST it has ever parsed. The key is the solver instance and we build a fresh
+            // one per thread per compile, so the map can never hit a cache; it only grows,
+            // measured at one entry per parser thread per compile.
+            //
+            // Shutting the executor down is not enough. That ends the threads and releases the
+            // ThreadLocal, but the static map holds the solvers independently of the thread that
+            // made them, which is why this leaked while looking like it was cleaned up.
+            //
+            // Nothing of value is dropped: these solvers belong to the compile that is ending.
+            // The registry is process-wide, so a compile running concurrently in the same JVM
+            // loses its facade's resolution cache here -- get() rebuilds it lazily and the
+            // results are unchanged, so the cost is recomputation, not correctness. See #170.
+            JavaParserFacade.clearInstances();
         }
     }
 }
