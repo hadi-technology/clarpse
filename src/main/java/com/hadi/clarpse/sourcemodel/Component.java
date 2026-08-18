@@ -112,9 +112,9 @@ public final class Component implements Serializable {
      * This component's child component names, in declaration order.
      *
      * <p>An unmodifiable <b>view</b> of the live list rather than a copy of it. It was a copy, and
-     * that copy was being made inside a filter predicate in striff's two-revision merge -- once per
-     * child per component, on a model of twelve thousand components. Every caller in both this
-     * repository and striff only reads: {@code contains}, {@code size}, iteration. A caller that
+     * a consumer comparing two models was making that copy inside a filter predicate -- once per
+     * child per component, on models of twelve thousand components each. Every known caller only
+     * reads: {@code contains}, {@code size}, iteration. A caller that
      * needs a snapshot across a mutation must now take one, and a caller inserting a child while
      * iterating this view will get a {@link java.util.ConcurrentModificationException} where it
      * previously got a silently stale list -- which is the better of the two failures.

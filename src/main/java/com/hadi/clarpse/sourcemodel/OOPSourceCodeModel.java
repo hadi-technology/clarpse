@@ -128,10 +128,11 @@ public class OOPSourceCodeModel implements Serializable {
      *
      * <p>It exists because {@link #getComponent(String)} deep-copies on every read, and the read
      * paths are enormous: relationship extraction resolves every reference in the model through it
-     * and walks a parent chain per member, three times over in a two-revision analysis. Measured on a
-     * pair of 11,750-component models, moving those paths onto this accessor cut one merge from
-     * 619MB of allocation to a fraction of it, and it is allocation churn -- not live size -- that
-     * took a container past a 10Gi limit with a 4g heap and no {@code OutOfMemoryError}.
+     * and walks a parent chain per member, repeatedly, when two models are compared. Measured on a
+     * pair of 11,750-component models, moving those paths onto this accessor cut one comparison from
+     * 619MB of allocation to a fraction of it. It is allocation churn rather than live size that
+     * dominates there, which is why a consumer can exhaust a budget many times its configured heap
+     * without ever seeing an {@code OutOfMemoryError}.
      *
      * @param componentName Unique name of the component.
      * @return The model's own instance of the component, or empty if this model has no such
