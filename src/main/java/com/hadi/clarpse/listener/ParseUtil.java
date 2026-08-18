@@ -113,7 +113,7 @@ public class ParseUtil {
         int childCount = 0;
         int complexityTotal = 0;
         for (String childrenName : component.children()) {
-            Optional<Component> child = srcModel.getComponent(childrenName);
+            Optional<Component> child = srcModel.liveComponent(childrenName);
             if (child.isPresent() && child.get().componentType().isMethodComponent()) {
                 childCount += 1;
                 complexityTotal += child.get().cyclo();
