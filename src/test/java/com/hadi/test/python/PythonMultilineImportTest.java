@@ -25,7 +25,7 @@ public class PythonMultilineImportTest {
     @Test
     public void testMultilineBaseImportResolvesInternal() {
         String className = PythonTestUtil.uniqueName(PACKAGE_PATH, "models", "Example");
-        ComponentReference ref = model.getComponent(className).orElseThrow()
+        ComponentReference ref = model.copyOfComponent(className).orElseThrow()
                 .references(TypeReferences.EXTENSION).get(0);
         String fooName = PythonTestUtil.uniqueName(PACKAGE_PATH, "types", "Foo");
         Assert.assertEquals(fooName, ref.invokedComponent());
@@ -34,7 +34,7 @@ public class PythonMultilineImportTest {
     @Test
     public void testMultilineAliasImportResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName(PACKAGE_PATH, "models", "Example.second");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         String barName = PythonTestUtil.uniqueName(PACKAGE_PATH, "types", "Bar");
         Assert.assertTrue(hasSimpleRef(field, barName));
     }

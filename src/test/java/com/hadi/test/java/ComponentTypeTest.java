@@ -107,7 +107,7 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaClassMethodParamComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
                         + sampleJavaMethodComponentKeyName + "." + sampleJavaMethodParamComponentName);
         Assert.assertEquals(tmp.get().componentType().toString(),
                             sampleJavaMethodParamComponentNameType.toString());
@@ -115,7 +115,7 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaClassMethodParam2ComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
                         + sampleJavaMethodComponentKeyName + "." + sampleJavaMethodParamComponent2Name);
         Assert.assertEquals(tmp.get().componentType().toString(),
                             sampleJavaMethodParamComponent2NameType.toString());
@@ -123,14 +123,14 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaClassConstructorComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "."
                 + sampleJavaClassComponentName + "." + sampleJavaConstructorComponentKeyName);
         Assert.assertTrue(tmp.get().componentType().toString().equals(sampleJavaConstructorComponentType.toString()));
     }
 
     @Test
     public final void testSampleJavaClassMethodComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "."
                 + sampleJavaClassComponentName + "." + sampleJavaMethodComponentKeyName);
         Assert.assertEquals(tmp.get().componentType().toString(),
                             sampleJavaMethodComponentType.toString());
@@ -138,7 +138,7 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaClassFieldComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "."
                 + sampleJavaClassComponentName + "." + sampleJavaClassFieldComponentName);
         Assert.assertEquals(tmp.get().componentType().toString(),
                             sampleJavaClassFieldComponentType.toString());
@@ -146,14 +146,14 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaClassComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName);
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName);
         Assert.assertEquals(tmp.get().componentType().toString(),
                             sampleJavaClassComponentType.toString());
     }
 
     @Test
     public final void testSampleJavaInterfaceMethodParamComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
                         + sampleJavaInterfaceComponentName + "." + sampleJavaInterfaceMethodComponentKeyName + "."
                         + sampleJavaInterfaceMethodParamComponentName);
         Assert.assertEquals(tmp.get().componentType().toString(),
@@ -162,7 +162,7 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaInterfaceMethodComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
                         + sampleJavaInterfaceComponentName + "." + sampleJavaInterfaceMethodComponentKeyName);
         Assert.assertEquals(tmp.get().componentType().toString(),
                             sampleJavaInterfaceMethodComponentType.toString());
@@ -170,7 +170,7 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaInterfaceComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "."
                 + sampleJavaClassComponentName + "." + sampleJavaInterfaceComponentName);
         Assert.assertEquals(tmp.get().componentType().toString(),
                             sampleJavaInterfaceComponentType.toString());
@@ -178,7 +178,7 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaEnumClassComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "."
                 + sampleJavaClassComponentName + "." + sampleJavaEnumComponent);
         Assert.assertEquals(tmp.get().componentType().toString(),
                             sampleJavaEnumComponentType.toString());
@@ -186,7 +186,7 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaEnumClassConstantComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "."
                 + sampleJavaClassComponentName + "." + sampleJavaEnumComponent + "." + sampleJavaEnumClassConstant);
         Assert.assertEquals(tmp.get().componentType().toString(),
                             sampleJavaEnumClassConstantType.toString());
@@ -194,7 +194,7 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaEnumClassMethodComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
                         + sampleJavaEnumComponent + "." + sampleJavaEnumClassConstructorKey);
         Assert.assertEquals(tmp.get().componentType().toString(),
                             sampleJavaEnumClassConstructorType.toString());
@@ -202,7 +202,7 @@ public class ComponentTypeTest {
 
     @Test
     public final void testSampleJavaEnumClassMethodParamComponentType() {
-        final Optional<Component> tmp = generatedSourceModel.getComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
+        final Optional<Component> tmp = generatedSourceModel.copyOfComponent(sampleJavaPackageName + "." + sampleJavaClassComponentName + "."
                         + sampleJavaEnumComponent + "." + sampleJavaEnumClassConstructorKey + "."
                         + sampleJavaEnumMethodParam);
         Assert.assertEquals(tmp.get().componentType().toString(),

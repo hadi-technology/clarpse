@@ -36,48 +36,48 @@ public class CSharpComponentTypeTest {
     @Test
     public void classIsMapped() {
         assertEquals(OOPSourceModelConstants.ComponentType.CLASS,
-                model.getComponent("Demo.User").get().componentType());
+                model.copyOfComponent("Demo.User").get().componentType());
     }
 
     @Test
     public void propertyIsMappedAsField() {
         assertEquals(OOPSourceModelConstants.ComponentType.FIELD,
-                model.getComponent("Demo.User.Name").get().componentType());
+                model.copyOfComponent("Demo.User.Name").get().componentType());
     }
 
     @Test
     public void constructorIsMapped() {
         assertEquals(OOPSourceModelConstants.ComponentType.CONSTRUCTOR,
-                model.getComponent("Demo.User.User(Repo)").get().componentType());
+                model.copyOfComponent("Demo.User.User(Repo)").get().componentType());
     }
 
     @Test
     public void methodIsMapped() {
         assertEquals(OOPSourceModelConstants.ComponentType.METHOD,
-                model.getComponent("Demo.User.Save(string)").get().componentType());
+                model.copyOfComponent("Demo.User.Save(string)").get().componentType());
     }
 
     @Test
     public void delegateIsMappedAsFunction() {
         assertEquals(OOPSourceModelConstants.ComponentType.FUNCTION,
-                model.getComponent("Demo.User.LogHandler").get().componentType());
+                model.copyOfComponent("Demo.User.LogHandler").get().componentType());
     }
 
     @Test
     public void recordIsMappedAsClass() {
         assertEquals(OOPSourceModelConstants.ComponentType.CLASS,
-                model.getComponent("Demo.User.Audit").get().componentType());
+                model.copyOfComponent("Demo.User.Audit").get().componentType());
     }
 
     @Test
     public void interfaceIsMapped() {
         assertEquals(OOPSourceModelConstants.ComponentType.INTERFACE,
-                model.getComponent("Demo.User.IRunner").get().componentType());
+                model.copyOfComponent("Demo.User.IRunner").get().componentType());
     }
 
     @Test
     public void enumIsMapped() {
         assertEquals(OOPSourceModelConstants.ComponentType.ENUM,
-                model.getComponent("Demo.User.Status").get().componentType());
+                model.copyOfComponent("Demo.User.Status").get().componentType());
     }
 }

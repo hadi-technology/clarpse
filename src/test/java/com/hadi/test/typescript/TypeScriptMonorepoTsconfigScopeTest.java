@@ -22,8 +22,8 @@ public class TypeScriptMonorepoTsconfigScopeTest {
         CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
 
         OOPSourceCodeModel model = result.model();
-        assertTrue(model.getComponent(TypeScriptTestUtil.uniqueName("apps/backend/src", "service", "Service")).isPresent());
-        assertTrue(model.getComponent(TypeScriptTestUtil.uniqueName("apps/frontend/src", "app", "App")).isPresent());
+        assertTrue(model.copyOfComponent(TypeScriptTestUtil.uniqueName("apps/backend/src", "service", "Service")).isPresent());
+        assertTrue(model.copyOfComponent(TypeScriptTestUtil.uniqueName("apps/frontend/src", "app", "App")).isPresent());
         assertTrue(result.failures().isEmpty());
     }
 }

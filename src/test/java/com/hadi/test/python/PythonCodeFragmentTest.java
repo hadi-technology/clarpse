@@ -24,21 +24,21 @@ public class PythonCodeFragmentTest {
 
     @Test
     public void fieldCodeFragmentTest() {
-        Component field = model.getComponent(name("Service.owner")).orElseThrow();
+        Component field = model.copyOfComponent(name("Service.owner")).orElseThrow();
         Assert.assertEquals("owner : User", field.codeFragment());
     }
 
     @Test
     public void constructorCodeFragmentTest() {
         String ctorName = name("Service." + PythonTestUtil.signature("__init__", "None", "user: User"));
-        Component ctor = model.getComponent(ctorName).orElseThrow();
+        Component ctor = model.copyOfComponent(ctorName).orElseThrow();
         Assert.assertEquals("__init__(user: User) : None", ctor.codeFragment());
     }
 
     @Test
     public void methodCodeFragmentTest() {
         String methodName = name("Service." + PythonTestUtil.signature("update", "User", "user: User"));
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = model.copyOfComponent(methodName).orElseThrow();
         Assert.assertEquals("update(user: User) : User", method.codeFragment());
     }
 
@@ -46,7 +46,7 @@ public class PythonCodeFragmentTest {
     public void methodParamCodeFragmentTest() {
         String methodSig = PythonTestUtil.signature("update", "User", "user: User");
         String paramName = name("Service." + methodSig + ".user");
-        Component param = model.getComponent(paramName).orElseThrow();
+        Component param = model.copyOfComponent(paramName).orElseThrow();
         Assert.assertEquals("User", param.codeFragment());
     }
 

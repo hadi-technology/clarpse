@@ -50,13 +50,13 @@ public class LiveComponentAccessTest {
     public void getComponentStillHandsBackAnIsolatedCopy() {
         OOPSourceCodeModel model = modelWithOneClass();
 
-        Component first = model.getComponent("app.Widget").orElseThrow();
-        Component second = model.getComponent("app.Widget").orElseThrow();
+        Component first = model.copyOfComponent("app.Widget").orElseThrow();
+        Component second = model.copyOfComponent("app.Widget").orElseThrow();
         assertNotSame("getComponent must not hand out the model's own instance", first, second);
 
         first.insertChildComponent("app.Widget.mutated");
         assertFalse("mutating a copy must not reach the model",
-                model.getComponent("app.Widget").orElseThrow().children()
+                model.copyOfComponent("app.Widget").orElseThrow().children()
                         .contains("app.Widget.mutated"));
     }
 
@@ -64,48 +64,48 @@ public class LiveComponentAccessTest {
     public void liveComponentHandsBackTheModelsOwnInstance() {
         OOPSourceCodeModel model = modelWithOneClass();
 
-        Component first = model.liveComponent("app.Widget").orElseThrow();
-        Component second = model.liveComponent("app.Widget").orElseThrow();
+        Component first = model.component("app.Widget").orElseThrow();
+        Component second = model.component("app.Widget").orElseThrow();
         assertSame("liveComponent must not copy", first, second);
 
         first.insertChildComponent("app.Widget.added");
         assertTrue("mutating a live component must reach the model",
-                model.getComponent("app.Widget").orElseThrow().children()
+                model.copyOfComponent("app.Widget").orElseThrow().children()
                         .contains("app.Widget.added"));
     }
 
     @Test
     public void liveComponentIsEmptyForAnAbsentName() {
-        assertTrue(modelWithOneClass().liveComponent("app.Missing").isEmpty());
-        assertTrue(modelWithOneClass().getComponent("app.Missing").isEmpty());
+        assertTrue(modelWithOneClass().component("app.Missing").isEmpty());
+        assertTrue(modelWithOneClass().copyOfComponent("app.Missing").isEmpty());
     }
 
     @Test
     public void liveParentBaseCmpFindsTheSameComponentAsTheCopyingWalk() {
         OOPSourceCodeModel model = modelWithOneClass();
 
-        Component live = model.liveParentBaseCmp("app.Widget.field");
-        Component copied = model.parentBaseCmp("app.Widget.field");
+        Component live = model.parentBaseComponent("app.Widget.field");
+        Component copied = model.copyOfParentBaseComponent("app.Widget.field");
 
         assertEquals("app.Widget", live.uniqueName());
         assertEquals(copied.uniqueName(), live.uniqueName());
         assertSame("the live walk returns the model's own instance",
-                model.liveComponent("app.Widget").orElseThrow(), live);
+                model.component("app.Widget").orElseThrow(), live);
         assertNotSame("the copying walk still copies",
-                model.liveComponent("app.Widget").orElseThrow(), copied);
+                model.component("app.Widget").orElseThrow(), copied);
     }
 
     @Test
     public void parentBaseCmpStillThrowsForAnUnrootedName() {
         OOPSourceCodeModel model = modelWithOneClass();
-        assertThrows(IllegalArgumentException.class, () -> model.parentBaseCmp("nothing.Here"));
-        assertThrows(IllegalArgumentException.class, () -> model.liveParentBaseCmp("nothing.Here"));
+        assertThrows(IllegalArgumentException.class, () -> model.copyOfParentBaseComponent("nothing.Here"));
+        assertThrows(IllegalArgumentException.class, () -> model.parentBaseComponent("nothing.Here"));
     }
 
     @Test
     public void childrenIsAViewAndRefusesMutationThroughIt() {
         OOPSourceCodeModel model = modelWithOneClass();
-        Component live = model.liveComponent("app.Widget").orElseThrow();
+        Component live = model.component("app.Widget").orElseThrow();
 
         List<String> view = live.children();
         assertThrows(UnsupportedOperationException.class, () -> view.add("app.Widget.sneaked"));
@@ -118,7 +118,7 @@ public class LiveComponentAccessTest {
     @Test
     public void iteratingChildrenWhileInsertingFailsLoudly() {
         OOPSourceCodeModel model = modelWithOneClass();
-        Component live = model.liveComponent("app.Widget").orElseThrow();
+        Component live = model.component("app.Widget").orElseThrow();
 
         assertThrows(ConcurrentModificationException.class, () -> {
             for (String child : live.children()) {
@@ -130,7 +130,7 @@ public class LiveComponentAccessTest {
     @Test
     public void dependencyAndModifierAccessorsAreUnmodifiableViews() {
         OOPSourceCodeModel model = modelWithOneClass();
-        Component live = model.liveComponent("app.Widget").orElseThrow();
+        Component live = model.component("app.Widget").orElseThrow();
 
         assertThrows(UnsupportedOperationException.class, () -> live.imports().add("java.util.List"));
         assertThrows(UnsupportedOperationException.class, () -> live.modifiers().add("public"));

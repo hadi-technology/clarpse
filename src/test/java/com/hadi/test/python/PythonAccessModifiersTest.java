@@ -23,21 +23,21 @@ public class PythonAccessModifiersTest {
 
     @Test
     public void doubleUnderscoreMethodIsPrivate() {
-        Component method = model.getComponent(name("Service."
+        Component method = model.copyOfComponent(name("Service."
                 + PythonTestUtil.signature("__hidden", "str"))).orElseThrow();
         Assert.assertTrue(method.modifiers().contains("private"));
     }
 
     @Test
     public void singleUnderscoreMethodIsProtected() {
-        Component method = model.getComponent(name("Service."
+        Component method = model.copyOfComponent(name("Service."
                 + PythonTestUtil.signature("_helper", "str"))).orElseThrow();
         Assert.assertTrue(method.modifiers().contains("protected"));
     }
 
     @Test
     public void dunderMethodIsNotMarkedPrivate() {
-        Component method = model.getComponent(name("Service."
+        Component method = model.copyOfComponent(name("Service."
                 + PythonTestUtil.signature("__str__", "str"))).orElseThrow();
         Assert.assertFalse(method.modifiers().contains("private"));
         Assert.assertFalse(method.modifiers().contains("protected"));

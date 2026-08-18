@@ -25,7 +25,7 @@ public class PythonReferenceClassificationTest {
     @Test
     public void testClassExtensionReferenceIsInternal() {
         String childName = PythonTestUtil.uniqueName(PACKAGE_PATH, "models", "Child");
-        Component child = model.getComponent(childName).orElseThrow();
+        Component child = model.copyOfComponent(childName).orElseThrow();
         ComponentReference ref = child.references(TypeReferences.EXTENSION).get(0);
         Assert.assertFalse(ref.isExternal());
         Assert.assertTrue(containsInvokedName(child.internalDependencies(),
@@ -35,7 +35,7 @@ public class PythonReferenceClassificationTest {
     @Test
     public void testExternalFieldReferenceIsExternal() {
         String fieldName = PythonTestUtil.uniqueName(PACKAGE_PATH, "models", "Child.id");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         ComponentReference ref = field.references(TypeReferences.SIMPLE).get(0);
         Assert.assertTrue(ref.isExternal());
         Assert.assertTrue(containsInvokedName(field.externalDependencies(), "uuid.UUID"));
@@ -44,7 +44,7 @@ public class PythonReferenceClassificationTest {
     @Test
     public void testInternalFieldReferenceIsInternal() {
         String fieldName = PythonTestUtil.uniqueName(PACKAGE_PATH, "models", "Child.parent");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         ComponentReference ref = field.references(TypeReferences.SIMPLE).get(0);
         Assert.assertFalse(ref.isExternal());
         Assert.assertTrue(containsInvokedName(field.internalDependencies(),
@@ -55,7 +55,7 @@ public class PythonReferenceClassificationTest {
     public void testFunctionReturnReferenceIsInternal() {
         String fnName = PythonTestUtil.uniqueName(PACKAGE_PATH, "models",
                 PythonTestUtil.signature("load", "Base", "value: UUID", "parent: Base"));
-        Component fn = model.getComponent(fnName).orElseThrow();
+        Component fn = model.copyOfComponent(fnName).orElseThrow();
         Assert.assertTrue(containsInvokedName(fn.internalDependencies(),
                 PythonTestUtil.uniqueName(PACKAGE_PATH, "base", "Base")));
     }
@@ -64,7 +64,7 @@ public class PythonReferenceClassificationTest {
     public void testFunctionExternalParamReferenceIsExternal() {
         String fnParamName = PythonTestUtil.uniqueName(PACKAGE_PATH, "models",
                 PythonTestUtil.signature("load", "Base", "value: UUID", "parent: Base") + ".value");
-        Component param = model.getComponent(fnParamName).orElseThrow();
+        Component param = model.copyOfComponent(fnParamName).orElseThrow();
         Assert.assertTrue(containsInvokedName(param.externalDependencies(), "uuid.UUID"));
     }
 
@@ -72,7 +72,7 @@ public class PythonReferenceClassificationTest {
     public void testFunctionInternalParamReferenceIsInternal() {
         String fnParamName = PythonTestUtil.uniqueName(PACKAGE_PATH, "models",
                 PythonTestUtil.signature("load", "Base", "value: UUID", "parent: Base") + ".parent");
-        Component param = model.getComponent(fnParamName).orElseThrow();
+        Component param = model.copyOfComponent(fnParamName).orElseThrow();
         Assert.assertTrue(containsInvokedName(param.internalDependencies(),
                 PythonTestUtil.uniqueName(PACKAGE_PATH, "base", "Base")));
     }

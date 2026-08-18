@@ -30,7 +30,7 @@ public class PythonInitModuleTest {
     @Test
     public void testInitPyClassModuleAttribute() {
         String className = PythonTestUtil.uniqueName("src/pkg", "__init__", "Root");
-        Component component = model.getComponent(className).orElseThrow();
+        Component component = model.copyOfComponent(className).orElseThrow();
         Assert.assertEquals("__init__", component.module());
     }
 
@@ -49,7 +49,7 @@ public class PythonInitModuleTest {
     public void testClassInInitPyIsImportableFromThePackage() {
         String childName = PythonTestUtil.uniqueName("src/pkg", "child", "Child");
         String rootName = PythonTestUtil.uniqueName("src/pkg", "__init__", "Root");
-        Component child = model.getComponent(childName).orElseThrow();
+        Component child = model.copyOfComponent(childName).orElseThrow();
 
         Assert.assertFalse(child.references(TypeReferences.EXTENSION).isEmpty());
         ComponentReference ref = child.references(TypeReferences.EXTENSION).get(0);
@@ -62,7 +62,7 @@ public class PythonInitModuleTest {
     public void testFieldTypeFromInitPyResolvesToTheDeclaringClass() {
         String fieldName = PythonTestUtil.uniqueName("src/pkg", "holder", "Holder.root");
         String rootName = PythonTestUtil.uniqueName("src/pkg", "__init__", "Root");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
 
         Assert.assertTrue(containsInvokedName(field.internalDependencies(), rootName));
     }

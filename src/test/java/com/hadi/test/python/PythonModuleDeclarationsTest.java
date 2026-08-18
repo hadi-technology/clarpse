@@ -27,7 +27,7 @@ public class PythonModuleDeclarationsTest {
     @Test
     public void testTopLevelFunctionEmitted() {
         String fnName = name(PythonTestUtil.signature("build", "LocalFoo", "foo: LocalFoo"));
-        Component fn = model.getComponent(fnName).orElseThrow();
+        Component fn = model.copyOfComponent(fnName).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FUNCTION, fn.componentType());
         Assert.assertEquals(MODULE, fn.module());
     }
@@ -35,7 +35,7 @@ public class PythonModuleDeclarationsTest {
     @Test
     public void testTopLevelFunctionInternalTypeReference() {
         String fnName = name(PythonTestUtil.signature("build", "LocalFoo", "foo: LocalFoo"));
-        Component fn = model.getComponent(fnName).orElseThrow();
+        Component fn = model.copyOfComponent(fnName).orElseThrow();
         String expected = PythonTestUtil.uniqueName(PACKAGE_PATH, "types", "Foo");
         Assert.assertTrue(hasSimpleRef(fn, expected));
     }
@@ -43,7 +43,7 @@ public class PythonModuleDeclarationsTest {
     @Test
     public void testTopLevelModuleFieldEmittedAndResolved() {
         String fieldName = name("DEFAULT_FOO");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.MODULE_FIELD, field.componentType());
         Assert.assertEquals(MODULE, field.module());
         String expected = PythonTestUtil.uniqueName(PACKAGE_PATH, "types", "Foo");
@@ -53,14 +53,14 @@ public class PythonModuleDeclarationsTest {
     @Test
     public void testUnannotatedModuleFieldIsCaptured() {
         String fieldName = name("counter");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.MODULE_FIELD, field.componentType());
     }
 
     @Test
     public void testExternalTypeLabelOnTopLevelFunction() {
         String fnName = name(PythonTestUtil.signature("parse_id", "UUID", "value: UUID"));
-        Component fn = model.getComponent(fnName).orElseThrow();
+        Component fn = model.copyOfComponent(fnName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(fn, "uuid.UUID"));
     }
 

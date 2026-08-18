@@ -18,7 +18,7 @@ public class CSharpTypeImplementationReferenceTest {
                 new ProjectFile("/User.cs", "namespace Demo; public class User : IRunner {}")
         ).model();
 
-        assertTrue(model.getComponent("Demo.User").get()
+        assertTrue(model.copyOfComponent("Demo.User").get()
                 .references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION)
                 .contains(new TypeImplementationReference("Demo.IRunner")));
     }
@@ -31,10 +31,10 @@ public class CSharpTypeImplementationReferenceTest {
                 new ProjectFile("/User.cs", "namespace Demo; public class User : IRunner, IPersisted {}")
         ).model();
 
-        assertTrue(model.getComponent("Demo.User").get()
+        assertTrue(model.copyOfComponent("Demo.User").get()
                 .references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION)
                 .contains(new TypeImplementationReference("Demo.IRunner")));
-        assertTrue(model.getComponent("Demo.User").get()
+        assertTrue(model.copyOfComponent("Demo.User").get()
                 .references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION)
                 .contains(new TypeImplementationReference("Demo.IPersisted")));
     }
@@ -47,7 +47,7 @@ public class CSharpTypeImplementationReferenceTest {
                 new ProjectFile("/User.cs", "namespace Demo; public class User : IRunner, IPersisted {}")
         ).model();
 
-        assertEquals(2, model.getComponent("Demo.User").get()
+        assertEquals(2, model.copyOfComponent("Demo.User").get()
                 .references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION).size());
     }
 
@@ -58,7 +58,7 @@ public class CSharpTypeImplementationReferenceTest {
                 new ProjectFile("/User.cs", "namespace Demo; public class User { public class Admin : IRunner {} }")
         ).model();
 
-        assertTrue(model.getComponent("Demo.User.Admin").get()
+        assertTrue(model.copyOfComponent("Demo.User.Admin").get()
                 .references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION)
                 .contains(new TypeImplementationReference("Demo.IRunner")));
     }

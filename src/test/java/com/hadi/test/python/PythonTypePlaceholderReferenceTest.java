@@ -90,7 +90,7 @@ public class PythonTypePlaceholderReferenceTest {
     }
 
     private static Component component(final String symbolPath) {
-        return model.getComponent(name(symbolPath)).orElseThrow(
+        return model.copyOfComponent(name(symbolPath)).orElseThrow(
                 () -> new AssertionError("no component named " + name(symbolPath)));
     }
 

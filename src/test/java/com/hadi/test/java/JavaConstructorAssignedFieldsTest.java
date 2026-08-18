@@ -26,17 +26,17 @@ public class JavaConstructorAssignedFieldsTest {
     @Test
     public void constructorAssignmentPreservesDeclaredField() {
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FIELD,
-                model.getComponent("Service.owner").orElseThrow().componentType());
+                model.copyOfComponent("Service.owner").orElseThrow().componentType());
     }
 
     @Test
     public void constructorLocalVariableIsNotModeledAsField() {
-        Assert.assertFalse(model.getComponent("Service.temporary").isPresent());
+        Assert.assertFalse(model.copyOfComponent("Service.temporary").isPresent());
     }
 
     @Test
     public void constructorParameterIsStillModeled() {
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT,
-                model.getComponent("Service.Service(User).owner").orElseThrow().componentType());
+                model.copyOfComponent("Service.Service(User).owner").orElseThrow().componentType());
     }
 }

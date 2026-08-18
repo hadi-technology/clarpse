@@ -25,21 +25,21 @@ public class PythonLiteralReturnTypeTest {
     @Test
     public void literalStringReturnTypeIsNormalizedToStr() {
         String methodName = name("LiteralTypes." + PythonTestUtil.signature("text", "str"));
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = model.copyOfComponent(methodName).orElseThrow();
         Assert.assertEquals("text() : str", method.codeFragment());
     }
 
     @Test
     public void literalIntegerReturnTypeIsNormalizedToInt() {
         String methodName = name("LiteralTypes." + PythonTestUtil.signature("count", "int"));
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = model.copyOfComponent(methodName).orElseThrow();
         Assert.assertEquals("count() : int", method.codeFragment());
     }
 
     @Test
     public void literalBooleanReturnTypeIsNormalizedToBool() {
         String methodName = name("LiteralTypes." + PythonTestUtil.signature("flag", "bool"));
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = model.copyOfComponent(methodName).orElseThrow();
         Assert.assertEquals("flag() : bool", method.codeFragment());
     }
 

@@ -23,41 +23,41 @@ public class TypeScriptCycloTest {
     @Test
     public void simpleCycloTest() {
         String ctorName = name("Test." + TypeScriptTestUtil.signature("constructor"));
-        assertEquals(6, model.getComponent(ctorName).orElseThrow().cyclo());
+        assertEquals(6, model.copyOfComponent(ctorName).orElseThrow().cyclo());
     }
 
     @Test
     public void switchStmtCycloTest() {
         String methodName = name("Test." + TypeScriptTestUtil.signature("switcher", "string"));
-        assertEquals(3, model.getComponent(methodName).orElseThrow().cyclo());
+        assertEquals(3, model.copyOfComponent(methodName).orElseThrow().cyclo());
     }
 
     @Test
     public void complexCycloTest() {
         String methodName = name("Test." + TypeScriptTestUtil.signature("complex"));
-        assertEquals(6, model.getComponent(methodName).orElseThrow().cyclo());
+        assertEquals(6, model.copyOfComponent(methodName).orElseThrow().cyclo());
     }
 
     @Test
     public void ignoreOperatorsInComments() {
         String methodName = name("Test." + TypeScriptTestUtil.signature("withComment"));
-        assertEquals(2, model.getComponent(methodName).orElseThrow().cyclo());
+        assertEquals(2, model.copyOfComponent(methodName).orElseThrow().cyclo());
     }
 
     @Test
     public void ignoreInterfaceMethods() {
         String methodName = name("ITest." + TypeScriptTestUtil.signature("aMethod"));
-        assertEquals(0, model.getComponent(methodName).orElseThrow().cyclo());
+        assertEquals(0, model.copyOfComponent(methodName).orElseThrow().cyclo());
     }
 
     @Test
     public void classCycloTest() {
-        assertEquals(5, model.getComponent(name("ClassCyclo")).orElseThrow().cyclo());
+        assertEquals(5, model.copyOfComponent(name("ClassCyclo")).orElseThrow().cyclo());
     }
 
     @Test
     public void emptyClassCycloTest() {
-        assertEquals(0, model.getComponent(name("EmptyClass")).orElseThrow().cyclo());
+        assertEquals(0, model.copyOfComponent(name("EmptyClass")).orElseThrow().cyclo());
     }
 
     private static String name(final String symbolPath) {

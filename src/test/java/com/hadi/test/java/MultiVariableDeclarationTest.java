@@ -24,14 +24,14 @@ public class MultiVariableDeclarationTest {
         final SimpleTypeReference fooRef = new SimpleTypeReference("Foo");
         final SimpleTypeReference barRef = new SimpleTypeReference("Bar");
 
-        assertTrue(generatedSourceModel.getComponent("Test.m().a").get()
+        assertTrue(generatedSourceModel.copyOfComponent("Test.m().a").get()
                 .references(TypeReferences.SIMPLE).contains(fooRef));
-        assertFalse(generatedSourceModel.getComponent("Test.m().a").get()
+        assertFalse(generatedSourceModel.copyOfComponent("Test.m().a").get()
                 .references(TypeReferences.SIMPLE).contains(barRef));
 
-        assertTrue(generatedSourceModel.getComponent("Test.m().b").get()
+        assertTrue(generatedSourceModel.copyOfComponent("Test.m().b").get()
                 .references(TypeReferences.SIMPLE).contains(barRef));
-        assertFalse(generatedSourceModel.getComponent("Test.m().b").get()
+        assertFalse(generatedSourceModel.copyOfComponent("Test.m().b").get()
                 .references(TypeReferences.SIMPLE).contains(fooRef));
     }
 }

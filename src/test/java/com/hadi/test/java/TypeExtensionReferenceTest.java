@@ -24,7 +24,7 @@ public class TypeExtensionReferenceTest {
         rawData.insertFile(new ProjectFile("/com/ClassD.java", codeD));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         generatedSourceModel = parseService.result().model();
-        Assert.assertEquals("com.ClassD", ((ComponentReference) generatedSourceModel.getComponent("com.ClassA").get().references()
+        Assert.assertEquals("com.ClassD", ((ComponentReference) generatedSourceModel.copyOfComponent("com.ClassA").get().references()
                 .toArray()[0]).invokedComponent());
     }
 
@@ -38,7 +38,7 @@ public class TypeExtensionReferenceTest {
         rawData.insertFile(new ProjectFile("/com/ClassD.java", codeD));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         generatedSourceModel = parseService.result().model();
-        Assert.assertEquals(1, generatedSourceModel.getComponent("com.ClassA").get().references().size());
+        Assert.assertEquals(1, generatedSourceModel.copyOfComponent("com.ClassA").get().references().size());
     }
 
     @Test
@@ -51,10 +51,10 @@ public class TypeExtensionReferenceTest {
         rawData.insertFile(new ProjectFile("/com/ClassD.java", codeD));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         generatedSourceModel = parseService.result().model();
-        Assert.assertEquals("com.ClassD", ((ComponentReference) generatedSourceModel.getComponent("com.ClassA.ClassB")
+        Assert.assertEquals("com.ClassD", ((ComponentReference) generatedSourceModel.copyOfComponent("com.ClassA.ClassB")
                 .get().references().toArray()[0]).invokedComponent());
 
-        Assert.assertEquals(1, generatedSourceModel.getComponent("com.ClassA.ClassB").get().references().size());
+        Assert.assertEquals(1, generatedSourceModel.copyOfComponent("com.ClassA.ClassB").get().references().size());
     }
 
     @Test
@@ -67,6 +67,6 @@ public class TypeExtensionReferenceTest {
         rawData.insertFile(new ProjectFile("/com/ClassD.java", codeD));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         generatedSourceModel = parseService.result().model();
-        Assert.assertEquals(1, generatedSourceModel.getComponent("com.ClassA.ClassB").get().references().size());
+        Assert.assertEquals(1, generatedSourceModel.copyOfComponent("com.ClassA.ClassB").get().references().size());
     }
 }

@@ -245,14 +245,14 @@ codeModel.components().forEach(component -> {
 
 Fetch a specific component by unique name:
 ```java
-Component classComponent = codeModel.getComponent("com.foo.SampleClass")
+Component classComponent = codeModel.copyOfComponent("com.foo.SampleClass")
         .orElseThrow();
 System.out.println(classComponent.name());
 System.out.println(classComponent.componentType());
 System.out.println(classComponent.references());
 
 String childUniqueName = classComponent.children().get(0);
-Component methodComponent = codeModel.getComponent(childUniqueName).orElseThrow();
+Component methodComponent = codeModel.copyOfComponent(childUniqueName).orElseThrow();
 System.out.println(methodComponent.name());
 System.out.println(methodComponent.codeFragment());
 ```

@@ -24,7 +24,7 @@ public class PythonPyrightConfigExtraPathsTest {
     @Test
     public void testPyrightConfigExtraPathsResolveInternalType() {
         String fieldName = PythonTestUtil.uniqueName("src", "service", "Service.current");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         String expectedUser = PythonTestUtil.uniqueName("libs/domain", "models", "User");
         Assert.assertTrue(hasSimpleRef(field, expectedUser));
     }

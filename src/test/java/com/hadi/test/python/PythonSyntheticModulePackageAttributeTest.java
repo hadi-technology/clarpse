@@ -24,35 +24,35 @@ public class PythonSyntheticModulePackageAttributeTest {
 
     @Test
     public void testModuleFieldHasCorrectPackagePath() {
-        Component cmp = model.getComponent(name("DEFAULT_FOO")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("DEFAULT_FOO")).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.MODULE_FIELD, cmp.componentType());
         Assert.assertEquals(PACKAGE_PATH, cmp.pkg().path());
     }
 
     @Test
     public void testModuleFieldHasCorrectPackageName() {
-        Component cmp = model.getComponent(name("DEFAULT_FOO")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("DEFAULT_FOO")).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.MODULE_FIELD, cmp.componentType());
         Assert.assertEquals(PACKAGE_PATH, cmp.pkg().name());
     }
 
     @Test
     public void testModuleFieldUnannotatedHasCorrectPackagePath() {
-        Component cmp = model.getComponent(name("counter")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("counter")).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.MODULE_FIELD, cmp.componentType());
         Assert.assertEquals(PACKAGE_PATH, cmp.pkg().path());
     }
 
     @Test
     public void testModuleFieldUnannotatedHasCorrectPackageName() {
-        Component cmp = model.getComponent(name("counter")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("counter")).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.MODULE_FIELD, cmp.componentType());
         Assert.assertEquals(PACKAGE_PATH, cmp.pkg().name());
     }
 
     @Test
     public void testModuleFunctionHasCorrectPackagePath() {
-        Component cmp = model.getComponent(name(PythonTestUtil.signature("build", "LocalFoo", "foo: LocalFoo")))
+        Component cmp = model.copyOfComponent(name(PythonTestUtil.signature("build", "LocalFoo", "foo: LocalFoo")))
                 .orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FUNCTION, cmp.componentType());
         Assert.assertEquals(PACKAGE_PATH, cmp.pkg().path());
@@ -60,7 +60,7 @@ public class PythonSyntheticModulePackageAttributeTest {
 
     @Test
     public void testModuleFunctionHasCorrectPackageName() {
-        Component cmp = model.getComponent(name(PythonTestUtil.signature("build", "LocalFoo", "foo: LocalFoo")))
+        Component cmp = model.copyOfComponent(name(PythonTestUtil.signature("build", "LocalFoo", "foo: LocalFoo")))
                 .orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FUNCTION, cmp.componentType());
         Assert.assertEquals(PACKAGE_PATH, cmp.pkg().name());
@@ -68,7 +68,7 @@ public class PythonSyntheticModulePackageAttributeTest {
 
     @Test
     public void testModuleFunctionExternalTypeHasCorrectPackagePath() {
-        Component cmp = model.getComponent(name(PythonTestUtil.signature("parse_id", "UUID", "value: UUID")))
+        Component cmp = model.copyOfComponent(name(PythonTestUtil.signature("parse_id", "UUID", "value: UUID")))
                 .orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FUNCTION, cmp.componentType());
         Assert.assertEquals(PACKAGE_PATH, cmp.pkg().path());
@@ -76,7 +76,7 @@ public class PythonSyntheticModulePackageAttributeTest {
 
     @Test
     public void testModuleFunctionExternalTypeHasCorrectPackageName() {
-        Component cmp = model.getComponent(name(PythonTestUtil.signature("parse_id", "UUID", "value: UUID")))
+        Component cmp = model.copyOfComponent(name(PythonTestUtil.signature("parse_id", "UUID", "value: UUID")))
                 .orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FUNCTION, cmp.componentType());
         Assert.assertEquals(PACKAGE_PATH, cmp.pkg().name());

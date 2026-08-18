@@ -26,7 +26,7 @@ public class PythonTypeCheckingImportTest {
     @Test
     public void testTypeCheckingFieldResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service.user");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         String userName = PythonTestUtil.uniqueName(PACKAGE_PATH, "types", "User");
         Assert.assertTrue(hasSimpleRef(field, userName));
     }
@@ -35,12 +35,12 @@ public class PythonTypeCheckingImportTest {
     public void testTypeCheckingMethodAndParamResolveInternal() {
         String signature = PythonTestUtil.signature("set_user", "User", "user: User");
         String methodName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service." + signature);
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = model.copyOfComponent(methodName).orElseThrow();
         String userName = PythonTestUtil.uniqueName(PACKAGE_PATH, "types", "User");
         Assert.assertTrue(hasSimpleRef(method, userName));
 
         String paramName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service." + signature + ".user");
-        Component param = model.getComponent(paramName).orElseThrow();
+        Component param = model.copyOfComponent(paramName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(param, userName));
     }
 

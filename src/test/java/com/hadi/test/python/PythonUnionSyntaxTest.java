@@ -24,7 +24,7 @@ public class PythonUnionSyntaxTest {
     @Test
     public void testUnionTypeResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName(PACKAGE_PATH, "union", "Example.value");
-        ComponentReference ref = model.getComponent(fieldName).orElseThrow()
+        ComponentReference ref = model.copyOfComponent(fieldName).orElseThrow()
                 .references(TypeReferences.SIMPLE).get(0);
         String fooName = PythonTestUtil.uniqueName(PACKAGE_PATH, "types", "Foo");
         Assert.assertEquals(fooName, ref.invokedComponent());

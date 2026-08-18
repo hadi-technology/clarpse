@@ -23,7 +23,7 @@ public class PythonExternalTypesTest {
     @Test
     public void testExternalBaseLabel() {
         String userName = PythonTestUtil.uniqueName(PACKAGE_PATH, "models", "User");
-        ComponentReference ref = model.getComponent(userName).orElseThrow()
+        ComponentReference ref = model.copyOfComponent(userName).orElseThrow()
                 .references(TypeReferences.EXTENSION).get(0);
         Assert.assertEquals("pydantic.BaseModel", ref.invokedComponent());
     }
@@ -31,7 +31,7 @@ public class PythonExternalTypesTest {
     @Test
     public void testExternalFieldLabel() {
         String fieldName = PythonTestUtil.uniqueName(PACKAGE_PATH, "models", "User.id");
-        ComponentReference ref = model.getComponent(fieldName).orElseThrow()
+        ComponentReference ref = model.copyOfComponent(fieldName).orElseThrow()
                 .references(TypeReferences.SIMPLE).get(0);
         Assert.assertEquals("uuid.UUID", ref.invokedComponent());
     }

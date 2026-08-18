@@ -21,7 +21,7 @@ public class CommentsParsingTest {
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
         assertEquals("/**\n" +
                 " * A comment\n" +
-                " */\n", generatedSourceModel.getComponent("test.Test").get().comment());
+                " */\n", generatedSourceModel.copyOfComponent("test.Test").get().comment());
     }
 
     @Test
@@ -31,7 +31,7 @@ public class CommentsParsingTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertEquals("", generatedSourceModel.getComponent("test.Test").get().comment());
+        assertEquals("", generatedSourceModel.copyOfComponent("test.Test").get().comment());
     }
 
     @Test
@@ -44,7 +44,7 @@ public class CommentsParsingTest {
         assertEquals("/**\n" +
                 " * A\n" +
                 " *  comment\n" +
-                " */\n", generatedSourceModel.getComponent("test.Test").get().comment());
+                " */\n", generatedSourceModel.copyOfComponent("test.Test").get().comment());
     }
 
     @Test
@@ -57,7 +57,7 @@ public class CommentsParsingTest {
         assertEquals("/**\n" +
                 " * A\n" +
                 " *  comment\n" +
-                " */\n", generatedSourceModel.getComponent("test.Test").get().comment());
+                " */\n", generatedSourceModel.copyOfComponent("test.Test").get().comment());
     }
 
     @Test
@@ -70,7 +70,7 @@ public class CommentsParsingTest {
         assertEquals("/**\n" +
                 " * A\n" +
                 " *  comment\n" +
-                " */\n", generatedSourceModel.getComponent("test.Test.Base").get().comment());
+                " */\n", generatedSourceModel.copyOfComponent("test.Test.Base").get().comment());
     }
 
     @Test
@@ -82,7 +82,7 @@ public class CommentsParsingTest {
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
         assertEquals("/**\n" +
                 " * lolcakes\n" +
-                " */\n", generatedSourceModel.getComponent("Test.test()").get().comment());
+                " */\n", generatedSourceModel.copyOfComponent("Test.test()").get().comment());
     }
 
     @Test
@@ -94,7 +94,7 @@ public class CommentsParsingTest {
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
         assertEquals("/**\n" +
                 " * lol cakes\n" +
-                " */\n", generatedSourceModel.getComponent("Test.test()").get().comment());
+                " */\n", generatedSourceModel.copyOfComponent("Test.test()").get().comment());
     }
 
     @Test
@@ -106,7 +106,7 @@ public class CommentsParsingTest {
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
         assertEquals("/**\n" +
                 " * lolcakes\n" +
-                " */\n", generatedSourceModel.getComponent("Test.fieldVar").get().comment());
+                " */\n", generatedSourceModel.copyOfComponent("Test.fieldVar").get().comment());
     }
 
     @Test
@@ -118,6 +118,6 @@ public class CommentsParsingTest {
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
         assertEquals("/**\n" +
                 " * lolcakes\n" +
-                " */\n", generatedSourceModel.getComponent("Test.aMethod(String).methodParam").get().comment());
+                " */\n", generatedSourceModel.copyOfComponent("Test.aMethod(String).methodParam").get().comment());
     }
 }

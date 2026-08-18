@@ -19,7 +19,7 @@ public class MethodCallReferenceTest {
         final ProjectFiles rawData = new ProjectFiles();
         rawData.insertFile(new ProjectFile("/Test.java", code));
         final OOPSourceCodeModel generatedSourceModel = new ClarpseProject(rawData, Lang.JAVA).result().model();
-        assertTrue(generatedSourceModel.getComponent("Test.m()").get()
+        assertTrue(generatedSourceModel.copyOfComponent("Test.m()").get()
                 .references(TypeReferences.SIMPLE).contains(new SimpleTypeReference("java.util.List")));
     }
 }

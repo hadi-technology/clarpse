@@ -26,28 +26,28 @@ public class TypeScriptTypeImplementationReferenceTest {
 
     @Test
     public void testAccurateImplementedTypes() {
-        ComponentReference ref = (ComponentReference) model.getComponent(name("ClassB")).orElseThrow().references()
+        ComponentReference ref = (ComponentReference) model.copyOfComponent(name("ClassB")).orElseThrow().references()
                 .toArray()[0];
         assertEquals(name("ClassD"), ref.invokedComponent());
-        assertEquals(1, model.getComponent(name("ClassB")).orElseThrow().references().size());
+        assertEquals(1, model.copyOfComponent(name("ClassB")).orElseThrow().references().size());
     }
 
     @Test
     public void testAccurateMultipleImplementedTypes() {
-        assertTrue(model.getComponent(name("ClassA")).orElseThrow().references(TypeReferences.IMPLEMENTATION)
+        assertTrue(model.copyOfComponent(name("ClassA")).orElseThrow().references(TypeReferences.IMPLEMENTATION)
                 .contains(new TypeImplementationReference(name("ClassD"))));
-        assertTrue(model.getComponent(name("ClassA")).orElseThrow().references(TypeReferences.IMPLEMENTATION)
+        assertTrue(model.copyOfComponent(name("ClassA")).orElseThrow().references(TypeReferences.IMPLEMENTATION)
                 .contains(new TypeImplementationReference(name("ClassE"))));
     }
 
     @Test
     public void testAccurateImplementedTypesSize() {
-        assertEquals(1, model.getComponent(name("ClassB")).orElseThrow().references().size());
+        assertEquals(1, model.copyOfComponent(name("ClassB")).orElseThrow().references().size());
     }
 
     @Test
     public void testAccurateMultipleImplementedTypesSize() {
-        assertEquals(2, model.getComponent(name("ClassA")).orElseThrow().references().size());
+        assertEquals(2, model.copyOfComponent(name("ClassA")).orElseThrow().references().size());
     }
 
     private static String name(final String symbolPath) {

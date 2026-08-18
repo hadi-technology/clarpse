@@ -50,74 +50,74 @@ public class CSharpImportExternalAndRecordVariantsTest {
 
     @Test
     public void globalUsingResolvesCrossFileType() {
-        assertEquals("Demo.Shared.SharedThing", model.getComponent("Demo.App.ImportConsumer.Thing").get()
+        assertEquals("Demo.Shared.SharedThing", model.copyOfComponent("Demo.App.ImportConsumer.Thing").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
     @Test
     public void globalAliasUsingResolvesCrossFileType() {
-        assertEquals("Demo.Shared.Repo", model.getComponent("Demo.App.ImportConsumer.Repo").get()
+        assertEquals("Demo.Shared.Repo", model.copyOfComponent("Demo.App.ImportConsumer.Repo").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
     @Test
     public void normalUsingNamespaceImportIsRecorded() {
-        assertTrue(model.getComponent("Demo.App.ImportConsumer").get().imports().contains("System.Collections.Generic"));
+        assertTrue(model.copyOfComponent("Demo.App.ImportConsumer").get().imports().contains("System.Collections.Generic"));
     }
 
     @Test
     public void normalUsingTypeImportIsRecorded() {
-        assertTrue(model.getComponent("Demo.App.ImportConsumer").get().imports().contains("System.Text"));
+        assertTrue(model.copyOfComponent("Demo.App.ImportConsumer").get().imports().contains("System.Text"));
     }
 
     @Test
     public void staticUsingImportIsRecorded() {
-        assertTrue(model.getComponent("Demo.App.ImportConsumer").get().imports().contains("System.String"));
+        assertTrue(model.copyOfComponent("Demo.App.ImportConsumer").get().imports().contains("System.String"));
     }
 
     @Test
     public void globalStaticUsingImportIsRecorded() {
-        assertTrue(model.getComponent("Demo.App.ImportConsumer").get().imports().contains("System.Math"));
+        assertTrue(model.copyOfComponent("Demo.App.ImportConsumer").get().imports().contains("System.Math"));
     }
 
     @Test
     public void importedGenericCollectionTypeIsExternal() {
-        final Component component = model.getComponent("Demo.App.ImportConsumer.Names").get();
+        final Component component = model.copyOfComponent("Demo.App.ImportConsumer.Names").get();
         assertTrue(component.externalDependencies().stream()
                 .anyMatch(ref -> ref.invokedComponent().equals("List")));
     }
 
     @Test
     public void importedFrameworkBuilderTypeIsExternal() {
-        final Component component = model.getComponent("Demo.App.ImportConsumer.Builder").get();
+        final Component component = model.copyOfComponent("Demo.App.ImportConsumer.Builder").get();
         assertTrue(component.externalDependencies().stream()
                 .anyMatch(ref -> ref.invokedComponent().equals("StringBuilder")));
     }
 
     @Test
     public void builtinStringTypeIsExternal() {
-        final Component component = model.getComponent("Demo.App.ImportConsumer.Names").get();
+        final Component component = model.copyOfComponent("Demo.App.ImportConsumer.Names").get();
         assertTrue(component.externalDependencies().stream()
                 .anyMatch(ref -> ref.invokedComponent().equals("System.String")));
     }
 
     @Test
     public void externalStaticMathTypeReferenceIsCaptured() {
-        final Component component = model.getComponent("Demo.App.ImportConsumer.Measure()").get();
+        final Component component = model.copyOfComponent("Demo.App.ImportConsumer.Measure()").get();
         assertTrue(component.externalDependencies().stream()
                 .anyMatch(ref -> ref.invokedComponent().equals("Math")));
     }
 
     @Test
     public void externalDoubleReturnTypeIsCaptured() {
-        final Component component = model.getComponent("Demo.App.ImportConsumer.Measure()").get();
+        final Component component = model.copyOfComponent("Demo.App.ImportConsumer.Measure()").get();
         assertTrue(component.externalDependencies().stream()
                 .anyMatch(ref -> ref.invokedComponent().equals("System.Double")));
     }
 
     @Test
     public void externalReferencesAreNotClassifiedInternal() {
-        final Component component = model.getComponent("Demo.App.ImportConsumer.Builder").get();
+        final Component component = model.copyOfComponent("Demo.App.ImportConsumer.Builder").get();
         assertTrue(component.internalDependencies().stream()
                 .noneMatch(ref -> ref.invokedComponent().equals("StringBuilder")));
     }
@@ -125,13 +125,13 @@ public class CSharpImportExternalAndRecordVariantsTest {
     @Test
     public void recordClassMapsToClass() {
         assertEquals(OOPSourceModelConstants.ComponentType.CLASS,
-                model.getComponent("Demo.App.AuditRecord").get().componentType());
+                model.copyOfComponent("Demo.App.AuditRecord").get().componentType());
     }
 
     @Test
     public void recordStructMapsToStruct() {
         assertEquals(OOPSourceModelConstants.ComponentType.STRUCT,
-                model.getComponent("Demo.App.AuditPoint").get().componentType());
+                model.copyOfComponent("Demo.App.AuditPoint").get().componentType());
     }
 
     @Test
@@ -148,24 +148,24 @@ public class CSharpImportExternalAndRecordVariantsTest {
 
     @Test
     public void recordStructChildrenContainPositionalMembers() {
-        assertTrue(model.getComponent("Demo.App.AuditPoint").get().children().contains("Demo.App.AuditPoint.X"));
-        assertTrue(model.getComponent("Demo.App.AuditPoint").get().children().contains("Demo.App.AuditPoint.Y"));
+        assertTrue(model.copyOfComponent("Demo.App.AuditPoint").get().children().contains("Demo.App.AuditPoint.X"));
+        assertTrue(model.copyOfComponent("Demo.App.AuditPoint").get().children().contains("Demo.App.AuditPoint.Y"));
     }
 
     @Test
     public void delegateLikeChildrenRemainParentedCorrectly() {
-        assertTrue(model.getComponent("Demo.App.ImportConsumer").get().children().contains("Demo.App.ImportConsumer.Measure()"));
+        assertTrue(model.copyOfComponent("Demo.App.ImportConsumer").get().children().contains("Demo.App.ImportConsumer.Measure()"));
     }
 
     @Test
     public void propertyChildrenRemainParentedCorrectly() {
-        assertTrue(model.getComponent("Demo.App.ImportConsumer").get().children().contains("Demo.App.ImportConsumer.Repo"));
-        assertTrue(model.getComponent("Demo.App.ImportConsumer").get().children().contains("Demo.App.ImportConsumer.Thing"));
+        assertTrue(model.copyOfComponent("Demo.App.ImportConsumer").get().children().contains("Demo.App.ImportConsumer.Repo"));
+        assertTrue(model.copyOfComponent("Demo.App.ImportConsumer").get().children().contains("Demo.App.ImportConsumer.Thing"));
     }
 
     @Test
     public void recordClassComponentNamesAreStable() {
-        assertEquals("AuditRecord", model.getComponent("Demo.App.AuditRecord").get().name());
-        assertEquals("AuditPoint", model.getComponent("Demo.App.AuditPoint").get().name());
+        assertEquals("AuditRecord", model.copyOfComponent("Demo.App.AuditRecord").get().name());
+        assertEquals("AuditPoint", model.copyOfComponent("Demo.App.AuditPoint").get().name());
     }
 }

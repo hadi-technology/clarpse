@@ -23,19 +23,19 @@ public class TypeScriptPackageAttributeTest {
 
     @Test
     public void testClassAccuratePackageName() {
-        Component cmp = model.getComponent(name("SampleClass")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("SampleClass")).orElseThrow();
         assertTrue(cmp.pkg().path().equals(PACKAGE_PATH));
     }
 
     @Test
     public void testFieldVarAccuratePackageName() {
-        Component cmp = model.getComponent(name("SampleClass.sampleClassField")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("SampleClass.sampleClassField")).orElseThrow();
         assertTrue(cmp.pkg().path().equals(PACKAGE_PATH));
     }
 
     @Test
     public void testMethodAccuratePackageName() {
-        Component cmp = model.getComponent(name("SampleClass." + TypeScriptTestUtil.signature("method")))
+        Component cmp = model.copyOfComponent(name("SampleClass." + TypeScriptTestUtil.signature("method")))
                 .orElseThrow();
         assertTrue(cmp.pkg().name().equals(PACKAGE_PATH));
     }

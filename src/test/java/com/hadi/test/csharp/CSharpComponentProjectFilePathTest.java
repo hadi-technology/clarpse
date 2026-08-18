@@ -35,31 +35,31 @@ public class CSharpComponentProjectFilePathTest {
 
     @Test
     public void classHasCorrectSourcePath() {
-        final Component component = model.getComponent("Demo.User").get();
+        final Component component = model.copyOfComponent("Demo.User").get();
         assertEquals(FILE_A, component.sourceFile());
     }
 
     @Test
     public void fieldHasCorrectSourcePath() {
-        final Component component = model.getComponent("Demo.User.Name").get();
+        final Component component = model.copyOfComponent("Demo.User.Name").get();
         assertEquals(FILE_A, component.sourceFile());
     }
 
     @Test
     public void methodHasCorrectSourcePath() {
-        final Component component = model.getComponent("Demo.User.Save(string)").get();
+        final Component component = model.copyOfComponent("Demo.User.Save(string)").get();
         assertEquals(FILE_A, component.sourceFile());
     }
 
     @Test
     public void nestedNamespaceClassHasCorrectSourcePath() {
-        final Component component = model.getComponent("Demo.Admin.Admin").get();
+        final Component component = model.copyOfComponent("Demo.Admin.Admin").get();
         assertEquals(FILE_B, component.sourceFile());
     }
 
     @Test
     public void nestedNamespaceMethodHasCorrectSourcePath() {
-        final Component component = model.getComponent("Demo.Admin.Admin.Run()").get();
+        final Component component = model.copyOfComponent("Demo.Admin.Admin.Run()").get();
         assertEquals(FILE_B, component.sourceFile());
     }
 }

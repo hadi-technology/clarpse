@@ -23,45 +23,45 @@ public class TypeScriptCommentsParsingTest {
 
     @Test
     public void testClassLevelComment() {
-        assertTrue(model.getComponent(name("Test")).orElseThrow().comment().contains("Class doc"));
+        assertTrue(model.copyOfComponent(name("Test")).orElseThrow().comment().contains("Class doc"));
     }
 
     @Test
     public void testClassLevelNoComment() {
-        assertEquals("", model.getComponent(name("NoComment")).orElseThrow().comment());
+        assertEquals("", model.copyOfComponent(name("NoComment")).orElseThrow().comment());
     }
 
     @Test
     public void testInterfaceLevelComment() {
-        assertTrue(model.getComponent(name("TestInterface")).orElseThrow().comment().contains("Interface doc"));
+        assertTrue(model.copyOfComponent(name("TestInterface")).orElseThrow().comment().contains("Interface doc"));
     }
 
     @Test
     public void testEnumLevelComment() {
-        assertTrue(model.getComponent(name("TestEnum")).orElseThrow().comment().contains("Enum doc"));
+        assertTrue(model.copyOfComponent(name("TestEnum")).orElseThrow().comment().contains("Enum doc"));
     }
 
     @Test
     public void testMethodLevelComment() {
         String methodName = name("Test." + TypeScriptTestUtil.signature("test", "string"));
-        assertTrue(model.getComponent(methodName).orElseThrow().comment().contains("method doc"));
+        assertTrue(model.copyOfComponent(methodName).orElseThrow().comment().contains("method doc"));
     }
 
     @Test
     public void testInterfaceMethodLevelComment() {
         String methodName = name("TestInterface." + TypeScriptTestUtil.signature("method"));
-        assertTrue(model.getComponent(methodName).orElseThrow().comment().contains("interface method doc"));
+        assertTrue(model.copyOfComponent(methodName).orElseThrow().comment().contains("interface method doc"));
     }
 
     @Test
     public void testFieldVarLevelComment() {
-        assertTrue(model.getComponent(name("Test.fieldVar")).orElseThrow().comment().contains("field doc"));
+        assertTrue(model.copyOfComponent(name("Test.fieldVar")).orElseThrow().comment().contains("field doc"));
     }
 
     @Test
     public void testMethodParamLevelComment() {
         String paramName = name("Test." + TypeScriptTestUtil.signature("test", "string") + ".methodParam");
-        assertTrue(model.getComponent(paramName).orElseThrow().comment().contains("param doc"));
+        assertTrue(model.copyOfComponent(paramName).orElseThrow().comment().contains("param doc"));
     }
 
     private static String name(final String symbolPath) {

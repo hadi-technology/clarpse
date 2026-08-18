@@ -59,8 +59,8 @@ public class StringPoolTest {
         base.insertComponent(freshlyBuilt("Widget", "app"));
         head.insertComponent(freshlyBuilt("Widget", "app"));
 
-        Component fromBase = base.liveComponent("app.Widget").orElseThrow();
-        Component fromHead = head.liveComponent("app.Widget").orElseThrow();
+        Component fromBase = base.component("app.Widget").orElseThrow();
+        Component fromHead = head.component("app.Widget").orElseThrow();
 
         assertSame("componentName", fromBase.componentName(), fromHead.componentName());
         assertSame("name", fromBase.name(), fromHead.name());
@@ -83,8 +83,8 @@ public class StringPoolTest {
         base.insertComponent(freshlyBuilt("Widget", "app"));
         head.insertComponent(freshlyBuilt("Widget", "app"));
 
-        assertEquals(base.liveComponent("app.Widget").orElseThrow().name(),
-                head.liveComponent("app.Widget").orElseThrow().name());
+        assertEquals(base.component("app.Widget").orElseThrow().name(),
+                head.component("app.Widget").orElseThrow().name());
         assertTrue("a model given no pool still shares within itself",
                 base.stringPool().size() > 0);
     }
@@ -98,8 +98,8 @@ public class StringPoolTest {
         pooled.insertComponent(classComponent("Widget", "app"));
         plain.insertComponent(classComponent("Widget", "app"));
 
-        Component a = pooled.liveComponent("app.Widget").orElseThrow();
-        Component b = plain.liveComponent("app.Widget").orElseThrow();
+        Component a = pooled.component("app.Widget").orElseThrow();
+        Component b = plain.component("app.Widget").orElseThrow();
         assertEquals(b.componentName(), a.componentName());
         assertEquals(b.uniqueName(), a.uniqueName());
         assertEquals(b.name(), a.name());
@@ -122,8 +122,8 @@ public class StringPoolTest {
         OOPSourceCodeModel copy = base.copy();
         assertSame("a copy shares its source's pool", pool, copy.stringPool());
         assertSame("so a copied component shares the original's text",
-                base.liveComponent("app.Widget").orElseThrow().name(),
-                copy.liveComponent("app.Widget").orElseThrow().name());
+                base.component("app.Widget").orElseThrow().name(),
+                copy.component("app.Widget").orElseThrow().name());
     }
 
     @Test

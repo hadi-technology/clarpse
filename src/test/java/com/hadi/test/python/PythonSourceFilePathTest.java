@@ -22,7 +22,7 @@ public class PythonSourceFilePathTest {
 
     @Test
     public void testClassSourceFilePath() {
-        Component component = model.getComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "sample", "Service"))
+        Component component = model.copyOfComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "sample", "Service"))
                 .orElseThrow();
         assertEndsWith(component.sourceFile(), "/src/sample.py");
     }
@@ -30,7 +30,7 @@ public class PythonSourceFilePathTest {
     @Test
     public void testMethodSourceFilePath() {
         String signature = PythonTestUtil.signature("update", "User", "user: User");
-        Component component = model.getComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "sample",
+        Component component = model.copyOfComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "sample",
                         "Service." + signature))
                 .orElseThrow();
         assertEndsWith(component.sourceFile(), "/src/sample.py");
@@ -38,21 +38,21 @@ public class PythonSourceFilePathTest {
 
     @Test
     public void testFieldSourceFilePath() {
-        Component component = model.getComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "sample", "Service.owner"))
+        Component component = model.copyOfComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "sample", "Service.owner"))
                 .orElseThrow();
         assertEndsWith(component.sourceFile(), "/src/sample.py");
     }
 
     @Test
     public void testModuleFieldSourceFilePath() {
-        Component component = model.getComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "sample", "DEFAULT_USER"))
+        Component component = model.copyOfComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "sample", "DEFAULT_USER"))
                 .orElseThrow();
         assertEndsWith(component.sourceFile(), "/src/sample.py");
     }
 
     @Test
     public void testImportedClassSourceFilePath() {
-        Component component = model.getComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "types", "User"))
+        Component component = model.copyOfComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "types", "User"))
                 .orElseThrow();
         assertEndsWith(component.sourceFile(), "/src/types.py");
     }

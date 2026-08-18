@@ -103,13 +103,13 @@ public class OOPSourceCodeModel implements Serializable {
      *
      * <p>The copy is deep: the imports, the children and every reference are duplicated. Callers rely
      * on that isolation, so this contract is unchanged -- but on a read-only path it is expensive
-     * enough to dominate an analysis, and {@link #liveComponent(String)} is the accessor to reach for
+     * enough to dominate an analysis, and {@link #component(String)} is the accessor to reach for
      * there.
      *
      * @param componentName Unique name of the component.
      * @return A fresh copy of the component, or empty if this model has no such component.
      */
-    public Optional<Component> getComponent(final String componentName) {
+    public Optional<Component> copyOfComponent(final String componentName) {
         final Component component = this.getComponents().get(componentName);
         if (component == null) {
             return Optional.empty();
@@ -123,10 +123,10 @@ public class OOPSourceCodeModel implements Serializable {
      * <p>For trusted callers that only read, or that intend to modify the model through the component
      * they are handed. Mutating the returned component mutates this model, and iterating one of its
      * collections while inserting into it will throw, so a caller that needs isolation wants
-     * {@link #getComponent(String)} instead. The name says {@code live} at the call site for exactly
+     * {@link #copyOfComponent(String)} instead. The name says {@code live} at the call site for exactly
      * that reason.
      *
-     * <p>It exists because {@link #getComponent(String)} deep-copies on every read, and the read
+     * <p>It exists because {@link #copyOfComponent(String)} deep-copies on every read, and the read
      * paths are enormous: relationship extraction resolves every reference in the model through it
      * and walks a parent chain per member, repeatedly, when two models are compared. Measured on a
      * pair of 11,750-component models, moving those paths onto this accessor cut one comparison from
@@ -138,7 +138,7 @@ public class OOPSourceCodeModel implements Serializable {
      * @return The model's own instance of the component, or empty if this model has no such
      *         component.
      */
-    public Optional<Component> liveComponent(final String componentName) {
+    public Optional<Component> component(final String componentName) {
         return Optional.ofNullable(this.getComponents().get(componentName));
     }
 
@@ -182,32 +182,32 @@ public class OOPSourceCodeModel implements Serializable {
      * Fetches the current component's parent base component if it exists. This may
      * not be the component's direct parent.
      */
-    public Component parentBaseCmp(String cmpUniqueName) throws IllegalArgumentException {
-        return new Component(liveParentBaseCmp(cmpUniqueName));
+    public Component copyOfParentBaseComponent(String cmpUniqueName) throws IllegalArgumentException {
+        return new Component(parentBaseComponent(cmpUniqueName));
     }
 
     /**
-     * The same walk as {@link #parentBaseCmp(String)}, returning this model's own instance rather
+     * The same walk as {@link #copyOfParentBaseComponent(String)}, returning this model's own instance rather
      * than a copy, and copying nothing on the way up.
      *
      * <p>The walk itself was the cost, not just its result: every step called
-     * {@link #getComponent(String)} and so deep-copied a component in order to read one field off it
+     * {@link #copyOfComponent(String)} and so deep-copied a component in order to read one field off it
      * and throw it away. Relationship extraction walks this chain once per member component and once
      * per resolved reference, so on a model of twelve thousand components it was tens of thousands of
      * discarded copies per extraction, three extractions per analysis.
      *
-     * <p>Mutating the result mutates the model. See {@link #liveComponent(String)}.
+     * <p>Mutating the result mutates the model. See {@link #component(String)}.
      *
      * @param cmpUniqueName Unique name of the component to walk up from.
      * @return This model's own instance of the nearest enclosing base component.
      * @throws IllegalArgumentException If no base component encloses the given name.
      */
-    public Component liveParentBaseCmp(final String cmpUniqueName) throws IllegalArgumentException {
+    public Component parentBaseComponent(final String cmpUniqueName) throws IllegalArgumentException {
         String currParentClassName = cmpUniqueName;
         Optional<Component> parent;
-        for (parent = this.liveComponent(currParentClassName); parent.isPresent()
+        for (parent = this.component(currParentClassName); parent.isPresent()
                 && !parent.get().componentType().isBaseComponent();
-             parent = this.liveComponent(currParentClassName)) {
+             parent = this.component(currParentClassName)) {
             currParentClassName = parent.get().parentUniqueName();
         }
         if (parent.isPresent()) {

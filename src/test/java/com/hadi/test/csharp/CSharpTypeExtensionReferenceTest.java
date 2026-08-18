@@ -18,7 +18,7 @@ public class CSharpTypeExtensionReferenceTest {
                 new ProjectFile("/User.cs", "namespace Demo; public class User : BaseUser {}")
         ).model();
 
-        assertTrue(model.getComponent("Demo.User").get()
+        assertTrue(model.copyOfComponent("Demo.User").get()
                 .references(OOPSourceModelConstants.TypeReferences.EXTENSION)
                 .contains(new TypeExtensionReference("Demo.BaseUser")));
     }
@@ -30,7 +30,7 @@ public class CSharpTypeExtensionReferenceTest {
                 new ProjectFile("/User.cs", "namespace Demo; public class User : BaseUser {}")
         ).model();
 
-        assertEquals(1, model.getComponent("Demo.User").get()
+        assertEquals(1, model.copyOfComponent("Demo.User").get()
                 .references(OOPSourceModelConstants.TypeReferences.EXTENSION).size());
     }
 
@@ -41,7 +41,7 @@ public class CSharpTypeExtensionReferenceTest {
                 new ProjectFile("/User.cs", "namespace Demo; public class User { public class Admin : BaseUser {} }")
         ).model();
 
-        assertTrue(model.getComponent("Demo.User.Admin").get()
+        assertTrue(model.copyOfComponent("Demo.User.Admin").get()
                 .references(OOPSourceModelConstants.TypeReferences.EXTENSION)
                 .contains(new TypeExtensionReference("Demo.BaseUser")));
     }

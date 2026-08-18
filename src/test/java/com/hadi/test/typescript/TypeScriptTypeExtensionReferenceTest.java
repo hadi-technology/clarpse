@@ -23,31 +23,31 @@ public class TypeScriptTypeExtensionReferenceTest {
 
     @Test
     public void testAccurateExtendedTypes() {
-        ComponentReference ref = (ComponentReference) model.getComponent(name("ClassA")).orElseThrow().references()
+        ComponentReference ref = (ComponentReference) model.copyOfComponent(name("ClassA")).orElseThrow().references()
                 .toArray()[0];
         Assert.assertEquals(name("ClassD"), ref.invokedComponent());
     }
 
     @Test
     public void testAccurateExtendedTypesSize() {
-        Assert.assertEquals(1, model.getComponent(name("ClassA")).orElseThrow().references().size());
+        Assert.assertEquals(1, model.copyOfComponent(name("ClassA")).orElseThrow().references().size());
     }
 
     @Test
     public void testAccurateExtendedTypesForAnotherClass() {
-        ComponentReference ref = (ComponentReference) model.getComponent(name("ClassE")).orElseThrow().references()
+        ComponentReference ref = (ComponentReference) model.copyOfComponent(name("ClassE")).orElseThrow().references()
                 .toArray()[0];
         Assert.assertEquals(name("ClassD"), ref.invokedComponent());
     }
 
     @Test
     public void testAccurateExtendedTypesSizeForAnotherClass() {
-        Assert.assertEquals(1, model.getComponent(name("ClassE")).orElseThrow().references().size());
+        Assert.assertEquals(1, model.copyOfComponent(name("ClassE")).orElseThrow().references().size());
     }
 
     @Test
     public void testInterfaceExtendsReference() {
-        Assert.assertTrue(model.getComponent(name("InterfaceA")).orElseThrow().references()
+        Assert.assertTrue(model.copyOfComponent(name("InterfaceA")).orElseThrow().references()
                 .contains(new TypeExtensionReference(name("InterfaceD"))));
     }
 

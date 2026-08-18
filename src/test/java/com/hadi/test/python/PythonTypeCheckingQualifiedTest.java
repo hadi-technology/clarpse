@@ -24,7 +24,7 @@ public class PythonTypeCheckingQualifiedTest {
     @Test
     public void testQualifiedTypeCheckingImportResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName("src", "service", "Service.user");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         String expectedUser = PythonTestUtil.uniqueName("src", "types", "User");
         Assert.assertTrue(hasSimpleRef(field, expectedUser));
     }

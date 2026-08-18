@@ -145,7 +145,7 @@ public class JavaRecordTest {
     }
 
     private static Component component(final String uniqueName) {
-        return model.getComponent(uniqueName).orElseThrow(
+        return model.copyOfComponent(uniqueName).orElseThrow(
                 () -> new AssertionError("no component named " + uniqueName));
     }
 

@@ -30,13 +30,13 @@ public class TypeScriptPathsHeavyTest {
         String profileRef = TypeScriptTestUtil.uniqueName("src/domain/user/profile", "Profile", "Profile");
         String idRef = TypeScriptTestUtil.uniqueName("src/shared", "types", "Id");
 
-        assertTrue(model.getComponent(runName).orElseThrow()
+        assertTrue(model.copyOfComponent(runName).orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                 .contains(new SimpleTypeReference(userRef)));
-        assertTrue(model.getComponent(runName).orElseThrow()
+        assertTrue(model.copyOfComponent(runName).orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                 .contains(new SimpleTypeReference(profileRef)));
-        assertTrue(model.getComponent(runName).orElseThrow()
+        assertTrue(model.copyOfComponent(runName).orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                 .contains(new SimpleTypeReference(idRef)));
     }

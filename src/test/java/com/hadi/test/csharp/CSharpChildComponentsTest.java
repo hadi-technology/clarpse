@@ -28,39 +28,39 @@ public class CSharpChildComponentsTest {
 
     @Test
     public void classHasMethodChild() {
-        assertTrue(model.getComponent("Demo.User").get().children().contains("Demo.User.Save(string)"));
+        assertTrue(model.copyOfComponent("Demo.User").get().children().contains("Demo.User.Save(string)"));
     }
 
     @Test
     public void classHasFieldChild() {
-        assertTrue(model.getComponent("Demo.User").get().children().contains("Demo.User.Name"));
+        assertTrue(model.copyOfComponent("Demo.User").get().children().contains("Demo.User.Name"));
     }
 
     @Test
     public void classHasNestedInterfaceChild() {
-        assertTrue(model.getComponent("Demo.User").get().children().contains("Demo.User.IRunner"));
+        assertTrue(model.copyOfComponent("Demo.User").get().children().contains("Demo.User.IRunner"));
     }
 
     @Test
     public void classHasNestedEnumChild() {
-        assertTrue(model.getComponent("Demo.User").get().children().contains("Demo.User.Status"));
+        assertTrue(model.copyOfComponent("Demo.User").get().children().contains("Demo.User.Status"));
     }
 
     @Test
     public void methodHasParameterChild() {
-        assertTrue(model.getComponent("Demo.User.Save(string)").get().children()
+        assertTrue(model.copyOfComponent("Demo.User.Save(string)").get().children()
                 .contains("Demo.User.Save(string).message"));
     }
 
     @Test
     public void methodHasLocalChild() {
-        assertTrue(model.getComponent("Demo.User.Save(string)").get().children()
+        assertTrue(model.copyOfComponent("Demo.User.Save(string)").get().children()
                 .contains("Demo.User.Save(string).local"));
     }
 
     @Test
     public void enumHasConstantChildren() {
-        assertTrue(model.getComponent("Demo.User.Status").get().children().contains("Demo.User.Status.Ready"));
-        assertTrue(model.getComponent("Demo.User.Status").get().children().contains("Demo.User.Status.Done"));
+        assertTrue(model.copyOfComponent("Demo.User.Status").get().children().contains("Demo.User.Status.Ready"));
+        assertTrue(model.copyOfComponent("Demo.User.Status").get().children().contains("Demo.User.Status.Done"));
     }
 }

@@ -25,19 +25,19 @@ public class TypeScriptConstructorAssignedFieldsTest {
     @Test
     public void constructorAssignmentPreservesDeclaredField() {
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FIELD,
-                model.getComponent(name("Service.owner")).orElseThrow().componentType());
+                model.copyOfComponent(name("Service.owner")).orElseThrow().componentType());
     }
 
     @Test
     public void constructorLocalVariableIsNotModeledAsField() {
-        Assert.assertFalse(model.getComponent(name("Service.temporary")).isPresent());
+        Assert.assertFalse(model.copyOfComponent(name("Service.temporary")).isPresent());
     }
 
     @Test
     public void constructorParameterIsStillModeled() {
         String ctor = "Service." + TypeScriptTestUtil.signature("constructor", "User");
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT,
-                model.getComponent(name(ctor + ".owner")).orElseThrow().componentType());
+                model.copyOfComponent(name(ctor + ".owner")).orElseThrow().componentType());
     }
 
     private static String name(final String symbolPath) {

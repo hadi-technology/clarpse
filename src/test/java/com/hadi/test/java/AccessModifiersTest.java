@@ -20,7 +20,7 @@ public class AccessModifiersTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertTrue(((String) generatedSourceModel.getComponent("Test").get().modifiers().toArray()[0])
+        assertTrue(((String) generatedSourceModel.copyOfComponent("Test").get().modifiers().toArray()[0])
                 .equalsIgnoreCase("public"));
     }
 
@@ -32,7 +32,7 @@ public class AccessModifiersTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertTrue(((String) generatedSourceModel.getComponent("Test").get().modifiers().toArray()[0])
+        assertTrue(((String) generatedSourceModel.copyOfComponent("Test").get().modifiers().toArray()[0])
                 .equalsIgnoreCase("public"));
     }
 
@@ -44,7 +44,7 @@ public class AccessModifiersTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertTrue(((String) generatedSourceModel.getComponent("Tester.Test").get().modifiers().toArray()[0])
+        assertTrue(((String) generatedSourceModel.copyOfComponent("Tester.Test").get().modifiers().toArray()[0])
                 .equalsIgnoreCase("private"));
     }
 
@@ -56,7 +56,7 @@ public class AccessModifiersTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertTrue(((String) generatedSourceModel.getComponent("Tester.Test.lolcakes()").get().modifiers().toArray()[0])
+        assertTrue(((String) generatedSourceModel.copyOfComponent("Tester.Test.lolcakes()").get().modifiers().toArray()[0])
                 .equalsIgnoreCase("static"));
     }
 
@@ -68,7 +68,7 @@ public class AccessModifiersTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertTrue(generatedSourceModel.getComponent("Tester.Test.test()").get().modifiers().isEmpty());
+        assertTrue(generatedSourceModel.copyOfComponent("Tester.Test.test()").get().modifiers().isEmpty());
     }
 
     @Test
@@ -79,7 +79,7 @@ public class AccessModifiersTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertTrue(((String) generatedSourceModel.getComponent("Tester.Test.lolcakes()").get().modifiers().toArray()[0])
+        assertTrue(((String) generatedSourceModel.copyOfComponent("Tester.Test.lolcakes()").get().modifiers().toArray()[0])
                 .equalsIgnoreCase("abstract"));
     }
 
@@ -91,9 +91,9 @@ public class AccessModifiersTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertTrue(((String) generatedSourceModel.getComponent("Test.fieldVar").get().modifiers().toArray()[0])
+        assertTrue(((String) generatedSourceModel.copyOfComponent("Test.fieldVar").get().modifiers().toArray()[0])
                 .equalsIgnoreCase("public"));
-        assertTrue(((String) generatedSourceModel.getComponent("Test.fieldVar").get().modifiers().toArray()[1])
+        assertTrue(((String) generatedSourceModel.copyOfComponent("Test.fieldVar").get().modifiers().toArray()[1])
                 .equalsIgnoreCase("static"));
     }
 
@@ -106,7 +106,7 @@ public class AccessModifiersTest {
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
         assertTrue(
-                ((String) generatedSourceModel.getComponent("Test.Test(String).str").get().modifiers().toArray()[0])
+                ((String) generatedSourceModel.copyOfComponent("Test.Test(String).str").get().modifiers().toArray()[0])
                         .equalsIgnoreCase("final"));
     }
 
@@ -118,7 +118,7 @@ public class AccessModifiersTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertEquals(1, generatedSourceModel.getComponent("Test.Test().str").get().modifiers().size());
+        assertEquals(1, generatedSourceModel.copyOfComponent("Test.Test().str").get().modifiers().size());
     }
 
     @Test
@@ -130,6 +130,6 @@ public class AccessModifiersTest {
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
         assertTrue(
-                generatedSourceModel.getComponent("Test.Test().str").get().modifiers().isEmpty());
+                generatedSourceModel.copyOfComponent("Test.Test().str").get().modifiers().isEmpty());
     }
 }

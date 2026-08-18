@@ -55,7 +55,7 @@ public class OOPSourceCodeModelTest {
         codeModel.insertComponent(componentA);
         codeModel.insertComponent(componentB);
 
-        assertEquals(testComponent, codeModel.parentBaseCmp(componentB.uniqueName()));
+        assertEquals(testComponent, codeModel.copyOfParentBaseComponent(componentB.uniqueName()));
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -63,6 +63,6 @@ public class OOPSourceCodeModelTest {
         OOPSourceCodeModel childCmp = new OOPSourceCodeModel();
         Component component = new Component();
         component.setComponentName("Test");
-        childCmp.parentBaseCmp("Test");
+        childCmp.copyOfParentBaseComponent("Test");
     }
 }

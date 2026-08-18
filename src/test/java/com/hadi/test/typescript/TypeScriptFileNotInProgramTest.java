@@ -23,7 +23,7 @@ public class TypeScriptFileNotInProgramTest {
 
         OOPSourceCodeModel model = result.model();
         String includedName = TypeScriptTestUtil.uniqueName("src", "Included", "Included");
-        assertTrue(model.getComponent(includedName).isPresent());
+        assertTrue(model.copyOfComponent(includedName).isPresent());
 
         assertTrue(result.failures().isEmpty());
     }

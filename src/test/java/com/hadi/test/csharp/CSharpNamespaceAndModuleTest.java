@@ -27,14 +27,14 @@ public class CSharpNamespaceAndModuleTest {
 
     @Test
     public void namespaceBecomesPackage() {
-        final Component component = model.getComponent("Demo.Feature.User").get();
+        final Component component = model.copyOfComponent("Demo.Feature.User").get();
         assertEquals("Demo.Feature", component.pkg().name());
         assertEquals("Demo.Feature", component.pkg().path());
     }
 
     @Test
     public void fileNameBecomesModule() {
-        final Component component = model.getComponent("Demo.Feature.User").get();
+        final Component component = model.copyOfComponent("Demo.Feature.User").get();
         assertEquals("User", component.module());
     }
 
@@ -50,6 +50,6 @@ public class CSharpNamespaceAndModuleTest {
                         """)
         ).model();
 
-        assertTrue(nestedNamespaceModel.getComponent("Demo.Feature.NestedUser").isPresent());
+        assertTrue(nestedNamespaceModel.copyOfComponent("Demo.Feature.NestedUser").isPresent());
     }
 }

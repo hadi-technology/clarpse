@@ -61,7 +61,7 @@ public class PythonMethodBodyRefsTest {
     }
 
     private static Component getMethod(String symbolPath) {
-        return model.getComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "service", symbolPath))
+        return model.copyOfComponent(PythonTestUtil.uniqueName(PACKAGE_PATH, "service", symbolPath))
                 .orElseThrow();
     }
 

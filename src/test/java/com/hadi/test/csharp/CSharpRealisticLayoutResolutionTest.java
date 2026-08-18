@@ -57,7 +57,7 @@ public class CSharpRealisticLayoutResolutionTest {
     }
 
     private static boolean componentReferences(final String component, final String target) {
-        return model.getComponent(component).get().references().stream()
+        return model.copyOfComponent(component).get().references().stream()
                 .anyMatch(ref -> ref.invokedComponent().equals(target));
     }
 

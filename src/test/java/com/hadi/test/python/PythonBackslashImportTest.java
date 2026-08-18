@@ -24,14 +24,14 @@ public class PythonBackslashImportTest {
     @Test
     public void testBackslashImportPrimaryNameResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName("src", "service", "Service.main");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(field, PythonTestUtil.uniqueName("src", "types", "User")));
     }
 
     @Test
     public void testBackslashImportAliasNameResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName("src", "service", "Service.alt");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(field, PythonTestUtil.uniqueName("src", "types", "User")));
     }
 

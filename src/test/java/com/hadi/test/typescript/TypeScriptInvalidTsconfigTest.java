@@ -35,7 +35,7 @@ public class TypeScriptInvalidTsconfigTest {
 
         OOPSourceCodeModel model = result.model();
         String goodName = TypeScriptTestUtil.uniqueName("good/src", "Good", "Good");
-        assertTrue(model.getComponent(goodName).isPresent());
+        assertTrue(model.copyOfComponent(goodName).isPresent());
 
         assertEquals(1, result.failures().size());
         CompileFailure failure = result.failures().iterator().next();

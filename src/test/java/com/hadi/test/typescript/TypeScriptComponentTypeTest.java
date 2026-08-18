@@ -26,14 +26,14 @@ public class TypeScriptComponentTypeTest {
 
     @Test
     public void testSampleClassComponentType() {
-        Optional<Component> cmp = model.getComponent(name("SampleClass"));
+        Optional<Component> cmp = model.copyOfComponent(name("SampleClass"));
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.CLASS.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
 
     @Test
     public void testSampleClassFieldComponentType() {
-        Optional<Component> cmp = model.getComponent(name("SampleClass.sampleClassField"));
+        Optional<Component> cmp = model.copyOfComponent(name("SampleClass.sampleClassField"));
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FIELD.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
@@ -41,7 +41,7 @@ public class TypeScriptComponentTypeTest {
     @Test
     public void testSampleClassConstructorComponentType() {
         String ctorName = name("SampleClass." + TypeScriptTestUtil.signature("constructor", "string"));
-        Optional<Component> cmp = model.getComponent(ctorName);
+        Optional<Component> cmp = model.copyOfComponent(ctorName);
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.CONSTRUCTOR.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
@@ -50,7 +50,7 @@ public class TypeScriptComponentTypeTest {
     public void testSampleClassConstructorParamComponentType() {
         String paramName = name("SampleClass." + TypeScriptTestUtil.signature("constructor", "string")
                 + ".sampleConstructorParam");
-        Optional<Component> cmp = model.getComponent(paramName);
+        Optional<Component> cmp = model.copyOfComponent(paramName);
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
@@ -58,7 +58,7 @@ public class TypeScriptComponentTypeTest {
     @Test
     public void testSampleClassMethodComponentType() {
         String methodName = name("SampleClass." + TypeScriptTestUtil.signature("sampleMethod", "string", "object"));
-        Optional<Component> cmp = model.getComponent(methodName);
+        Optional<Component> cmp = model.copyOfComponent(methodName);
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.METHOD.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
@@ -67,7 +67,7 @@ public class TypeScriptComponentTypeTest {
     public void testSampleClassMethodParamComponentType() {
         String paramName = name("SampleClass." + TypeScriptTestUtil.signature("sampleMethod", "string", "object")
                 + ".sampleMethodParam");
-        Optional<Component> cmp = model.getComponent(paramName);
+        Optional<Component> cmp = model.copyOfComponent(paramName);
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.METHOD_PARAMETER_COMPONENT.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
@@ -76,14 +76,14 @@ public class TypeScriptComponentTypeTest {
     public void testSampleClassMethodParam2ComponentType() {
         String paramName = name("SampleClass." + TypeScriptTestUtil.signature("sampleMethod", "string", "object")
                 + ".sampleMethodParam2");
-        Optional<Component> cmp = model.getComponent(paramName);
+        Optional<Component> cmp = model.copyOfComponent(paramName);
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.METHOD_PARAMETER_COMPONENT.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
 
     @Test
     public void testSampleInterfaceComponentType() {
-        Optional<Component> cmp = model.getComponent(name("SampleInterface"));
+        Optional<Component> cmp = model.copyOfComponent(name("SampleInterface"));
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.INTERFACE.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
@@ -91,7 +91,7 @@ public class TypeScriptComponentTypeTest {
     @Test
     public void testSampleInterfaceMethodComponentType() {
         String methodName = name("SampleInterface." + TypeScriptTestUtil.signature("sampleInterfaceMethod", "string"));
-        Optional<Component> cmp = model.getComponent(methodName);
+        Optional<Component> cmp = model.copyOfComponent(methodName);
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.METHOD.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
@@ -100,28 +100,28 @@ public class TypeScriptComponentTypeTest {
     public void testSampleInterfaceMethodParamComponentType() {
         String paramName = name("SampleInterface." + TypeScriptTestUtil.signature("sampleInterfaceMethod", "string")
                 + ".sampleInterfaceMethodParam");
-        Optional<Component> cmp = model.getComponent(paramName);
+        Optional<Component> cmp = model.copyOfComponent(paramName);
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.METHOD_PARAMETER_COMPONENT.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
 
     @Test
     public void testSampleEnumComponentType() {
-        Optional<Component> cmp = model.getComponent(name("SampleEnum"));
+        Optional<Component> cmp = model.copyOfComponent(name("SampleEnum"));
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.ENUM.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
 
     @Test
     public void testSampleEnumConstantComponentType() {
-        Optional<Component> cmp = model.getComponent(name("SampleEnum.SampleEnumConstant"));
+        Optional<Component> cmp = model.copyOfComponent(name("SampleEnum.SampleEnumConstant"));
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.ENUM_CONSTANT.toString(),
                 cmp.orElseThrow().componentType().toString());
     }
 
     @Test
     public void testTopLevelFunctionComponentType() {
-        Optional<Component> cmp = model.getComponent(name("topLevelFunction"));
+        Optional<Component> cmp = model.copyOfComponent(name("topLevelFunction"));
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FUNCTION.toString(),
                 cmp.orElseThrow().componentType().toString());
     }

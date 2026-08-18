@@ -38,9 +38,9 @@ public class CSharpMultiVariableDeclarationTest {
                         """)
         ).model();
 
-        assertEquals("Demo.Repo", model.getComponent("Demo.User.first").get()
+        assertEquals("Demo.Repo", model.copyOfComponent("Demo.User.first").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
-        assertEquals("Demo.Repo", model.getComponent("Demo.User.second").get()
+        assertEquals("Demo.Repo", model.copyOfComponent("Demo.User.second").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 }

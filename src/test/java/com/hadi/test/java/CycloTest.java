@@ -34,7 +34,7 @@ public class CycloTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertEquals(6, generatedSourceModel.getComponent("Test.Test()").get().cyclo());
+        assertEquals(6, generatedSourceModel.copyOfComponent("Test.Test()").get().cyclo());
     }
 
 
@@ -53,7 +53,7 @@ public class CycloTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertEquals(3, generatedSourceModel.getComponent("Test.Test()").get().cyclo());
+        assertEquals(3, generatedSourceModel.copyOfComponent("Test.Test()").get().cyclo());
     }
 
     @Test
@@ -73,7 +73,7 @@ public class CycloTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertEquals(6, generatedSourceModel.getComponent("test.aMethod()").get().cyclo());
+        assertEquals(6, generatedSourceModel.copyOfComponent("test.aMethod()").get().cyclo());
     }
 
     @Test
@@ -90,7 +90,7 @@ public class CycloTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertEquals(2, generatedSourceModel.getComponent("test.aMethod()").get().cyclo());
+        assertEquals(2, generatedSourceModel.copyOfComponent("test.aMethod()").get().cyclo());
     }
 
 
@@ -103,7 +103,7 @@ public class CycloTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertEquals(0, generatedSourceModel.getComponent("test.aMethod()").get().cyclo());
+        assertEquals(0, generatedSourceModel.copyOfComponent("test.aMethod()").get().cyclo());
     }
 
 
@@ -132,7 +132,7 @@ public class CycloTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertEquals(5, generatedSourceModel.getComponent("test").get().cyclo());
+        assertEquals(5, generatedSourceModel.copyOfComponent("test").get().cyclo());
     }
 
     @Test
@@ -144,6 +144,6 @@ public class CycloTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         final OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        assertEquals(0, generatedSourceModel.getComponent("test").get().cyclo());
+        assertEquals(0, generatedSourceModel.copyOfComponent("test").get().cyclo());
     }
 }
