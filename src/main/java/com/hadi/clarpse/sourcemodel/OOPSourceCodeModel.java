@@ -120,11 +120,11 @@ public class OOPSourceCodeModel implements Serializable {
     /**
      * A component of this model <b>as it is held</b>, without copying it.
      *
-     * <p>For trusted callers that only read, or that intend to modify the model through the component
-     * they are handed. Mutating the returned component mutates this model, and iterating one of its
+     * <p>For callers that only read, or that intend to modify the model through the component they
+     * are handed. Mutating the returned component mutates this model, and iterating one of its
      * collections while inserting into it will throw, so a caller that needs isolation wants
-     * {@link #copyOfComponent(String)} instead. The name says {@code live} at the call site for exactly
-     * that reason.
+     * {@link #copyOfComponent(String)} instead -- which is what the {@code copyOf} on that name is
+     * there to tell you at the call site.
      *
      * <p>It exists because {@link #copyOfComponent(String)} deep-copies on every read, and the read
      * paths are enormous: relationship extraction resolves every reference in the model through it

@@ -18,14 +18,14 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * Pins the difference between the copying and the non-copying component accessors, in both
- * directions: that {@code getComponent} still isolates its caller, and that {@code liveComponent}
+ * directions: that {@code copyOfComponent} still isolates its caller, and that {@code component}
  * deliberately does not.
  *
  * <p>The isolation half matters more than the speed half. A caller that mutates what
- * {@code getComponent} hands it must go on being unable to reach the model, or this optimisation
+ * {@code copyOfComponent} hands it must go on being unable to reach the model, or this optimisation
  * becomes a class of mutation bug that no test would catch.
  */
-public class LiveComponentAccessTest {
+public class ComponentAccessorsTest {
 
     private static OOPSourceCodeModel modelWithOneClass() {
         OOPSourceCodeModel model = new OOPSourceCodeModel();
@@ -47,12 +47,12 @@ public class LiveComponentAccessTest {
     }
 
     @Test
-    public void getComponentStillHandsBackAnIsolatedCopy() {
+    public void copyOfComponentStillHandsBackAnIsolatedCopy() {
         OOPSourceCodeModel model = modelWithOneClass();
 
         Component first = model.copyOfComponent("app.Widget").orElseThrow();
         Component second = model.copyOfComponent("app.Widget").orElseThrow();
-        assertNotSame("getComponent must not hand out the model's own instance", first, second);
+        assertNotSame("copyOfComponent must not hand out the model's own instance", first, second);
 
         first.insertChildComponent("app.Widget.mutated");
         assertFalse("mutating a copy must not reach the model",
@@ -61,12 +61,12 @@ public class LiveComponentAccessTest {
     }
 
     @Test
-    public void liveComponentHandsBackTheModelsOwnInstance() {
+    public void componentHandsBackTheModelsOwnInstance() {
         OOPSourceCodeModel model = modelWithOneClass();
 
         Component first = model.component("app.Widget").orElseThrow();
         Component second = model.component("app.Widget").orElseThrow();
-        assertSame("liveComponent must not copy", first, second);
+        assertSame("component() must not copy", first, second);
 
         first.insertChildComponent("app.Widget.added");
         assertTrue("mutating a live component must reach the model",
@@ -75,13 +75,13 @@ public class LiveComponentAccessTest {
     }
 
     @Test
-    public void liveComponentIsEmptyForAnAbsentName() {
+    public void componentIsEmptyForAnAbsentName() {
         assertTrue(modelWithOneClass().component("app.Missing").isEmpty());
         assertTrue(modelWithOneClass().copyOfComponent("app.Missing").isEmpty());
     }
 
     @Test
-    public void liveParentBaseCmpFindsTheSameComponentAsTheCopyingWalk() {
+    public void parentBaseComponentFindsTheSameComponentAsTheCopyingWalk() {
         OOPSourceCodeModel model = modelWithOneClass();
 
         Component live = model.parentBaseComponent("app.Widget.field");
@@ -96,7 +96,7 @@ public class LiveComponentAccessTest {
     }
 
     @Test
-    public void parentBaseCmpStillThrowsForAnUnrootedName() {
+    public void copyOfParentBaseComponentStillThrowsForAnUnrootedName() {
         OOPSourceCodeModel model = modelWithOneClass();
         assertThrows(IllegalArgumentException.class, () -> model.copyOfParentBaseComponent("nothing.Here"));
         assertThrows(IllegalArgumentException.class, () -> model.parentBaseComponent("nothing.Here"));
