@@ -36,7 +36,7 @@ public class TypeScriptRecursiveTypeTest {
 
         assertNotNull(result);
         assertTrue("TreeNode class should be resolved",
-                result.model().getComponent("src.index.TreeNode").isPresent());
+                result.model().copyOfComponent("src.index.TreeNode").isPresent());
     }
 
     @Test
@@ -57,7 +57,7 @@ public class TypeScriptRecursiveTypeTest {
 
         assertNotNull(result);
         assertTrue("Container interface should be resolved",
-                result.model().getComponent("src.index.Container").isPresent());
+                result.model().copyOfComponent("src.index.Container").isPresent());
     }
 
     @Test

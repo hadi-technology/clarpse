@@ -21,8 +21,8 @@ public class ReferenceClassificationTest {
         rawData.insertFile(new ProjectFile("/Test.java", code));
         final OOPSourceCodeModel generatedSourceModel = new ClarpseProject(rawData, Lang.JAVA).result().model();
 
-        final Component ext = generatedSourceModel.getComponent("Test.ext").get();
-        final Component internal = generatedSourceModel.getComponent("Test.internal").get();
+        final Component ext = generatedSourceModel.copyOfComponent("Test.ext").get();
+        final Component internal = generatedSourceModel.copyOfComponent("Test.internal").get();
 
         final SimpleTypeReference listRef = new SimpleTypeReference("java.util.List");
         final SimpleTypeReference classBRef = new SimpleTypeReference("ClassB");

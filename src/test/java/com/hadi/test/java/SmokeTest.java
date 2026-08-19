@@ -30,19 +30,19 @@ public class SmokeTest {
 
     @Test
     public void spotCheckClassExtension() {
-        Assert.assertTrue(junit5Model.getComponent("org.junit.platform.engine.discovery" +
+        Assert.assertTrue(junit5Model.copyOfComponent("org.junit.platform.engine.discovery" +
                                                        ".ExcludeClassNameFilter").get().references(OOPSourceModelConstants.TypeReferences.EXTENSION).contains(new TypeExtensionReference("org.junit.platform.engine.discovery" + ".AbstractClassNameFilter")));
     }
 
     @Test
     public void spotCheckClassDocs() {
-        Assert.assertEquals("/**\n" + " * Register a concrete " + "implementation of this interface " + "with a\n" + " * {@link org.junit.platform" + ".launcher.core" + ".LauncherDiscoveryRequestBuilder} " + "or\n" + " * {@link Launcher} to be notified" + " of events that occur during test " + "discovery.\n" + " *\n" + " * <p>All methods in this " + "interface have empty " + "<em>default</em> implementations" + ".\n" + " * Concrete implementations may " + "therefore override one or more of " + "these methods\n" + " * to be notified of the selected " + "events.\n" + " *\n" + " * <p>JUnit provides default " + "implementations that are created " + "via the factory\n" + " * methods in\n" + " * {@link org.junit.platform" + ".launcher.listeners.discovery" + ".LauncherDiscoveryListeners}.\n" + " *\n" + " * <p>The methods declared in this" + " interface are called by the " + "{@link Launcher}\n" + " * created via the {@link org" + ".junit.platform.launcher.core" + ".LauncherFactory}\n" + " * during test discovery.\n" + " *\n" + " * @see org.junit.platform" + ".launcher.listeners.discovery" + ".LauncherDiscoveryListeners\n" + " * @see LauncherDiscoveryRequest" + "#getDiscoveryListener()\n" + " * @see org.junit.platform" + ".launcher.core.LauncherConfig" + ".Builder" + "#addLauncherDiscoveryListeners\n" + " * @since 1.6\n" + " */\n", junit5Model.getComponent("org.junit.platform.launcher" +
+        Assert.assertEquals("/**\n" + " * Register a concrete " + "implementation of this interface " + "with a\n" + " * {@link org.junit.platform" + ".launcher.core" + ".LauncherDiscoveryRequestBuilder} " + "or\n" + " * {@link Launcher} to be notified" + " of events that occur during test " + "discovery.\n" + " *\n" + " * <p>All methods in this " + "interface have empty " + "<em>default</em> implementations" + ".\n" + " * Concrete implementations may " + "therefore override one or more of " + "these methods\n" + " * to be notified of the selected " + "events.\n" + " *\n" + " * <p>JUnit provides default " + "implementations that are created " + "via the factory\n" + " * methods in\n" + " * {@link org.junit.platform" + ".launcher.listeners.discovery" + ".LauncherDiscoveryListeners}.\n" + " *\n" + " * <p>The methods declared in this" + " interface are called by the " + "{@link Launcher}\n" + " * created via the {@link org" + ".junit.platform.launcher.core" + ".LauncherFactory}\n" + " * during test discovery.\n" + " *\n" + " * @see org.junit.platform" + ".launcher.listeners.discovery" + ".LauncherDiscoveryListeners\n" + " * @see LauncherDiscoveryRequest" + "#getDiscoveryListener()\n" + " * @see org.junit.platform" + ".launcher.core.LauncherConfig" + ".Builder" + "#addLauncherDiscoveryListeners\n" + " * @since 1.6\n" + " */\n", junit5Model.copyOfComponent("org.junit.platform.launcher" +
                 ".LauncherDiscoveryListener").get().comment());
     }
 
     @Test
     public void spotCheckClassImplementation() {
-        Assert.assertTrue(junit5Model.getComponent("org.junit.platform.engine.discovery" +
+        Assert.assertTrue(junit5Model.copyOfComponent("org.junit.platform.engine.discovery" +
                                                        ".ExcludePackageNameFilter").get().references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION).contains(new TypeImplementationReference("org.junit.platform.engine.discovery" + ".PackageNameFilter")));
     }
 
@@ -54,12 +54,12 @@ public class SmokeTest {
 
     @Test
     public void spotCheckSingletonListOriginalClassTypeReference() {
-        Assert.assertTrue(junit5Model.getComponent("example.util.ListWriter").get().references(OOPSourceModelConstants.TypeReferences.SIMPLE).contains(new SimpleTypeReference("java.util.Collections")));
+        Assert.assertTrue(junit5Model.copyOfComponent("example.util.ListWriter").get().references(OOPSourceModelConstants.TypeReferences.SIMPLE).contains(new SimpleTypeReference("java.util.Collections")));
     }
 
     @Test
     public void spotCheckClarpseClassExtension() {
-        Assert.assertEquals("com.hadi.clarpse.reference" + ".ComponentReference", clarpseCodeModel.getComponent("com.hadi.clarpse.reference" +
+        Assert.assertEquals("com.hadi.clarpse.reference" + ".ComponentReference", clarpseCodeModel.copyOfComponent("com.hadi.clarpse.reference" +
                 ".SimpleTypeReference").get().references(OOPSourceModelConstants.TypeReferences.EXTENSION).get(0).invokedComponent());
     }
 
@@ -76,7 +76,7 @@ public class SmokeTest {
                 "java.util.LinkedHashSet",
                 "java.io.Serializable",
                 "java.util.ArrayList"
-        ), clarpseCodeModel.getComponent("com.hadi.clarpse.sourcemodel.Component").get().imports());
+        ), clarpseCodeModel.copyOfComponent("com.hadi.clarpse.sourcemodel.Component").get().imports());
     }
 
 

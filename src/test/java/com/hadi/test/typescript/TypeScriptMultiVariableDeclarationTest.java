@@ -35,11 +35,11 @@ public class TypeScriptMultiVariableDeclarationTest {
         String aName = methodName + ".a";
         String bName = methodName + ".b";
 
-        assertTrue(model.getComponent(aName).orElseThrow().references(TypeReferences.SIMPLE).contains(foo));
-        assertFalse(model.getComponent(aName).orElseThrow().references(TypeReferences.SIMPLE).contains(bar));
+        assertTrue(model.copyOfComponent(aName).orElseThrow().references(TypeReferences.SIMPLE).contains(foo));
+        assertFalse(model.copyOfComponent(aName).orElseThrow().references(TypeReferences.SIMPLE).contains(bar));
 
-        assertTrue(model.getComponent(bName).orElseThrow().references(TypeReferences.SIMPLE).contains(bar));
-        assertFalse(model.getComponent(bName).orElseThrow().references(TypeReferences.SIMPLE).contains(foo));
+        assertTrue(model.copyOfComponent(bName).orElseThrow().references(TypeReferences.SIMPLE).contains(bar));
+        assertFalse(model.copyOfComponent(bName).orElseThrow().references(TypeReferences.SIMPLE).contains(foo));
     }
 
     private static String name(final String symbolPath) {

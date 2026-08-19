@@ -51,92 +51,92 @@ public class CSharpSpotCheckReferencesAndCommentsTest {
 
     @Test
     public void classCommentIsCaptured() {
-        assertTrue(model.getComponent("Demo.App.User").get().comment().contains("Main user aggregate"));
+        assertTrue(model.copyOfComponent("Demo.App.User").get().comment().contains("Main user aggregate"));
     }
 
     @Test
     public void methodCommentIsCaptured() {
-        assertTrue(model.getComponent("Demo.App.User.Repo").get().comment().contains("Persists data"));
+        assertTrue(model.copyOfComponent("Demo.App.User.Repo").get().comment().contains("Persists data"));
     }
 
     @Test
     public void propertyTypeReferenceResolvesThroughAliasUsing() {
-        assertEquals("Demo.Common.Repo", model.getComponent("Demo.App.User.Repo").get()
+        assertEquals("Demo.Common.Repo", model.copyOfComponent("Demo.App.User.Repo").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
     @Test
     public void eventTypeReferenceResolvesToNestedDelegate() {
-        assertEquals("Demo.App.User.SavedHandler", model.getComponent("Demo.App.User.Saved").get()
+        assertEquals("Demo.App.User.SavedHandler", model.copyOfComponent("Demo.App.User.Saved").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
     @Test
     public void constructorParamTypeReferenceResolves() {
-        assertEquals("Demo.Common.Repo", model.getComponent("Demo.App.User.User(Repo).repo").get()
+        assertEquals("Demo.Common.Repo", model.copyOfComponent("Demo.App.User.User(Repo).repo").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
     @Test
     public void methodParamBuiltinTypeReferenceResolves() {
-        assertEquals("System.String", model.getComponent("Demo.App.User.Save(string).message").get()
+        assertEquals("System.String", model.copyOfComponent("Demo.App.User.Save(string).message").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
     @Test
     public void localTypeReferenceResolves() {
-        assertEquals("Demo.Common.Helper", model.getComponent("Demo.App.User.Save(string).helper").get()
+        assertEquals("Demo.Common.Helper", model.copyOfComponent("Demo.App.User.Save(string).helper").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
     @Test
     public void methodCapturesObjectCreationReference() {
-        assertTrue(model.getComponent("Demo.App.User.Save(string)").get()
+        assertTrue(model.copyOfComponent("Demo.App.User.Save(string)").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).stream()
                 .anyMatch(ref -> ref.invokedComponent().equals("Demo.Common.Helper")));
     }
 
     @Test
     public void delegateParamBuiltinTypeResolves() {
-        assertEquals("System.String", model.getComponent("Demo.App.User.SavedHandler.value").get()
+        assertEquals("System.String", model.copyOfComponent("Demo.App.User.SavedHandler.value").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
     @Test
     public void constructorCapturesAssignedPropertyReference() {
-        assertTrue(model.getComponent("Demo.App.User.User(Repo)").get()
+        assertTrue(model.copyOfComponent("Demo.App.User.User(Repo)").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).stream()
                 .anyMatch(ref -> ref.invokedComponent().equals("Demo.App.User.Repo")));
     }
 
     @Test
     public void extensionReferenceResolves() {
-        assertTrue(model.getComponent("Demo.App.User").get()
+        assertTrue(model.copyOfComponent("Demo.App.User").get()
                 .references(OOPSourceModelConstants.TypeReferences.EXTENSION)
                 .contains(new TypeExtensionReference("Demo.App.Entity")));
     }
 
     @Test
     public void implementationReferenceResolves() {
-        assertTrue(model.getComponent("Demo.App.User").get()
+        assertTrue(model.copyOfComponent("Demo.App.User").get()
                 .references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION)
                 .contains(new TypeImplementationReference("Demo.App.IRunner")));
     }
 
     @Test
     public void methodCycloIncludesIfAndLoop() {
-        assertEquals(4, model.getComponent("Demo.App.User.Save(string)").get().cyclo());
+        assertEquals(4, model.copyOfComponent("Demo.App.User.Save(string)").get().cyclo());
     }
 
     @Test
     public void methodCodeFragmentIsCaptured() {
         assertEquals("public Helper Save(string message)",
-                model.getComponent("Demo.App.User.Save(string)").get().codeFragment());
+                model.copyOfComponent("Demo.App.User.Save(string)").get().codeFragment());
     }
 
     @Test
     public void capitalizedPropertyReceiverIsNotTreatedAsTypeReference() {
-        assertTrue(model.getComponent("Demo.App.User.User(Repo)").get()
+        assertTrue(model.copyOfComponent("Demo.App.User.User(Repo)").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).stream()
                 .noneMatch(ref -> ref.invokedComponent().equals("Repo")));
     }

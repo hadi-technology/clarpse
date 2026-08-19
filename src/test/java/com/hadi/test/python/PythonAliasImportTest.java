@@ -24,7 +24,7 @@ public class PythonAliasImportTest {
     @Test
     public void testAliasBaseResolvesInternal() {
         String childName = PythonTestUtil.uniqueName(PACKAGE_PATH, "child", "Child");
-        ComponentReference ref = model.getComponent(childName).orElseThrow()
+        ComponentReference ref = model.copyOfComponent(childName).orElseThrow()
                 .references(TypeReferences.EXTENSION).get(0);
         String baseName = PythonTestUtil.uniqueName(PACKAGE_PATH, "base", "Base");
         Assert.assertEquals(baseName, ref.invokedComponent());
@@ -33,7 +33,7 @@ public class PythonAliasImportTest {
     @Test
     public void testAliasFieldResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName(PACKAGE_PATH, "child", "Child.value");
-        ComponentReference ref = model.getComponent(fieldName).orElseThrow()
+        ComponentReference ref = model.copyOfComponent(fieldName).orElseThrow()
                 .references(TypeReferences.SIMPLE).get(0);
         String baseName = PythonTestUtil.uniqueName(PACKAGE_PATH, "base", "Base");
         Assert.assertEquals(baseName, ref.invokedComponent());

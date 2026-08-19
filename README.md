@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>10.1.2</version>
+  <version>11.0.0</version>
 </dependency>
 ```
 
@@ -245,14 +245,14 @@ codeModel.components().forEach(component -> {
 
 Fetch a specific component by unique name:
 ```java
-Component classComponent = codeModel.getComponent("com.foo.SampleClass")
+Component classComponent = codeModel.copyOfComponent("com.foo.SampleClass")
         .orElseThrow();
 System.out.println(classComponent.name());
 System.out.println(classComponent.componentType());
 System.out.println(classComponent.references());
 
 String childUniqueName = classComponent.children().get(0);
-Component methodComponent = codeModel.getComponent(childUniqueName).orElseThrow();
+Component methodComponent = codeModel.copyOfComponent(childUniqueName).orElseThrow();
 System.out.println(methodComponent.name());
 System.out.println(methodComponent.codeFragment());
 ```

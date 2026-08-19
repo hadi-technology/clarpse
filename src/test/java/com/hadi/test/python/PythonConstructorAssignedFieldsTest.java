@@ -25,14 +25,14 @@ public class PythonConstructorAssignedFieldsTest {
     @Test
     public void constructorAssignmentsAreModeledAsFields() {
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FIELD,
-                model.getComponent(name("Service.owner")).orElseThrow().componentType());
+                model.copyOfComponent(name("Service.owner")).orElseThrow().componentType());
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FIELD,
-                model.getComponent(name("Service.team")).orElseThrow().componentType());
+                model.copyOfComponent(name("Service.team")).orElseThrow().componentType());
     }
 
     @Test
     public void nonSelfLocalVariablesAreNotModeledAsFields() {
-        Assert.assertFalse(model.getComponent(name("Service.temporary")).isPresent());
+        Assert.assertFalse(model.copyOfComponent(name("Service.temporary")).isPresent());
     }
 
     @Test
@@ -46,7 +46,7 @@ public class PythonConstructorAssignedFieldsTest {
     @Test
     public void nestedClassConstructorAssignmentsAreModeledAsFields() {
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FIELD,
-                model.getComponent(name("Outer.Inner.inner_owner")).orElseThrow().componentType());
+                model.copyOfComponent(name("Outer.Inner.inner_owner")).orElseThrow().componentType());
     }
 
     /**
@@ -68,13 +68,13 @@ public class PythonConstructorAssignedFieldsTest {
     @Test
     public void annotatedAssignmentsAreStillModeledAsFields() {
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FIELD,
-                model.getComponent(name("Annotated.owner")).orElseThrow().componentType());
+                model.copyOfComponent(name("Annotated.owner")).orElseThrow().componentType());
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FIELD,
-                model.getComponent(name("Annotated.tag")).orElseThrow().componentType());
+                model.copyOfComponent(name("Annotated.tag")).orElseThrow().componentType());
     }
 
     private static boolean containsInvoked(final String fieldName, final String targetName) {
-        return model.getComponent(fieldName).orElseThrow().internalDependencies().stream()
+        return model.copyOfComponent(fieldName).orElseThrow().internalDependencies().stream()
                 .anyMatch(ref -> targetName.equals(ref.invokedComponent()));
     }
 

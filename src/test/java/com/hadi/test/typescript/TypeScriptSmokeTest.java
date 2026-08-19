@@ -28,7 +28,7 @@ public class TypeScriptSmokeTest {
 
     @Test
     public void spotCheckClassExtension() {
-        Assert.assertTrue(model.getComponent(name("src/core", "Service", "Service"))
+        Assert.assertTrue(model.copyOfComponent(name("src/core", "Service", "Service"))
                 .orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.EXTENSION)
                 .contains(new TypeExtensionReference(name("src/core", "Base", "Base"))));
@@ -36,7 +36,7 @@ public class TypeScriptSmokeTest {
 
     @Test
     public void spotCheckClassDocs() {
-        Assert.assertTrue(model.getComponent(name("src/core", "Service", "Service"))
+        Assert.assertTrue(model.copyOfComponent(name("src/core", "Service", "Service"))
                 .orElseThrow()
                 .comment()
                 .contains("Service doc"));
@@ -44,7 +44,7 @@ public class TypeScriptSmokeTest {
 
     @Test
     public void spotCheckClassImplementation() {
-        Assert.assertTrue(model.getComponent(name("src/core", "Service", "Service"))
+        Assert.assertTrue(model.copyOfComponent(name("src/core", "Service", "Service"))
                 .orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION)
                 .contains(new TypeImplementationReference(name("src/core", "Repo", "Repo"))));
@@ -58,7 +58,7 @@ public class TypeScriptSmokeTest {
 
     @Test
     public void spotCheckListWriterReference() {
-        Assert.assertTrue(model.getComponent(name("src/util", "ListWriter", "ListWriter.items"))
+        Assert.assertTrue(model.copyOfComponent(name("src/util", "ListWriter", "ListWriter.items"))
                 .orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                 .contains(new SimpleTypeReference(name("src/util", "ListWriter", "List"))));

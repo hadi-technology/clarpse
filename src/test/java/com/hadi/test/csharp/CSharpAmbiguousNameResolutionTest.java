@@ -27,7 +27,7 @@ import static org.junit.Assert.assertTrue;
 public class CSharpAmbiguousNameResolutionTest {
 
     private static Set<String> refs(final OOPSourceCodeModel model, final String component) {
-        final Component cmp = model.getComponent(component).orElseThrow(
+        final Component cmp = model.copyOfComponent(component).orElseThrow(
                 () -> new AssertionError("no component " + component + " in "
                         + model.components().map(Component::uniqueName).collect(Collectors.toList())));
         return cmp.references().stream().map(r -> r.invokedComponent()).collect(Collectors.toSet());

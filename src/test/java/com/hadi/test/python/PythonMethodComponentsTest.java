@@ -27,7 +27,7 @@ public class PythonMethodComponentsTest {
     @Test
     public void testFieldComponentTypeAndReference() {
         String fieldName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service.owner");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.FIELD, field.componentType());
         Assert.assertTrue(hasSimpleRef(field, userTypeName()));
     }
@@ -36,11 +36,11 @@ public class PythonMethodComponentsTest {
     public void testConstructorComponentTypeAndParamReference() {
         String ctorSignature = PythonTestUtil.signature("__init__", "None", "user: User");
         String ctorName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service." + ctorSignature);
-        Component ctor = model.getComponent(ctorName).orElseThrow();
+        Component ctor = model.copyOfComponent(ctorName).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.CONSTRUCTOR, ctor.componentType());
 
         String paramName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service." + ctorSignature + ".user");
-        Component param = model.getComponent(paramName).orElseThrow();
+        Component param = model.copyOfComponent(paramName).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT,
                 param.componentType());
         Assert.assertTrue(hasSimpleRef(param, userTypeName()));
@@ -50,12 +50,12 @@ public class PythonMethodComponentsTest {
     public void testMethodComponentTypeAndParamReference() {
         String methodSignature = PythonTestUtil.signature("update", "User", "user: User");
         String methodName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service." + methodSignature);
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = model.copyOfComponent(methodName).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.METHOD, method.componentType());
         Assert.assertTrue(hasSimpleRef(method, userTypeName()));
 
         String paramName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service." + methodSignature + ".user");
-        Component param = model.getComponent(paramName).orElseThrow();
+        Component param = model.copyOfComponent(paramName).orElseThrow();
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.METHOD_PARAMETER_COMPONENT, param.componentType());
         Assert.assertTrue(hasSimpleRef(param, userTypeName()));
     }

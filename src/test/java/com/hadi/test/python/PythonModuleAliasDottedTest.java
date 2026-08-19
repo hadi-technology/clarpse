@@ -26,7 +26,7 @@ public class PythonModuleAliasDottedTest {
     @Test
     public void testModuleAliasDottedFieldResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service.current");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(field, userTypeName()));
     }
 
@@ -34,11 +34,11 @@ public class PythonModuleAliasDottedTest {
     public void testModuleAliasDottedMethodAndParamResolveInternal() {
         String signature = PythonTestUtil.signature("set_current", "model_types.User", "user: model_types.User");
         String methodName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service." + signature);
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = model.copyOfComponent(methodName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(method, userTypeName()));
 
         String paramName = PythonTestUtil.uniqueName(PACKAGE_PATH, MODULE, "Service." + signature + ".user");
-        Component param = model.getComponent(paramName).orElseThrow();
+        Component param = model.copyOfComponent(paramName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(param, userTypeName()));
     }
 

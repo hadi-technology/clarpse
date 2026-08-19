@@ -25,8 +25,8 @@ public class TypeScriptReferenceClassificationTest {
 
     @Test
     public void testInternalAndExternalDependencies() {
-        Component ext = model.getComponent(name("Test.ext")).orElseThrow();
-        Component internal = model.getComponent(name("Test.internal")).orElseThrow();
+        Component ext = model.copyOfComponent(name("Test.ext")).orElseThrow();
+        Component internal = model.copyOfComponent(name("Test.internal")).orElseThrow();
 
         SimpleTypeReference dateRef = new SimpleTypeReference("Date");
         SimpleTypeReference classBRef = new SimpleTypeReference(name("ClassB"));

@@ -24,7 +24,7 @@ public class PythonRelativeImportTest {
     @Test
     public void testParentRelativeImportResolvesClassExtension() {
         String childName = PythonTestUtil.uniqueName("src/pkg/sub", "child", "Child");
-        ComponentReference ref = model.getComponent(childName).orElseThrow()
+        ComponentReference ref = model.copyOfComponent(childName).orElseThrow()
                 .references(TypeReferences.EXTENSION).get(0);
         String baseName = PythonTestUtil.uniqueName("src/pkg", "base", "Base");
         Assert.assertEquals(baseName, ref.invokedComponent());
@@ -33,7 +33,7 @@ public class PythonRelativeImportTest {
     @Test
     public void testParentRelativeImportResolvesFieldType() {
         String fieldName = PythonTestUtil.uniqueName("src/pkg/sub", "child", "Child.value");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         String baseName = PythonTestUtil.uniqueName("src/pkg", "base", "Base");
         Assert.assertTrue(hasSimpleRef(field, baseName));
     }

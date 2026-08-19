@@ -29,24 +29,24 @@ public class CSharpAccessModifiersTest {
 
     @Test
     public void classModifiersAreCaptured() {
-        assertTrue(model.getComponent("Demo.User").get().modifiers().contains("public"));
-        assertTrue(model.getComponent("Demo.User").get().modifiers().contains("partial"));
+        assertTrue(model.copyOfComponent("Demo.User").get().modifiers().contains("public"));
+        assertTrue(model.copyOfComponent("Demo.User").get().modifiers().contains("partial"));
     }
 
     @Test
     public void fieldModifiersAreCaptured() {
-        assertTrue(model.getComponent("Demo.User.repo").get().modifiers().contains("private"));
-        assertTrue(model.getComponent("Demo.User.repo").get().modifiers().contains("readonly"));
+        assertTrue(model.copyOfComponent("Demo.User.repo").get().modifiers().contains("private"));
+        assertTrue(model.copyOfComponent("Demo.User.repo").get().modifiers().contains("readonly"));
     }
 
     @Test
     public void constructorModifiersAreCaptured() {
-        assertTrue(model.getComponent("Demo.User.User(Repo)").get().modifiers().contains("internal"));
+        assertTrue(model.copyOfComponent("Demo.User.User(Repo)").get().modifiers().contains("internal"));
     }
 
     @Test
     public void methodModifiersAreCaptured() {
-        assertTrue(model.getComponent("Demo.User.Save(string)").get().modifiers().contains("protected"));
-        assertTrue(model.getComponent("Demo.User.Save(string)").get().modifiers().contains("static"));
+        assertTrue(model.copyOfComponent("Demo.User.Save(string)").get().modifiers().contains("protected"));
+        assertTrue(model.copyOfComponent("Demo.User.Save(string)").get().modifiers().contains("static"));
     }
 }

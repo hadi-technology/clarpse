@@ -37,7 +37,7 @@ public class CrossLanguageImportsTest {
     }
 
     private static Component component(final OOPSourceCodeModel model, final String name) {
-        return model.getComponent(name).orElseThrow(() -> new AssertionError(
+        return model.copyOfComponent(name).orElseThrow(() -> new AssertionError(
                 "no component " + name + " in "
                         + model.components().map(Component::uniqueName).collect(Collectors.toList())));
     }

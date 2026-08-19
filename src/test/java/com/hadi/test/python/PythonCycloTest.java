@@ -23,19 +23,19 @@ public class PythonCycloTest {
     @Test
     public void constructorCycloIncludesBranchAndBooleanOperator() {
         String ctorName = name("Metrics." + PythonTestUtil.signature("__init__", "None", "value: int"));
-        Assert.assertEquals(3, model.getComponent(ctorName).orElseThrow().cyclo());
+        Assert.assertEquals(3, model.copyOfComponent(ctorName).orElseThrow().cyclo());
     }
 
     @Test
     public void methodCycloIncludesIfAndElif() {
         String methodName = name("Metrics." + PythonTestUtil.signature("evaluate", "int", "limit: int"));
-        Assert.assertEquals(3, model.getComponent(methodName).orElseThrow().cyclo());
+        Assert.assertEquals(3, model.copyOfComponent(methodName).orElseThrow().cyclo());
     }
 
     @Test
     public void functionCycloIncludesLoopAndBooleanOperator() {
         String functionName = name(PythonTestUtil.signature("compute", "int", "total: int"));
-        Assert.assertEquals(3, model.getComponent(functionName).orElseThrow().cyclo());
+        Assert.assertEquals(3, model.copyOfComponent(functionName).orElseThrow().cyclo());
     }
 
     private static String name(final String symbolPath) {

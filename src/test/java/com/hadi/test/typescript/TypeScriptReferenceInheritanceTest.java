@@ -23,49 +23,49 @@ public class TypeScriptReferenceInheritanceTest {
 
     @Test
     public void testClassInheritsFieldReferences() {
-        assertTrue(model.getComponent(name("Test")).orElseThrow().references().contains(new SimpleTypeReference("string")));
+        assertTrue(model.copyOfComponent(name("Test")).orElseThrow().references().contains(new SimpleTypeReference("string")));
     }
 
     @Test
     public void testClassInheritsMethodReferences() {
-        assertTrue(model.getComponent(name("Test")).orElseThrow().references().contains(new SimpleTypeReference("string")));
+        assertTrue(model.copyOfComponent(name("Test")).orElseThrow().references().contains(new SimpleTypeReference("string")));
     }
 
     @Test
     public void testClassInheritsLocalVarsReferences() {
-        assertTrue(model.getComponent(name("Test")).orElseThrow().references().contains(new SimpleTypeReference("string")));
+        assertTrue(model.copyOfComponent(name("Test")).orElseThrow().references().contains(new SimpleTypeReference("string")));
     }
 
     @Test
     public void testClassInheritsMethodParamsReferences() {
-        assertTrue(model.getComponent(name("Test")).orElseThrow().references().contains(new SimpleTypeReference("string")));
+        assertTrue(model.copyOfComponent(name("Test")).orElseThrow().references().contains(new SimpleTypeReference("string")));
     }
 
     @Test
     public void testInterfaceInheritsFieldReferences() {
-        assertTrue(model.getComponent(name("ITest")).orElseThrow().references().contains(new SimpleTypeReference("string")));
+        assertTrue(model.copyOfComponent(name("ITest")).orElseThrow().references().contains(new SimpleTypeReference("string")));
     }
 
     @Test
     public void testInterfaceInheritsMethodReferences() {
-        assertTrue(model.getComponent(name("ITest")).orElseThrow().references().contains(new SimpleTypeReference("string")));
+        assertTrue(model.copyOfComponent(name("ITest")).orElseThrow().references().contains(new SimpleTypeReference("string")));
     }
 
     @Test
     public void testInterfaceInheritsMethodParamsReferences() {
-        assertTrue(model.getComponent(name("ITest")).orElseThrow().references().contains(new SimpleTypeReference("string")));
+        assertTrue(model.copyOfComponent(name("ITest")).orElseThrow().references().contains(new SimpleTypeReference("string")));
     }
 
     @Test
     public void testMethodInheritsLocalVarsReferences() {
         String methodName = name("Test." + TypeScriptTestUtil.signature("methodWithLocal"));
-        assertTrue(model.getComponent(methodName).orElseThrow().references().contains(new SimpleTypeReference("string")));
+        assertTrue(model.copyOfComponent(methodName).orElseThrow().references().contains(new SimpleTypeReference("string")));
     }
 
     @Test
     public void testMethodInheritsMethodParamsReferences() {
         String methodName = name("Test." + TypeScriptTestUtil.signature("methodWithParam", "string"));
-        assertTrue(model.getComponent(methodName).orElseThrow().references().contains(new SimpleTypeReference("string")));
+        assertTrue(model.copyOfComponent(methodName).orElseThrow().references().contains(new SimpleTypeReference("string")));
     }
 
     private static String name(final String symbolPath) {

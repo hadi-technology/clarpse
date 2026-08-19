@@ -28,9 +28,9 @@ public class TypeImplementationReferenceTest {
         rawData.insertFile(new ProjectFile("/com/ClassD.java", codeD));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         generatedSourceModel = parseService.result().model();
-        assertEquals("com.ClassD", ((ComponentReference) generatedSourceModel.getComponent("com.ClassA").get().references()
+        assertEquals("com.ClassD", ((ComponentReference) generatedSourceModel.copyOfComponent("com.ClassA").get().references()
                 .toArray()[0]).invokedComponent());
-        assertEquals(1, generatedSourceModel.getComponent("com.ClassA").get().references().size());
+        assertEquals(1, generatedSourceModel.copyOfComponent("com.ClassA").get().references().size());
     }
 
     @Test
@@ -45,12 +45,12 @@ public class TypeImplementationReferenceTest {
         rawData.insertFile(new ProjectFile("/com/ClassE.java", codeE));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         generatedSourceModel = parseService.result().model();
-        assertTrue(generatedSourceModel.getComponent(
+        assertTrue(generatedSourceModel.copyOfComponent(
             "com.ClassA")
                                        .get().references(
                 TypeReferences.IMPLEMENTATION)
                                        .contains(new TypeImplementationReference("com.ClassD")));
-        assertTrue(generatedSourceModel.getComponent("com.ClassA")
+        assertTrue(generatedSourceModel.copyOfComponent("com.ClassA")
                                        .get().references(
                 TypeReferences.IMPLEMENTATION)
                                        .contains(
@@ -68,7 +68,7 @@ public class TypeImplementationReferenceTest {
         rawData.insertFile(new ProjectFile("/com/ClassD.java", codeD));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         generatedSourceModel = parseService.result().model();
-        assertEquals(1, generatedSourceModel.getComponent("com.ClassA").get().references().size());
+        assertEquals(1, generatedSourceModel.copyOfComponent("com.ClassA").get().references().size());
     }
 
     @Test
@@ -83,7 +83,7 @@ public class TypeImplementationReferenceTest {
         rawData.insertFile(new ProjectFile("/com/ClassE.java", codeE));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         generatedSourceModel = parseService.result().model();
-        assertEquals(2, generatedSourceModel.getComponent("com.ClassA").get().references().size());
+        assertEquals(2, generatedSourceModel.copyOfComponent("com.ClassA").get().references().size());
     }
 
     @Test
@@ -97,10 +97,10 @@ public class TypeImplementationReferenceTest {
         rawData.insertFile(new ProjectFile("/com/ClassD.java", codeD));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         generatedSourceModel = parseService.result().model();
-        assertEquals("com.ClassD", ((ComponentReference) generatedSourceModel.getComponent("com.ClassA.ClassB")
+        assertEquals("com.ClassD", ((ComponentReference) generatedSourceModel.copyOfComponent("com.ClassA.ClassB")
                 .get().references().toArray()[0]).invokedComponent());
 
-        assertEquals(1, generatedSourceModel.getComponent("com.ClassA.ClassB").get().references().size());
+        assertEquals(1, generatedSourceModel.copyOfComponent("com.ClassA.ClassB").get().references().size());
     }
 
     @Test
@@ -114,6 +114,6 @@ public class TypeImplementationReferenceTest {
         rawData.insertFile(new ProjectFile("/com/ClassD.java", codeD));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         generatedSourceModel = parseService.result().model();
-        assertEquals(1, generatedSourceModel.getComponent("com.ClassA.ClassB").get().references().size());
+        assertEquals(1, generatedSourceModel.copyOfComponent("com.ClassA.ClassB").get().references().size());
     }
 }

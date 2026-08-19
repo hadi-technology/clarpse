@@ -27,7 +27,7 @@ public class TypeScriptChildComponentsTest {
     public void testClassHasMethodChild() {
         String className = name("Test");
         String methodName = name("Test." + TypeScriptTestUtil.signature("method", "string"));
-        Component parent = model.getComponent(className).orElseThrow();
+        Component parent = model.copyOfComponent(className).orElseThrow();
         assertTrue(parent.children().contains(methodName));
     }
 
@@ -35,28 +35,28 @@ public class TypeScriptChildComponentsTest {
     public void testClassHasFieldVarChild() {
         String className = name("Test");
         String fieldName = name("Test.fieldVar");
-        Component parent = model.getComponent(className).orElseThrow();
+        Component parent = model.copyOfComponent(className).orElseThrow();
         assertTrue(parent.children().contains(fieldName));
     }
 
     @Test
     public void ignoreClassDeclaredWithinMethods() {
         String nested = name("Test." + TypeScriptTestUtil.signature("methodWithLocal") + ".LocalClass");
-        assertFalse(model.getComponent(nested).isPresent());
+        assertFalse(model.copyOfComponent(nested).isPresent());
     }
 
     @Test
     public void testInterfaceHasMethodChild() {
         String ifaceName = name("TestInterface");
         String methodName = name("TestInterface." + TypeScriptTestUtil.signature("method"));
-        Component parent = model.getComponent(ifaceName).orElseThrow();
+        Component parent = model.copyOfComponent(ifaceName).orElseThrow();
         assertTrue(parent.children().contains(methodName));
     }
 
     @Test
     public void testMethodHasMethodParamChild() {
         String methodName = name("Test." + TypeScriptTestUtil.signature("method", "string"));
-        Component method = model.getComponent(methodName).orElseThrow();
+        Component method = model.copyOfComponent(methodName).orElseThrow();
         assertTrue(method.children().contains(methodName + ".str"));
     }
 
@@ -64,7 +64,7 @@ public class TypeScriptChildComponentsTest {
     public void testInterfaceHasFieldChild() {
         String ifaceName = name("TestInterface");
         String fieldName = name("TestInterface.fieldVar");
-        Component parent = model.getComponent(ifaceName).orElseThrow();
+        Component parent = model.copyOfComponent(ifaceName).orElseThrow();
         assertTrue(parent.children().contains(fieldName));
     }
 
@@ -72,20 +72,20 @@ public class TypeScriptChildComponentsTest {
     public void testClassHasGetterChild() {
         String className = name("Test");
         String getterName = name("Test." + TypeScriptTestUtil.signature("value"));
-        assertTrue(model.getComponent(className).orElseThrow().children().contains(getterName));
+        assertTrue(model.copyOfComponent(className).orElseThrow().children().contains(getterName));
     }
 
     @Test
     public void testClassHasSetterChild() {
         String className = name("Test");
         String setterName = name("Test." + TypeScriptTestUtil.signature("value", "number"));
-        assertTrue(model.getComponent(className).orElseThrow().children().contains(setterName));
+        assertTrue(model.copyOfComponent(className).orElseThrow().children().contains(setterName));
     }
 
     @Test
     public void testEnumHasNestedConstantsChild() {
         String enumName = name("TestEnum");
-        Component parent = model.getComponent(enumName).orElseThrow();
+        Component parent = model.copyOfComponent(enumName).orElseThrow();
         assertTrue(parent.children().contains(name("TestEnum.A")));
         assertTrue(parent.children().contains(name("TestEnum.B")));
         assertTrue(parent.children().contains(name("TestEnum.C")));
@@ -94,12 +94,12 @@ public class TypeScriptChildComponentsTest {
     @Test
     public void testFieldVarParent() {
         String fieldName = name("Test.fieldVar");
-        assertEquals(name("Test"), model.getComponent(fieldName).orElseThrow().parentUniqueName());
+        assertEquals(name("Test"), model.copyOfComponent(fieldName).orElseThrow().parentUniqueName());
     }
 
     @Test
     public void testClassWithMultipleChildren() {
-        Component parent = model.getComponent(name("Test")).orElseThrow();
+        Component parent = model.copyOfComponent(name("Test")).orElseThrow();
         assertTrue(parent.children().contains(name("Test.fieldVar")));
         assertTrue(parent.children().contains(name("Test." + TypeScriptTestUtil.signature("method", "string"))));
         assertTrue(parent.children().contains(name("Test." + TypeScriptTestUtil.signature("value"))));

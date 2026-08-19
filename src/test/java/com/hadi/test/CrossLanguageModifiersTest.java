@@ -115,7 +115,7 @@ public class CrossLanguageModifiersTest {
     }
 
     private static Component component(final OOPSourceCodeModel model, final String uniqueName) {
-        final Component component = model.getComponent(uniqueName).orElse(null);
+        final Component component = model.copyOfComponent(uniqueName).orElse(null);
         assertNotNull("no component named " + uniqueName, component);
         return component;
     }

@@ -24,21 +24,21 @@ public class PythonRelativeImportVariantsTest {
     @Test
     public void testFromDotImportModuleAliasResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName("src/pkg", "service", "Service.current");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(field, PythonTestUtil.uniqueName("src/pkg", "types", "User")));
     }
 
     @Test
     public void testFromParentImportModuleAliasResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName("src/pkg/sub", "handler", "Handler.first");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(field, PythonTestUtil.uniqueName("src/pkg", "types", "User")));
     }
 
     @Test
     public void testFromParentDirectSymbolImportResolvesInternal() {
         String fieldName = PythonTestUtil.uniqueName("src/pkg/sub", "handler", "Handler.second");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(field, PythonTestUtil.uniqueName("src/pkg", "types", "User")));
     }
 

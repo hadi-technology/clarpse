@@ -24,15 +24,15 @@ public class ModuleAttributeTest {
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
 
-        final Component classCmp = generatedSourceModel.getComponent("com.clarity.test.SampleJavaClass").get();
+        final Component classCmp = generatedSourceModel.copyOfComponent("com.clarity.test.SampleJavaClass").get();
         Assert.assertEquals("SampleFile", classCmp.module());
 
         final Component fieldCmp = generatedSourceModel
-                .getComponent("com.clarity.test.SampleJavaClass.sampleClassField").get();
+                .copyOfComponent("com.clarity.test.SampleJavaClass.sampleClassField").get();
         Assert.assertEquals("SampleFile", fieldCmp.module());
 
         final Component methodCmp = generatedSourceModel
-                .getComponent("com.clarity.test.SampleJavaClass.method()").get();
+                .copyOfComponent("com.clarity.test.SampleJavaClass.method()").get();
         Assert.assertEquals("SampleFile", methodCmp.module());
     }
 }

@@ -109,16 +109,16 @@ public class TypeScriptClaudeMemSpotCheckTest {
         String hybrid = name("src/services/worker/search/strategies", "HybridSearchStrategy", "HybridSearchStrategy");
         String baseStrategy = name("src/services/worker/search/strategies", "SearchStrategy", "BaseSearchStrategy");
         String strategy = name("src/services/worker/search/strategies", "SearchStrategy", "SearchStrategy");
-        assertTrue(model.getComponent(hybrid).orElseThrow()
+        assertTrue(model.copyOfComponent(hybrid).orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.EXTENSION)
                 .contains(new TypeExtensionReference(baseStrategy)));
-        assertTrue(model.getComponent(hybrid).orElseThrow()
+        assertTrue(model.copyOfComponent(hybrid).orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION)
                 .contains(new TypeImplementationReference(strategy)));
 
         String searchRoutes = name("src/services/worker/http/routes", "SearchRoutes", "SearchRoutes");
         String baseRouteHandler = name("src/services/worker/http", "BaseRouteHandler", "BaseRouteHandler");
-        assertTrue(model.getComponent(searchRoutes).orElseThrow()
+        assertTrue(model.copyOfComponent(searchRoutes).orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.EXTENSION)
                 .contains(new TypeExtensionReference(baseRouteHandler)));
 
@@ -130,11 +130,11 @@ public class TypeScriptClaudeMemSpotCheckTest {
     }
 
     private static void assertPresent(final String uniqueName) {
-        assertTrue("Missing component: " + uniqueName, model.getComponent(uniqueName).isPresent());
+        assertTrue("Missing component: " + uniqueName, model.copyOfComponent(uniqueName).isPresent());
     }
 
     private static void assertSimpleReference(final String owner, final String target) {
-        assertTrue(model.getComponent(owner).orElseThrow()
+        assertTrue(model.copyOfComponent(owner).orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                 .contains(new SimpleTypeReference(target)));
         assertTrue("Missing referenced component: " + target, model.containsComponent(target));

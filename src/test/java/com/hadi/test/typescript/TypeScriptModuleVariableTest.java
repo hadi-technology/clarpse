@@ -26,7 +26,7 @@ public class TypeScriptModuleVariableTest {
 
     @Test
     public void testTopLevelConstUniqueNameAndType() {
-        Component cmp = model.getComponent(name("API_URL")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("API_URL")).orElseThrow();
         Assert.assertEquals(name("API_URL"), cmp.uniqueName());
         Assert.assertEquals(MODULE, cmp.module());
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.MODULE_FIELD.toString(),
@@ -37,7 +37,7 @@ public class TypeScriptModuleVariableTest {
 
     @Test
     public void testTopLevelLetUniqueNameAndType() {
-        Component cmp = model.getComponent(name("retryCount")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("retryCount")).orElseThrow();
         Assert.assertEquals(name("retryCount"), cmp.uniqueName());
         Assert.assertEquals(MODULE, cmp.module());
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.MODULE_FIELD.toString(),
@@ -47,7 +47,7 @@ public class TypeScriptModuleVariableTest {
 
     @Test
     public void testTopLevelVarUniqueNameAndType() {
-        Component cmp = model.getComponent(name("legacyFlag")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("legacyFlag")).orElseThrow();
         Assert.assertEquals(name("legacyFlag"), cmp.uniqueName());
         Assert.assertEquals(MODULE, cmp.module());
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.MODULE_FIELD.toString(),

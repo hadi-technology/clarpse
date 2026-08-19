@@ -21,7 +21,7 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        final ComponentReference invocation = (generatedSourceModel.getComponent("Test.fieldVar")
+        final ComponentReference invocation = (generatedSourceModel.copyOfComponent("Test.fieldVar")
                 .get().references(TypeReferences.SIMPLE).get(0));
         Assert.assertEquals("java.lang.String", invocation.invokedComponent());
     }
@@ -33,9 +33,9 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        Assert.assertEquals(0, generatedSourceModel.getComponent("Test")
+        Assert.assertEquals(0, generatedSourceModel.copyOfComponent("Test")
                 .get().references().size());
-        Assert.assertEquals(0, generatedSourceModel.getComponent("Test.Test()")
+        Assert.assertEquals(0, generatedSourceModel.copyOfComponent("Test.Test()")
                 .get().references().size());
     }
 
@@ -49,7 +49,7 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/src/main/org/ClassB.java", codeB));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        final ComponentReference invocation = (generatedSourceModel.getComponent("com.Test" +
+        final ComponentReference invocation = (generatedSourceModel.copyOfComponent("com.Test" +
                 ".fieldVar")
                 .get().references(TypeReferences.SIMPLE).get(0));
         Assert.assertEquals("org.ClassB", invocation.invokedComponent());
@@ -62,7 +62,7 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        Assert.assertEquals(1, generatedSourceModel.getComponent("Test.fieldVar")
+        Assert.assertEquals(1, generatedSourceModel.copyOfComponent("Test.fieldVar")
                 .get().references(TypeReferences.SIMPLE).size());
     }
 
@@ -77,7 +77,7 @@ public class SimpleTypeReferenceTest {
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
         Assert.assertEquals(
-                1, generatedSourceModel.getComponent("Test.log").get().references(TypeReferences.SIMPLE).size());
+                1, generatedSourceModel.copyOfComponent("Test.log").get().references(TypeReferences.SIMPLE).size());
     }
 
     @Test
@@ -87,7 +87,7 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/Test.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        Assert.assertEquals("java.lang.String", generatedSourceModel.getComponent(
+        Assert.assertEquals("java.lang.String", generatedSourceModel.copyOfComponent(
                 "Test.method(String, int).s1").get().references(TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
@@ -98,7 +98,7 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/Test.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        Assert.assertEquals("java.lang.Exception", generatedSourceModel.getComponent(
+        Assert.assertEquals("java.lang.Exception", generatedSourceModel.copyOfComponent(
                 "Test.AMethod()").get().references(TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
@@ -109,9 +109,9 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        Assert.assertEquals(1, generatedSourceModel.getComponent("Test.method(String, int).s1")
+        Assert.assertEquals(1, generatedSourceModel.copyOfComponent("Test.method(String, int).s1")
                 .get().references(TypeReferences.SIMPLE).size());
-        Assert.assertEquals(1, generatedSourceModel.getComponent("Test.method(String, int).s2")
+        Assert.assertEquals(1, generatedSourceModel.copyOfComponent("Test.method(String, int).s2")
                 .get().references(TypeReferences.SIMPLE).size());
     }
 
@@ -122,7 +122,7 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        Assert.assertEquals("java.lang.String", generatedSourceModel.getComponent(
+        Assert.assertEquals("java.lang.String", generatedSourceModel.copyOfComponent(
                 "Test.method().s").get().references(TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
@@ -136,9 +136,9 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/Cake.java", codeD));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        Assert.assertEquals("Cake", generatedSourceModel.getComponent(
+        Assert.assertEquals("Cake", generatedSourceModel.copyOfComponent(
                 "Test.test()").get().references(TypeReferences.SIMPLE).get(0).invokedComponent());
-        Assert.assertEquals("Cake", generatedSourceModel.getComponent(
+        Assert.assertEquals("Cake", generatedSourceModel.copyOfComponent(
                 "Test.test()").get().references(TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
@@ -149,7 +149,7 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/Test.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        Assert.assertEquals("java.lang.String", generatedSourceModel.getComponent(
+        Assert.assertEquals("java.lang.String", generatedSourceModel.copyOfComponent(
                 "Test.method()").get().references(TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 
@@ -160,7 +160,7 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/file2.java", code));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        Assert.assertEquals(1, generatedSourceModel.getComponent("Test.method().s")
+        Assert.assertEquals(1, generatedSourceModel.copyOfComponent("Test.method().s")
                 .get().references(TypeReferences.SIMPLE).size());
     }
 
@@ -178,9 +178,9 @@ public class SimpleTypeReferenceTest {
         final ArrayList<ProjectFiles> reqCons = new ArrayList<ProjectFiles>();
         reqCons.add(reqCon);
         final OOPSourceCodeModel codeModel = new ClarpseProject(reqCon, Lang.JAVA).result().model();
-        Assert.assertEquals(3, codeModel.getComponent("com.sample.ClassA.b").get()
+        Assert.assertEquals(3, codeModel.copyOfComponent("com.sample.ClassA.b").get()
                 .references().size());
-        Assert.assertEquals(3, codeModel.getComponent("com.sample.ClassA.c").get()
+        Assert.assertEquals(3, codeModel.copyOfComponent("com.sample.ClassA.c").get()
                 .references().size());
     }
 }

@@ -873,7 +873,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                     continue;
                 }
                 final String nested = enclosing.uniqueName() + "." + type;
-                final boolean isType = srcModel.getComponent(nested)
+                final boolean isType = srcModel.component(nested)
                         .map(found -> found.componentType().isBaseComponent()).orElse(false);
                 if (isType || typeSolver.tryToSolveType(nested).isSolved()) {
                     return nested;

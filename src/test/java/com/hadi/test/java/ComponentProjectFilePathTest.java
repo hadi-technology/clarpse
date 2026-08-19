@@ -54,50 +54,50 @@ public class ComponentProjectFilePathTest {
 
     @Test
     public void testClassAComponentHasCorrectSourceFilePath() {
-        final Component component = sourceCodeModel.getComponent(SOURCEFILE1PACKAGE + ".TestA").get();
+        final Component component = sourceCodeModel.copyOfComponent(SOURCEFILE1PACKAGE + ".TestA").get();
         assertEquals(SOURCEFILE1NAME, component.sourceFile());
     }
 
     @Test
     public void testClassAMethodAComponentHasCorrectSourceFilePath() {
-        final Component component = sourceCodeModel.getComponent(SOURCEFILE1PACKAGE + ".TestA.methodA()").get();
+        final Component component = sourceCodeModel.copyOfComponent(SOURCEFILE1PACKAGE + ".TestA.methodA()").get();
         assertEquals(SOURCEFILE1NAME, component.sourceFile());
     }
 
     @Test
     public void testAbstractClassBComponentHasCorrectSourceFilePath() {
-        final Component component = sourceCodeModel.getComponent(SOURCEFILE1PACKAGE + ".TestB").get();
+        final Component component = sourceCodeModel.copyOfComponent(SOURCEFILE1PACKAGE + ".TestB").get();
         assertEquals(SOURCEFILE1NAME, component.sourceFile());
     }
 
     @Test
     public void testAbstractClassBMethodBComponentHasCorrectSourceFilePath() {
-        final Component component = sourceCodeModel.getComponent(SOURCEFILE1PACKAGE
+        final Component component = sourceCodeModel.copyOfComponent(SOURCEFILE1PACKAGE
                 + ".TestB.methodB()").get();
         assertEquals(SOURCEFILE1NAME, component.sourceFile());
     }
 
     @Test
     public void testClassCComponentHasCorrectSourceFilePath() {
-        final Component component = sourceCodeModel.getComponent(SOURCEFILE2PACKAGE + ".TestC").get();
+        final Component component = sourceCodeModel.copyOfComponent(SOURCEFILE2PACKAGE + ".TestC").get();
         assertEquals(SOURCEFILE2NAME, component.sourceFile());
     }
 
     @Test
     public void testClassCMethodCComponentHasCorrectSourceFilePath() {
-        final Component component = sourceCodeModel.getComponent(SOURCEFILE2PACKAGE + ".TestC.methodC()").get();
+        final Component component = sourceCodeModel.copyOfComponent(SOURCEFILE2PACKAGE + ".TestC.methodC()").get();
         assertEquals(SOURCEFILE2NAME, component.sourceFile());
     }
 
     @Test
     public void testClassCAbstractClassDComponentHasCorrectSourceFilePath() {
-        final Component component = sourceCodeModel.getComponent(SOURCEFILE2PACKAGE + ".TestC.TestD").get();
+        final Component component = sourceCodeModel.copyOfComponent(SOURCEFILE2PACKAGE + ".TestC.TestD").get();
         assertEquals(SOURCEFILE2NAME, component.sourceFile());
     }
 
     @Test
     public void testClassCAbstractClassDMethodDComponentHasCorrectSourceFilePath() {
-        final Component component = sourceCodeModel.getComponent(SOURCEFILE2PACKAGE
+        final Component component = sourceCodeModel.copyOfComponent(SOURCEFILE2PACKAGE
                 + ".TestC.TestD.methodD()").get();
         assertEquals(SOURCEFILE2NAME, component.sourceFile());
     }

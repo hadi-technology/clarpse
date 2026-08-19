@@ -30,7 +30,7 @@ public class TypeScriptSyntheticModuleSourceFileTest {
 
     @Test
     public void moduleFieldUsesSourceFilePathFromOwningFile() {
-        Component cmp = model.getComponent(name("API_URL")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("API_URL")).orElseThrow();
         String sourceFile = cmp.sourceFile();
         assertFalse(sourceFile == null || sourceFile.isEmpty());
         assertEquals(filePath("src/foo/bar/Config.ts"), sourceFile);
@@ -38,25 +38,25 @@ public class TypeScriptSyntheticModuleSourceFileTest {
 
     @Test
     public void moduleFieldHasCorrectPackagePath() {
-        Component cmp = model.getComponent(name("API_URL")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("API_URL")).orElseThrow();
         assertEquals(PACKAGE_PATH, cmp.pkg().path());
     }
 
     @Test
     public void moduleFieldHasCorrectPackageName() {
-        Component cmp = model.getComponent(name("API_URL")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("API_URL")).orElseThrow();
         assertEquals(PACKAGE_PATH, cmp.pkg().name());
     }
 
     @Test
     public void moduleFunctionHasCorrectPackagePath() {
-        Component cmp = model.getComponent(name("ping")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("ping")).orElseThrow();
         assertEquals(PACKAGE_PATH, cmp.pkg().path());
     }
 
     @Test
     public void moduleFunctionHasCorrectPackageName() {
-        Component cmp = model.getComponent(name("ping")).orElseThrow();
+        Component cmp = model.copyOfComponent(name("ping")).orElseThrow();
         assertEquals(PACKAGE_PATH, cmp.pkg().name());
     }
 

@@ -39,14 +39,14 @@ public class CSharpReferenceTest {
 
     @Test
     public void extensionReferenceIsResolved() {
-        assertTrue(model.getComponent("Demo.User").get()
+        assertTrue(model.copyOfComponent("Demo.User").get()
                 .references(OOPSourceModelConstants.TypeReferences.EXTENSION)
                 .contains(new TypeExtensionReference("Demo.BaseUser")));
     }
 
     @Test
     public void implementationReferenceIsResolved() {
-        assertTrue(model.getComponent("Demo.User").get()
+        assertTrue(model.copyOfComponent("Demo.User").get()
                 .references(OOPSourceModelConstants.TypeReferences.IMPLEMENTATION)
                 .contains(new TypeImplementationReference("Demo.IRunner")));
     }
@@ -54,7 +54,7 @@ public class CSharpReferenceTest {
     @Test
     public void propertyTypeReferenceIsResolved() {
         assertEquals("Demo.Tools.Repo",
-                model.getComponent("Demo.User.Repo").get()
+                model.copyOfComponent("Demo.User.Repo").get()
                         .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                         .get(0).invokedComponent());
     }
@@ -62,14 +62,14 @@ public class CSharpReferenceTest {
     @Test
     public void aliasUsingTypeReferenceIsResolved() {
         assertEquals("Demo.Tools.Repo",
-                model.getComponent("Demo.User.AliasRepo").get()
+                model.copyOfComponent("Demo.User.AliasRepo").get()
                         .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                         .get(0).invokedComponent());
     }
 
     @Test
     public void objectCreationReferenceIsResolved() {
-        assertTrue(model.getComponent("Demo.User.Save(string)").get()
+        assertTrue(model.copyOfComponent("Demo.User.Save(string)").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                 .stream()
                 .anyMatch(ref -> ref.invokedComponent().equals("Demo.Tools.Helper")));
@@ -89,11 +89,11 @@ public class CSharpReferenceTest {
                         """)
         ).model();
 
-        assertTrue(memberAccessModel.getComponent("Demo.Tracker.Reset()").get()
+        assertTrue(memberAccessModel.copyOfComponent("Demo.Tracker.Reset()").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                 .stream()
                 .noneMatch(ref -> ref.invokedComponent().equals("Store")));
-        assertTrue(memberAccessModel.getComponent("Demo.Tracker.Reset()").get()
+        assertTrue(memberAccessModel.copyOfComponent("Demo.Tracker.Reset()").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                 .stream()
                 .noneMatch(ref -> ref.invokedComponent().equals("Demo.Tracker.Store")));

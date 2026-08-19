@@ -26,7 +26,7 @@ public class TypeScriptMethodCallReferenceTest {
     public void testMethodCallTypeReferenceFromReturnType() {
         String methodName = name("Test." + TypeScriptTestUtil.signature("m"));
         String listRef = name("List");
-        assertTrue(model.getComponent(methodName).orElseThrow()
+        assertTrue(model.copyOfComponent(methodName).orElseThrow()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE)
                 .contains(new SimpleTypeReference(listRef)));
     }

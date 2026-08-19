@@ -68,7 +68,7 @@ public class CSharpModernPatternsResolutionTest {
     }
 
     private static boolean anyRefTo(final String component, final String target) {
-        return model.getComponent(component)
+        return model.copyOfComponent(component)
                 .map(c -> c.references().stream().anyMatch(r -> r.invokedComponent().equals(target)))
                 .orElse(false);
     }
@@ -76,7 +76,7 @@ public class CSharpModernPatternsResolutionTest {
     @Test
     public void genericBaseClassProducesExtensionReference() {
         assertTrue("OrderHandler should extend Acme.Contracts.ServiceBase",
-                model.getComponent("Acme.Services.OrderHandler").get()
+                model.copyOfComponent("Acme.Services.OrderHandler").get()
                         .references(com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.TypeReferences.EXTENSION)
                         .contains(new TypeExtensionReference("Acme.Contracts.ServiceBase")));
     }
@@ -84,7 +84,7 @@ public class CSharpModernPatternsResolutionTest {
     @Test
     public void genericInterfaceProducesImplementationReference() {
         assertTrue("OrderHandler should implement Acme.Contracts.IHandler",
-                model.getComponent("Acme.Services.OrderHandler").get()
+                model.copyOfComponent("Acme.Services.OrderHandler").get()
                         .references(com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.TypeReferences.IMPLEMENTATION)
                         .contains(new TypeImplementationReference("Acme.Contracts.IHandler")));
     }
@@ -135,10 +135,10 @@ public class CSharpModernPatternsResolutionTest {
                         }
                         """)
         ).model();
-        assertTrue(arity.getComponent("Demo.IFoo").isPresent());
-        assertTrue(arity.getComponent("Demo.User.Plain").get().references().stream()
+        assertTrue(arity.copyOfComponent("Demo.IFoo").isPresent());
+        assertTrue(arity.copyOfComponent("Demo.User.Plain").get().references().stream()
                 .anyMatch(r -> r.invokedComponent().equals("Demo.IFoo")));
-        assertTrue(arity.getComponent("Demo.User.Generic").get().references().stream()
+        assertTrue(arity.copyOfComponent("Demo.User.Generic").get().references().stream()
                 .anyMatch(r -> r.invokedComponent().equals("Demo.IFoo")));
     }
 }

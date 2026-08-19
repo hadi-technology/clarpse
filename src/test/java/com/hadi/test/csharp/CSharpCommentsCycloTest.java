@@ -32,17 +32,17 @@ public class CSharpCommentsCycloTest {
 
     @Test
     public void commentsAreAttached() {
-        assertTrue(model.getComponent("Demo.User").get().comment().contains("summary"));
-        assertTrue(model.getComponent("Demo.User.Save()").get().comment().contains("Saves a user"));
+        assertTrue(model.copyOfComponent("Demo.User").get().comment().contains("summary"));
+        assertTrue(model.copyOfComponent("Demo.User.Save()").get().comment().contains("Saves a user"));
     }
 
     @Test
     public void codeFragmentsAreCaptured() {
-        assertEquals("public void Save()", model.getComponent("Demo.User.Save()").get().codeFragment());
+        assertEquals("public void Save()", model.copyOfComponent("Demo.User.Save()").get().codeFragment());
     }
 
     @Test
     public void methodCycloIsComputed() {
-        assertEquals(4, model.getComponent("Demo.User.Save()").get().cyclo());
+        assertEquals(4, model.copyOfComponent("Demo.User.Save()").get().cyclo());
     }
 }

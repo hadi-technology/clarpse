@@ -29,53 +29,53 @@ public class TypeScriptComponentProjectFilePathTest {
 
     @Test
     public void testClassAComponentHasCorrectSourceFilePath() {
-        Component component = model.getComponent(name(PACKAGE_A, MODULE_A, "TestA")).orElseThrow();
+        Component component = model.copyOfComponent(name(PACKAGE_A, MODULE_A, "TestA")).orElseThrow();
         assertEquals(filePath("src/com/foo/TestA.ts"), component.sourceFile());
     }
 
     @Test
     public void testClassAMethodAComponentHasCorrectSourceFilePath() {
         String symbol = "TestA." + TypeScriptTestUtil.signature("methodA");
-        Component component = model.getComponent(name(PACKAGE_A, MODULE_A, symbol)).orElseThrow();
+        Component component = model.copyOfComponent(name(PACKAGE_A, MODULE_A, symbol)).orElseThrow();
         assertEquals(filePath("src/com/foo/TestA.ts"), component.sourceFile());
     }
 
     @Test
     public void testAbstractClassBComponentHasCorrectSourceFilePath() {
-        Component component = model.getComponent(name(PACKAGE_A, MODULE_A, "TestB")).orElseThrow();
+        Component component = model.copyOfComponent(name(PACKAGE_A, MODULE_A, "TestB")).orElseThrow();
         assertEquals(filePath("src/com/foo/TestA.ts"), component.sourceFile());
     }
 
     @Test
     public void testAbstractClassBMethodBComponentHasCorrectSourceFilePath() {
         String symbol = "TestB." + TypeScriptTestUtil.signature("methodB");
-        Component component = model.getComponent(name(PACKAGE_A, MODULE_A, symbol)).orElseThrow();
+        Component component = model.copyOfComponent(name(PACKAGE_A, MODULE_A, symbol)).orElseThrow();
         assertEquals(filePath("src/com/foo/TestA.ts"), component.sourceFile());
     }
 
     @Test
     public void testClassCComponentHasCorrectSourceFilePath() {
-        Component component = model.getComponent(name(PACKAGE_B, MODULE_C, "TestC")).orElseThrow();
+        Component component = model.copyOfComponent(name(PACKAGE_B, MODULE_C, "TestC")).orElseThrow();
         assertEquals(filePath("src/com/foo/lol/TestC.ts"), component.sourceFile());
     }
 
     @Test
     public void testClassCMethodCComponentHasCorrectSourceFilePath() {
         String symbol = "TestC." + TypeScriptTestUtil.signature("methodC");
-        Component component = model.getComponent(name(PACKAGE_B, MODULE_C, symbol)).orElseThrow();
+        Component component = model.copyOfComponent(name(PACKAGE_B, MODULE_C, symbol)).orElseThrow();
         assertEquals(filePath("src/com/foo/lol/TestC.ts"), component.sourceFile());
     }
 
     @Test
     public void testClassDComponentHasCorrectSourceFilePath() {
-        Component component = model.getComponent(name(PACKAGE_B, MODULE_C, "TestD")).orElseThrow();
+        Component component = model.copyOfComponent(name(PACKAGE_B, MODULE_C, "TestD")).orElseThrow();
         assertEquals(filePath("src/com/foo/lol/TestC.ts"), component.sourceFile());
     }
 
     @Test
     public void testClassDMethodDComponentHasCorrectSourceFilePath() {
         String symbol = "TestD." + TypeScriptTestUtil.signature("methodD");
-        Component component = model.getComponent(name(PACKAGE_B, MODULE_C, symbol)).orElseThrow();
+        Component component = model.copyOfComponent(name(PACKAGE_B, MODULE_C, symbol)).orElseThrow();
         assertEquals(filePath("src/com/foo/lol/TestC.ts"), component.sourceFile());
     }
 

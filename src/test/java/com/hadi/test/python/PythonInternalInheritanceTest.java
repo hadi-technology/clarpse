@@ -25,7 +25,7 @@ public class PythonInternalInheritanceTest {
     public void testChildExtendsBase() {
         String baseName = PythonTestUtil.uniqueName(PACKAGE_PATH, "base", "Base");
         String childName = PythonTestUtil.uniqueName(PACKAGE_PATH, "child", "Child");
-        ComponentReference ref = model.getComponent(childName).orElseThrow()
+        ComponentReference ref = model.copyOfComponent(childName).orElseThrow()
                 .references(TypeReferences.EXTENSION).get(0);
         Assert.assertEquals(new TypeExtensionReference(baseName), ref);
     }

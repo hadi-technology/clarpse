@@ -64,75 +64,75 @@ public class CSharpSpotCheckIdentityAndPathsTest {
 
     @Test
     public void propertySourceFilePathComesFromFirstPart() {
-        final Component component = model.getComponent("Demo.Orders.Order.Id").get();
+        final Component component = model.copyOfComponent("Demo.Orders.Order.Id").get();
         assertEquals(ORDER_PART1, component.sourceFile());
     }
 
     @Test
     public void eventSourceFilePathComesFromSecondPart() {
-        final Component component = model.getComponent("Demo.Orders.Order.Saved").get();
+        final Component component = model.copyOfComponent("Demo.Orders.Order.Saved").get();
         assertEquals(ORDER_PART2, component.sourceFile());
     }
 
     @Test
     public void delegateSourceFilePathComesFromSecondPart() {
-        final Component component = model.getComponent("Demo.Orders.Order.OrderSaved").get();
+        final Component component = model.copyOfComponent("Demo.Orders.Order.OrderSaved").get();
         assertEquals(ORDER_PART2, component.sourceFile());
     }
 
     @Test
     public void fileScopedNamespaceBecomesPackage() {
-        final Component component = model.getComponent("Demo.FileScoped.Config").get();
+        final Component component = model.copyOfComponent("Demo.FileScoped.Config").get();
         assertEquals("Demo.FileScoped", component.pkg().name());
     }
 
     @Test
     public void fileScopedModuleUsesFilename() {
-        final Component component = model.getComponent("Demo.FileScoped.Config").get();
+        final Component component = model.copyOfComponent("Demo.FileScoped.Config").get();
         assertEquals("Config", component.module());
     }
 
     @Test
     public void orderModuleUsesFilenameWithoutExtension() {
-        final Component component = model.getComponent("Demo.Orders.Order").get();
+        final Component component = model.copyOfComponent("Demo.Orders.Order").get();
         assertEquals("Order.Part1", component.module());
     }
 
     @Test
     public void partialTypeChildrenIncludeNestedClass() {
-        assertTrue(model.getComponent("Demo.Orders.Order").get().children()
+        assertTrue(model.copyOfComponent("Demo.Orders.Order").get().children()
                 .contains("Demo.Orders.Order.Metadata"));
     }
 
     @Test
     public void partialTypeChildrenIncludeMethod() {
-        assertTrue(model.getComponent("Demo.Orders.Order").get().children()
+        assertTrue(model.copyOfComponent("Demo.Orders.Order").get().children()
                 .contains("Demo.Orders.Order.Add(LineItem)"));
     }
 
     @Test
     public void nestedClassFieldTypeIsCaptured() {
         assertEquals(OOPSourceModelConstants.ComponentType.FIELD,
-                model.getComponent("Demo.Orders.Order.Metadata.Version").get().componentType());
+                model.copyOfComponent("Demo.Orders.Order.Metadata.Version").get().componentType());
     }
 
     @Test
     public void methodParamSourceFilePathComesFromFirstPart() {
-        final Component component = model.getComponent("Demo.Orders.Order.Add(LineItem).item").get();
+        final Component component = model.copyOfComponent("Demo.Orders.Order.Add(LineItem).item").get();
         assertEquals(ORDER_PART1, component.sourceFile());
     }
 
     @Test
     public void methodLocalSourceFilePathComesFromFirstPart() {
-        final Component component = model.getComponent("Demo.Orders.Order.Add(LineItem).local").get();
+        final Component component = model.copyOfComponent("Demo.Orders.Order.Add(LineItem).local").get();
         assertEquals(ORDER_PART1, component.sourceFile());
     }
 
     @Test
     public void methodParamAndLocalTypeReferencesResolve() {
-        assertEquals("Demo.Orders.LineItem", model.getComponent("Demo.Orders.Order.Add(LineItem).item").get()
+        assertEquals("Demo.Orders.LineItem", model.copyOfComponent("Demo.Orders.Order.Add(LineItem).item").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
-        assertEquals("Demo.Orders.LineItem", model.getComponent("Demo.Orders.Order.Add(LineItem).local").get()
+        assertEquals("Demo.Orders.LineItem", model.copyOfComponent("Demo.Orders.Order.Add(LineItem).local").get()
                 .references(OOPSourceModelConstants.TypeReferences.SIMPLE).get(0).invokedComponent());
     }
 }

@@ -34,8 +34,8 @@ public class ClarpseProjectTest {
 
         CompileResult result = new ClarpseProject(projectFiles, Lang.JAVA, List.of("/kept.java")).result();
 
-        assertTrue(result.model().getComponent("Kept").isPresent());
-        assertFalse(result.model().getComponent("Ignored").isPresent());
+        assertTrue(result.model().copyOfComponent("Kept").isPresent());
+        assertFalse(result.model().copyOfComponent("Ignored").isPresent());
         assertEquals(2, projectFiles.size());
     }
 
@@ -49,8 +49,8 @@ public class ClarpseProjectTest {
         CompileResult result = new ClarpseProject(projectFiles, Lang.JAVA,
                 List.of("src\\main\\File1.java")).result();
 
-        assertTrue(result.model().getComponent("File1").isPresent());
-        assertFalse(result.model().getComponent("File2").isPresent());
+        assertTrue(result.model().copyOfComponent("File1").isPresent());
+        assertFalse(result.model().copyOfComponent("File2").isPresent());
     }
 
     @Test
@@ -62,7 +62,7 @@ public class ClarpseProjectTest {
         CompileResult result = new ClarpseProject(projectFiles, Lang.JAVA,
                 List.of("/src/File.java")).result();
 
-        assertTrue(result.model().getComponent("File").isPresent());
+        assertTrue(result.model().copyOfComponent("File").isPresent());
     }
 
     @Test
@@ -74,7 +74,7 @@ public class ClarpseProjectTest {
         CompileResult result = new ClarpseProject(projectFiles, Lang.JAVA,
                 List.of("/src/File.java/")).result();
 
-        assertTrue(result.model().getComponent("File").isPresent());
+        assertTrue(result.model().copyOfComponent("File").isPresent());
     }
 
     @Test
@@ -85,7 +85,7 @@ public class ClarpseProjectTest {
         // Empty collection should return empty result, not all files
         CompileResult result = new ClarpseProject(projectFiles, Lang.JAVA, List.of()).result();
 
-        assertFalse(result.model().getComponent("File").isPresent());
+        assertFalse(result.model().copyOfComponent("File").isPresent());
         assertEquals(0, result.model().size());
     }
 
@@ -98,8 +98,8 @@ public class ClarpseProjectTest {
         // null should analyze all files
         CompileResult result = new ClarpseProject(projectFiles, Lang.JAVA, null).result();
 
-        assertTrue(result.model().getComponent("File1").isPresent());
-        assertTrue(result.model().getComponent("File2").isPresent());
+        assertTrue(result.model().copyOfComponent("File1").isPresent());
+        assertTrue(result.model().copyOfComponent("File2").isPresent());
     }
 
     @Test

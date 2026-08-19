@@ -25,23 +25,23 @@ public class PythonNestedClassTest {
     @Test
     public void testNestedClassComponentNames() {
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.CLASS,
-                model.getComponent(name("Outer")).orElseThrow().componentType());
+                model.copyOfComponent(name("Outer")).orElseThrow().componentType());
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.CLASS,
-                model.getComponent(name("Outer.Inner")).orElseThrow().componentType());
+                model.copyOfComponent(name("Outer.Inner")).orElseThrow().componentType());
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.CLASS,
-                model.getComponent(name("Outer.Inner.Deep")).orElseThrow().componentType());
+                model.copyOfComponent(name("Outer.Inner.Deep")).orElseThrow().componentType());
     }
 
     @Test
     public void testNestedMethodNamesUseNestedClassPath() {
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.METHOD,
-                model.getComponent(name("Outer." + PythonTestUtil.signature("top", "None")))
+                model.copyOfComponent(name("Outer." + PythonTestUtil.signature("top", "None")))
                         .orElseThrow().componentType());
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.METHOD,
-                model.getComponent(name("Outer.Inner." + PythonTestUtil.signature("build", "None")))
+                model.copyOfComponent(name("Outer.Inner." + PythonTestUtil.signature("build", "None")))
                         .orElseThrow().componentType());
         Assert.assertEquals(OOPSourceModelConstants.ComponentType.METHOD,
-                model.getComponent(name("Outer.Inner.Deep." + PythonTestUtil.signature("ping", "int")))
+                model.copyOfComponent(name("Outer.Inner.Deep." + PythonTestUtil.signature("ping", "int")))
                         .orElseThrow().componentType());
     }
 
@@ -53,9 +53,9 @@ public class PythonNestedClassTest {
         String innerMethod = name("Outer.Inner." + PythonTestUtil.signature("build", "None"));
         String deepMethod = name("Outer.Inner.Deep." + PythonTestUtil.signature("ping", "int"));
 
-        Component outer = model.getComponent(outerName).orElseThrow();
-        Component inner = model.getComponent(innerName).orElseThrow();
-        Component deep = model.getComponent(deepName).orElseThrow();
+        Component outer = model.copyOfComponent(outerName).orElseThrow();
+        Component inner = model.copyOfComponent(innerName).orElseThrow();
+        Component deep = model.copyOfComponent(deepName).orElseThrow();
 
         Assert.assertTrue(outer.children().contains(innerName));
         Assert.assertEquals(outerName, inner.parentUniqueName());

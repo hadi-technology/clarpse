@@ -30,30 +30,30 @@ public class CSharpCodeFragmentTest {
 
     @Test
     public void classCodeFragmentIsCaptured() {
-        assertEquals("public class User", model.getComponent("Demo.User").get().codeFragment());
+        assertEquals("public class User", model.copyOfComponent("Demo.User").get().codeFragment());
     }
 
     @Test
     public void propertyCodeFragmentIsCaptured() {
         assertEquals("Names : System.Collections.Generic.List<string>",
-                model.getComponent("Demo.User.Names").get().codeFragment());
+                model.copyOfComponent("Demo.User.Names").get().codeFragment());
     }
 
     @Test
     public void methodCodeFragmentIsCaptured() {
         assertEquals("public void Save(string message)",
-                model.getComponent("Demo.User.Save(string)").get().codeFragment());
+                model.copyOfComponent("Demo.User.Save(string)").get().codeFragment());
     }
 
     @Test
     public void constructorCodeFragmentIsCaptured() {
         assertEquals("public User(Repo repo)",
-                model.getComponent("Demo.User.User(Repo)").get().codeFragment());
+                model.copyOfComponent("Demo.User.User(Repo)").get().codeFragment());
     }
 
     @Test
     public void delegateCodeFragmentIsCaptured() {
         assertEquals("public delegate void LogHandler(string value)",
-                model.getComponent("Demo.User.LogHandler").get().codeFragment());
+                model.copyOfComponent("Demo.User.LogHandler").get().codeFragment());
     }
 }

@@ -25,11 +25,41 @@ public abstract class ComponentReference implements Serializable, Cloneable {
     private boolean external = false;
 
     public ComponentReference(final String invocationComponentName) {
-        invokedComponent = invocationComponentName;
+        invokedComponent = pooled(invocationComponentName);
     }
 
     public ComponentReference(final ComponentReference invocation) {
-        invokedComponent = invocation.invokedComponent();
+        invokedComponent = pooled(invocation.invokedComponent());
+    }
+
+    /**
+     * One instance per distinct name, rather than one per reference.
+     *
+     * <p>A reference holds a fully-qualified name, and the same type is referenced from everywhere
+     * that uses it, so the identical string is allocated once per mention. Measured on a real model:
+     * 2,565 reference strings, 750 distinct -- <b>68% of the bytes are duplicates</b>, and
+     * references are about 70% of a component's footprint. This is the largest single reduction
+     * available in the parsed model, and it costs nothing semantically: the strings are immutable
+     * and compared by value everywhere.
+     *
+     * <p>It matters because striff holds <em>two</em> models at once, base and head, for the whole
+     * of a differential analysis. One medium repository was measured at ~4GB of live heap, which is
+     * enough to put the JVM into a garbage-collection spiral it never leaves -- 95% GC overhead, an
+     * analysis that never completes, and a pod that serves nothing while reporting healthy.
+     *
+     * <p><b>Deliberately {@link String#intern()} and not a pool of our own.</b> A static
+     * {@code Map} here would be the shape of the bug fixed in 10.1.2, where
+     * {@code JavaParserFacade} kept a static registry that nothing pruned and each entry pinned a
+     * whole AST. The JVM's pool lives in the heap and its entries are collectable once unreachable,
+     * so it cannot retain a compile's strings after the compile. A per-compile pool would also
+     * work, but it would need threading through every parser and clearing on every exit path, and
+     * an intern pool that is not cleared is a leak wearing an optimisation's clothes.
+     */
+    private static String pooled(final String name) {
+        if (name == null) {
+            return null;
+        }
+        return name.intern();
     }
 
     public abstract int priority();

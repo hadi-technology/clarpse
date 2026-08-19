@@ -19,7 +19,7 @@ public class TypeScriptResolutionTest {
     public void resolvesExtendsImplementsAndTypesThroughPathsAndBarrels() throws Exception {
         CompileResult result = TypeScriptTestUtil.compileFixture("paths");
 
-        Component service = result.model().getComponent("src.app.service.Service").orElseThrow();
+        Component service = result.model().copyOfComponent("src.app.service.Service").orElseThrow();
         Set<Class<? extends ComponentReference>> refTypes = service.references().stream()
                 .map(ComponentReference::getClass)
                 .collect(Collectors.toSet());
@@ -30,7 +30,7 @@ public class TypeScriptResolutionTest {
         assertTrue(service.references().stream().anyMatch(ref ->
                 ref instanceof TypeImplementationReference && ref.invokedComponent().equals("src.app.service.Repo")));
 
-        Component getMethod = result.model().getComponent("src.app.service.Service.get()").orElseThrow();
+        Component getMethod = result.model().copyOfComponent("src.app.service.Service.get()").orElseThrow();
         assertTrue(getMethod.references().stream().anyMatch(ref ->
                 ref instanceof SimpleTypeReference && ref.invokedComponent().equals("src.lib.user.User")));
 

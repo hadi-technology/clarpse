@@ -22,62 +22,62 @@ public class TypeScriptCodeFragmentTest {
 
     @Test
     public void classGenericsCodeFragmentTest() {
-        assertEquals("<T>", model.getComponent(name("GenericTest")).orElseThrow().codeFragment());
+        assertEquals("<T>", model.copyOfComponent(name("GenericTest")).orElseThrow().codeFragment());
     }
 
     @Test
     public void classGenericsCodeFragmentTestv2() {
         assertEquals("<T extends List>",
-                model.getComponent(name("GenericTest2")).orElseThrow().codeFragment());
+                model.copyOfComponent(name("GenericTest2")).orElseThrow().codeFragment());
     }
 
     @Test
     public void fieldVarCodeFragmentTest() {
-        assertEquals("fieldVar : List", model.getComponent(name("FieldTest.fieldVar")).orElseThrow().codeFragment());
-        assertEquals("x : List", model.getComponent(name("FieldTest.x")).orElseThrow().codeFragment());
+        assertEquals("fieldVar : List", model.copyOfComponent(name("FieldTest.fieldVar")).orElseThrow().codeFragment());
+        assertEquals("x : List", model.copyOfComponent(name("FieldTest.x")).orElseThrow().codeFragment());
     }
 
     @Test
     public void fieldVarCodeFragmentTestComplex() {
         assertEquals("complexField : Map<string, List>",
-                model.getComponent(name("FieldTest.complexField")).orElseThrow().codeFragment());
+                model.copyOfComponent(name("FieldTest.complexField")).orElseThrow().codeFragment());
     }
 
     @Test
     public void simpleMethodCodeFragmentTest() {
         String methodName = name("MethodTest." + TypeScriptTestUtil.signature("sMethod"));
-        assertEquals("sMethod() : Map<string, List>", model.getComponent(methodName).orElseThrow().codeFragment());
+        assertEquals("sMethod() : Map<string, List>", model.copyOfComponent(methodName).orElseThrow().codeFragment());
     }
 
     @Test
     public void interfaceMethodCodeFragmentTest() {
         String methodName = name("InterfaceTest." + TypeScriptTestUtil.signature("sMethod"));
-        assertEquals("sMethod() : Map<string, List>", model.getComponent(methodName).orElseThrow().codeFragment());
+        assertEquals("sMethod() : Map<string, List>", model.copyOfComponent(methodName).orElseThrow().codeFragment());
     }
 
     @Test
     public void complexMethodCodeFragmentTest() {
         String methodName = name("MethodTest." + TypeScriptTestUtil.signature("complexMethod", "string", "number"));
         assertEquals("complexMethod(string, number) : Map<List, string[]>",
-                model.getComponent(methodName).orElseThrow().codeFragment());
+                model.copyOfComponent(methodName).orElseThrow().codeFragment());
     }
 
     @Test
     public void literalStringReturnTypeIsNormalized() {
         String methodName = name("MethodTest." + TypeScriptTestUtil.signature("literalText"));
-        assertEquals("literalText() : string", model.getComponent(methodName).orElseThrow().codeFragment());
+        assertEquals("literalText() : string", model.copyOfComponent(methodName).orElseThrow().codeFragment());
     }
 
     @Test
     public void literalNumberReturnTypeIsNormalized() {
         String methodName = name("MethodTest." + TypeScriptTestUtil.signature("literalCount"));
-        assertEquals("literalCount() : number", model.getComponent(methodName).orElseThrow().codeFragment());
+        assertEquals("literalCount() : number", model.copyOfComponent(methodName).orElseThrow().codeFragment());
     }
 
     @Test
     public void literalUnionReturnTypeIsNormalized() {
         String methodName = name("MethodTest." + TypeScriptTestUtil.signature("literalSwitch", "boolean"));
-        assertEquals("literalSwitch(boolean) : string", model.getComponent(methodName).orElseThrow().codeFragment());
+        assertEquals("literalSwitch(boolean) : string", model.copyOfComponent(methodName).orElseThrow().codeFragment());
     }
 
     private static String name(final String symbolPath) {

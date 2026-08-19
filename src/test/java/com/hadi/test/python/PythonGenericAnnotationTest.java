@@ -24,28 +24,28 @@ public class PythonGenericAnnotationTest {
     @Test
     public void testOptionalAnnotationResolvesInternalType() {
         String fieldName = PythonTestUtil.uniqueName("src", "models", "Example.user");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(field, PythonTestUtil.uniqueName("src", "types", "User")));
     }
 
     @Test
     public void testListAnnotationResolvesInternalType() {
         String fieldName = PythonTestUtil.uniqueName("src", "models", "Example.users");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(field, PythonTestUtil.uniqueName("src", "types", "User")));
     }
 
     @Test
     public void testDictAnnotationResolvesInternalType() {
         String fieldName = PythonTestUtil.uniqueName("src", "models", "Example.mapping");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertTrue(hasSimpleRef(field, PythonTestUtil.uniqueName("src", "types", "Group")));
     }
 
     @Test
     public void testRawGenericTypeStoredInCodeFragment() {
         String fieldName = PythonTestUtil.uniqueName("src", "models", "Example.mapping");
-        Component field = model.getComponent(fieldName).orElseThrow();
+        Component field = model.copyOfComponent(fieldName).orElseThrow();
         Assert.assertEquals("mapping : Dict[str, Group]", field.codeFragment());
     }
 
