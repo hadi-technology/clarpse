@@ -43,7 +43,8 @@ public abstract class ComponentReference implements Serializable, Cloneable {
      * {@code Bar[] xs} as {@code Bar[]}. The model holds one component per type -- {@code DTO},
      * {@code Bar} -- and matches references to it by name, so such a reference joins to nothing:
      * a type with twenty-six implementers reports no incoming references at all, and
-     * {@code Foo<A>} and {@code Foo<B>} count as two referenced types where the source has one.
+     * {@code Foo<Bar>} and {@code Foo<Baz>} count as two referenced types where the source has
+     * one.
      * Both directions are silent, because a model missing an edge looks exactly like a model whose
      * code has no such edge.
      *
