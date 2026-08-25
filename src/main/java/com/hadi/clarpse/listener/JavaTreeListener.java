@@ -21,6 +21,7 @@ import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.SimpleName;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
+import com.github.javaparser.ast.nodeTypes.NodeWithTypeParameters;
 import com.github.javaparser.ast.stmt.CatchClause;
 import com.github.javaparser.ast.stmt.ForEachStmt;
 import com.github.javaparser.ast.stmt.ForStmt;
@@ -30,9 +31,12 @@ import com.github.javaparser.ast.stmt.SwitchEntry;
 import com.github.javaparser.ast.stmt.SwitchStmt;
 import com.github.javaparser.ast.stmt.ThrowStmt;
 import com.github.javaparser.ast.stmt.WhileStmt;
+import com.github.javaparser.ast.type.ArrayType;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.ReferenceType;
 import com.github.javaparser.ast.type.Type;
+import com.github.javaparser.ast.type.TypeParameter;
+import com.github.javaparser.ast.type.WildcardType;
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
 import com.github.javaparser.resolution.TypeSolver;
 import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
@@ -40,6 +44,7 @@ import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclar
 import com.github.javaparser.resolution.model.SymbolReference;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.hadi.clarpse.compiler.ProjectFile;
+import com.hadi.clarpse.TypeNames;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
@@ -225,6 +230,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
             ParseUtil.pointParentsToGivenChild(cmp, componentStack);
 
+            final Set<String> typeParameters = typeParameterNamesInScope(ctx);
             if (ctx.getExtendedTypes() != null) {
                 for (final ClassOrInterfaceType outerType : ctx.getExtendedTypes()) {
                     final String resolvedType = resolveType(outerType.asString());
@@ -232,6 +238,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                         ParseUtil.insertCmpRef(cmp, new TypeExtensionReference(resolvedType),
                                 this.componentStack);
                     }
+                    insertTypeArgumentRefs(cmp, outerType, typeParameters);
                 }
             }
 
@@ -242,6 +249,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                         ParseUtil.insertCmpRef(cmp, new TypeImplementationReference(resolvedOuterType),
                                 this.componentStack);
                     }
+                    insertTypeArgumentRefs(cmp, outerType, typeParameters);
                 }
             }
 
@@ -300,12 +308,14 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
             ParseUtil.pointParentsToGivenChild(cmp, componentStack);
 
+            final Set<String> typeParameters = typeParameterNamesInScope(ctx);
             for (final ClassOrInterfaceType implementedType : ctx.getImplementedTypes()) {
                 final String resolvedType = resolveType(implementedType.asString());
                 if (resolvedType != null) {
                     ParseUtil.insertCmpRef(cmp, new TypeImplementationReference(resolvedType),
                             this.componentStack);
                 }
+                insertTypeArgumentRefs(cmp, implementedType, typeParameters);
             }
 
             componentStack.push(cmp);
@@ -813,6 +823,78 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         super.visit(ctx, arg);
     }
 
+    /**
+     * Records the type arguments of a supertype as dependencies of their own.
+     *
+     * <p>A supertype reference names one type, so {@code implements Repository<Order>} says
+     * {@code Repository} and stops. But the class does depend on {@code Order}: it is written in
+     * the source, it is part of what the class is, and it was recorded nowhere -- the supertype
+     * reference had swallowed it into a name, and the visitors that pick type names out of a class
+     * body deliberately leave the declaration's own supertypes alone. Every other type position in
+     * this listener records its arguments; heritage clauses were the one that did not, and
+     * TypeScript and C# already record them, so Java was the odd language out.
+     *
+     * <p>Recorded as a plain dependency and not with the flavour of the clause it was written in:
+     * a class implementing {@code Repository<Order>} does not implement {@code Order}.
+     */
+    private void insertTypeArgumentRefs(final Component cmp, final ClassOrInterfaceType supertype,
+                                        final Set<String> typeParameters) {
+        if (supertype.getTypeArguments().isEmpty()) {
+            return;
+        }
+        for (final Type argument : supertype.getTypeArguments().get()) {
+            insertTypeArgumentRef(cmp, argument, typeParameters);
+        }
+    }
+
+    private void insertTypeArgumentRef(final Component cmp, final Type argument,
+                                       final Set<String> typeParameters) {
+        if (argument instanceof WildcardType) {
+            // `?` names no type. Its bound does -- `? extends Bar` depends on Bar.
+            final WildcardType wildcard = (WildcardType) argument;
+            wildcard.getExtendedType().ifPresent(bound -> insertTypeArgumentRef(cmp, bound, typeParameters));
+            wildcard.getSuperType().ifPresent(bound -> insertTypeArgumentRef(cmp, bound, typeParameters));
+            return;
+        }
+        if (argument instanceof ArrayType) {
+            insertTypeArgumentRef(cmp, ((ArrayType) argument).getComponentType(), typeParameters);
+            return;
+        }
+        if (!(argument instanceof ClassOrInterfaceType)) {
+            return;
+        }
+        final ClassOrInterfaceType classType = (ClassOrInterfaceType) argument;
+        // A type variable is not a type. `class Box<T> implements Holder<T>` would otherwise
+        // resolve `T` through the current-package fallback and invent a component `<package>.T`
+        // that does not exist -- the failure mode that unresolved names are supposed to avoid by
+        // being omitted rather than guessed.
+        if (!typeParameters.contains(classType.getNameAsString())) {
+            final String resolvedType = resolveType(classType.asString());
+            if (resolvedType != null) {
+                ParseUtil.insertCmpRef(cmp, new SimpleTypeReference(resolvedType), this.componentStack);
+            }
+        }
+        insertTypeArgumentRefs(cmp, classType, typeParameters);
+    }
+
+    /**
+     * The type variables a node may legally mention: its own, and those of every type that
+     * encloses it.
+     */
+    private static Set<String> typeParameterNamesInScope(final Node node) {
+        final Set<String> names = new HashSet<>();
+        Node current = node;
+        while (current != null) {
+            if (current instanceof NodeWithTypeParameters) {
+                for (final TypeParameter typeParameter : ((NodeWithTypeParameters<?>) current).getTypeParameters()) {
+                    names.add(typeParameter.getNameAsString());
+                }
+            }
+            current = current.getParentNode().orElse(null);
+        }
+        return names;
+    }
+
     private String resolveType(final String type) {
         return resolveType(type, true);
     }
@@ -831,7 +913,16 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      *     Inventing is worse than omitting, because a missing edge reads as a coverage gap while
      *     an invented one reads as a fact.
      */
-    private String resolveType(final String type, final boolean assumeCurrentPackage) {
+    private String resolveType(final String writtenType, final boolean assumeCurrentPackage) {
+        // Resolution is by name, and every lookup below -- the import map, the default classes, the
+        // type solver, the on-demand imports -- is keyed on the name of a type. A written type
+        // expression is not that: `DTO<HttpRequest>` is absent from an import map that holds `DTO`,
+        // and so is `Bar[]` from one that holds `Bar`. Every lookup then misses and the fallback
+        // invents a current-package name out of the expression -- `com.DTO<HttpRequest>` for a
+        // `DTO` that lives in another package entirely. So the type arguments have to come off
+        // before the lookups, not after: erasing only the recorded name would keep the invented
+        // package and merely make the invention look plausible.
+        final String type = TypeNames.erasure(writtenType);
         String resolvedType = "";
         final SymbolReference<ResolvedReferenceTypeDeclaration> symbol = typeSolver.tryToSolveType(type);
         if (currentImportsMap.containsKey(type)) {

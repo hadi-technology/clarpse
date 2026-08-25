@@ -1,5 +1,7 @@
 package com.hadi.clarpse.reference;
 
+import com.hadi.clarpse.TypeNames;
+
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonSubTypes.Type;
@@ -25,11 +27,35 @@ public abstract class ComponentReference implements Serializable, Cloneable {
     private boolean external = false;
 
     public ComponentReference(final String invocationComponentName) {
-        invokedComponent = pooled(invocationComponentName);
+        invokedComponent = pooled(named(invocationComponentName));
     }
 
     public ComponentReference(final ComponentReference invocation) {
-        invokedComponent = pooled(invocation.invokedComponent());
+        invokedComponent = pooled(named(invocation.invokedComponent()));
+    }
+
+    /**
+     * A reference names a type, so what is stored is a type name and not the type expression the
+     * source happened to write.
+     *
+     * <p>Every language front end here resolves a written type and hands the result on unchanged,
+     * so {@code implements DTO<HttpRequest>} arrives as {@code DTO<HttpRequest>} and
+     * {@code Bar[] xs} as {@code Bar[]}. The model holds one component per type -- {@code DTO},
+     * {@code Bar} -- and matches references to it by name, so such a reference joins to nothing:
+     * a type with twenty-six implementers reports no incoming references at all, and
+     * {@code Foo<Bar>} and {@code Foo<Baz>} count as two referenced types where the source has
+     * one.
+     * Both directions are silent, because a model missing an edge looks exactly like a model whose
+     * code has no such edge.
+     *
+     * <p>Normalising here rather than at each recording site is deliberate: this is the one place
+     * every reference in every language passes through, and the invariant wanted -- a reference
+     * names a type -- is a property of references, not of any one parser. Front ends still need to
+     * erase before they <em>resolve</em>, since a name carrying its type arguments matches no
+     * import either; this cannot do that for them, only keep the stored name honest.
+     */
+    private static String named(final String invocationComponentName) {
+        return TypeNames.erasure(invocationComponentName);
     }
 
     /**
