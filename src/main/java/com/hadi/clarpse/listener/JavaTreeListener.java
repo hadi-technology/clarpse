@@ -40,6 +40,7 @@ import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclar
 import com.github.javaparser.resolution.model.SymbolReference;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.hadi.clarpse.compiler.ProjectFile;
+import com.hadi.clarpse.TypeNames;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
@@ -831,7 +832,16 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      *     Inventing is worse than omitting, because a missing edge reads as a coverage gap while
      *     an invented one reads as a fact.
      */
-    private String resolveType(final String type, final boolean assumeCurrentPackage) {
+    private String resolveType(final String writtenType, final boolean assumeCurrentPackage) {
+        // Resolution is by name, and every lookup below -- the import map, the default classes, the
+        // type solver, the on-demand imports -- is keyed on the name of a type. A written type
+        // expression is not that: `DTO<HttpRequest>` is absent from an import map that holds `DTO`,
+        // and so is `Bar[]` from one that holds `Bar`. Every lookup then misses and the fallback
+        // invents a current-package name out of the expression -- `com.DTO<HttpRequest>` for a
+        // `DTO` that lives in another package entirely. So the type arguments have to come off
+        // before the lookups, not after: erasing only the recorded name would keep the invented
+        // package and merely make the invention look plausible.
+        final String type = TypeNames.erasure(writtenType);
         String resolvedType = "";
         final SymbolReference<ResolvedReferenceTypeDeclaration> symbol = typeSolver.tryToSolveType(type);
         if (currentImportsMap.containsKey(type)) {

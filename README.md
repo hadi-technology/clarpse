@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>11.0.0</version>
+  <version>11.1.0</version>
 </dependency>
 ```
 
