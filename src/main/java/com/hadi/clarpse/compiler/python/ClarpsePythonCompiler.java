@@ -5,6 +5,7 @@ import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
@@ -23,6 +24,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -128,6 +130,10 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
                 try {
                     outcomes.addAll(future.get());
                 } catch (InterruptedException e) {
+                    // The deadline fired. Cancel the partition tasks so their threads are
+                    // interrupted; each task's watchdog then destroys its daemon, unblocking a read
+                    // stuck out-of-process. Restore the flag and abort.
+                    futures.forEach(f -> f.cancel(true));
                     Thread.currentThread().interrupt();
                     throw new CompileException("Interrupted while parsing Python files.", e);
                 } catch (ExecutionException e) {
@@ -303,11 +309,20 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             final List<ParseOutcome> outcomes = new ArrayList<>();
             try (PythonDaemon daemon = new PythonDaemon()) {
                 daemon.start();
-                daemon.initRepo(persistDir, pythonVersionOverride);
-                for (final IndexedProjectFile indexedFile : files) {
-                    outcomes.add(parseSingleFile(indexedFile.file, indexedFile.index, persistDir, daemon));
+                // Thread.interrupt() cannot unblock a daemon readLine(), so a watchdog destroys the
+                // daemon when this task's thread is interrupted (the outer loop cancels the futures
+                // on its own deadline). See #180.
+                try (InterruptWatchdog watchdog =
+                             new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
+                    daemon.initRepo(persistDir, pythonVersionOverride);
+                    for (final IndexedProjectFile indexedFile : files) {
+                        if (Thread.currentThread().isInterrupted()) {
+                            throw new CancellationException("Interrupted while parsing Python files.");
+                        }
+                        outcomes.add(parseSingleFile(indexedFile.file, indexedFile.index, persistDir, daemon));
+                    }
+                    return outcomes;
                 }
-                return outcomes;
             } catch (PythonDaemonException e) {
                 throw new IllegalStateException("Python resolver failed: " + e.getMessage(), e);
             }

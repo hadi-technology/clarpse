@@ -18,6 +18,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -69,15 +70,26 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
         try {
             final List<Future<CSharpModel.ParseOutcome>> futures = new ArrayList<>();
             for (int i = 0; i < files.size(); i += 1) {
+                // Stop dispatching once cancelled: the submission loop itself is long on a large
+                // repository, and every task queued past the interrupt is discarded work. Same
+                // cooperative-cancellation contract as the Java compiler. See clarpse #180.
+                if (Thread.currentThread().isInterrupted()) {
+                    futures.forEach(f -> f.cancel(true));
+                    throw new CompileException("Interrupted while dispatching C# parse tasks.",
+                            new InterruptedException());
+                }
                 final ProjectFile file = files.get(i);
-                final int index = i;
-                futures.add(executor.submit(() -> CSharpFileParser.parseFile(file, index)));
+                futures.add(executor.submit(new CSharpParseTask(file, i)));
             }
             final List<CSharpModel.ParseOutcome> outcomes = new ArrayList<>();
             for (final Future<CSharpModel.ParseOutcome> future : futures) {
                 try {
                     outcomes.add(future.get());
                 } catch (final InterruptedException e) {
+                    // The deadline fired. Cancel the tasks still queued or running so the pool tears
+                    // down at once instead of parsing every remaining file after the result is
+                    // discarded, then restore the flag and abort.
+                    futures.forEach(f -> f.cancel(true));
                     Thread.currentThread().interrupt();
                     throw new CompileException("Interrupted while parsing C# files.", e);
                 } catch (final ExecutionException e) {
