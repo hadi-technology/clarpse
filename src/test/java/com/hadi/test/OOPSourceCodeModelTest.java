@@ -1,6 +1,7 @@
 package com.hadi.test;
 
 import static junit.framework.TestCase.assertEquals;
+import static org.junit.Assert.fail;
 
 import org.junit.Test;
 
@@ -8,7 +9,50 @@ import com.hadi.clarpse.sourcemodel.Component;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType;
 
+import java.util.concurrent.CancellationException;
+
 public class OOPSourceCodeModelTest {
+
+    /**
+     * Cooperative cancellation (#178): merging a large model is the CPU wedge where a caller
+     * enforcing a deadline otherwise sits past its interrupt. An interrupted merge must abort rather
+     * than run to completion, and it must not leave a partial model behind.
+     */
+    @Test
+    public void mergeAbortsWhenTheCallingThreadIsInterrupted() {
+        OOPSourceCodeModel target = new OOPSourceCodeModel();
+        OOPSourceCodeModel incoming = new OOPSourceCodeModel();
+        Component component = new Component();
+        component.setComponentName("Test");
+        incoming.insertComponent(component);
+
+        Thread.currentThread().interrupt();
+        try {
+            target.merge(incoming);
+            fail("merge should abort when the calling thread is interrupted");
+        } catch (CancellationException expected) {
+            // The upfront check aborts before the first component is inserted.
+            assertEquals(0, target.size());
+        } finally {
+            // Clear the flag so it does not leak into other tests sharing this thread.
+            Thread.interrupted();
+        }
+    }
+
+    /** The near-miss: an uninterrupted merge is unaffected and completes normally. */
+    @Test
+    public void mergeSucceedsWhenTheThreadIsNotInterrupted() {
+        Thread.interrupted(); // guard against a stray flag from another test on this thread
+        OOPSourceCodeModel target = new OOPSourceCodeModel();
+        OOPSourceCodeModel incoming = new OOPSourceCodeModel();
+        Component component = new Component();
+        component.setComponentName("Test");
+        incoming.insertComponent(component);
+
+        target.merge(incoming);
+
+        assertEquals(1, target.size());
+    }
 
     @Test
     public void codeModelCopyTest() {
