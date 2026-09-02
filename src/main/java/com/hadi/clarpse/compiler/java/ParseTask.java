@@ -37,8 +37,11 @@ public class ParseTask implements Callable<ParseOutcome> {
         // cancelled compile drains the tasks that have not started yet instead of parsing every
         // remaining file after the result is already being discarded. See #178.
         if (Thread.currentThread().isInterrupted()) {
-            throw new CancellationException("Java parse task for "
-                    + (file != null ? file.path() : "<unknown>") + " cancelled before start.");
+            String path = "<unknown>";
+            if (file != null) {
+                path = file.path();
+            }
+            throw new CancellationException("Java parse task for " + path + " cancelled before start.");
         }
         final ParserContext parserContext = context.get();
         return FileParser.parseFile(parserContext.parser(), parserContext.typeSolver(), file, index);

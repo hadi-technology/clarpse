@@ -25,8 +25,11 @@ final class CSharpParseTask implements Callable<CSharpModel.ParseOutcome> {
     @Override
     public CSharpModel.ParseOutcome call() {
         if (Thread.currentThread().isInterrupted()) {
-            throw new CancellationException("C# parse task for "
-                    + (file != null ? file.path() : "<unknown>") + " cancelled before start.");
+            String path = "<unknown>";
+            if (file != null) {
+                path = file.path();
+            }
+            throw new CancellationException("C# parse task for " + path + " cancelled before start.");
         }
         return CSharpFileParser.parseFile(file, index);
     }
