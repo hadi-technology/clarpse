@@ -52,9 +52,11 @@ public final class TypeScriptDaemon implements AutoCloseable {
     }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private Process process;
-    private BufferedWriter writer;
-    private BufferedReader reader;
+    // Volatile: forceStop() reads these from the interrupt watchdog thread while the owning thread
+    // is parked in request()'s readLine(). See #180.
+    private volatile Process process;
+    private volatile BufferedWriter writer;
+    private volatile BufferedReader reader;
     private int nextId = 1;
     private Path tempDir;
     private boolean permitHeld;
@@ -146,7 +148,18 @@ public final class TypeScriptDaemon implements AutoCloseable {
         }
         try {
             String line;
-            while ((line = reader.readLine()) != null) {
+            while (true) {
+                // Between-lines cooperative cancellation; a stuck read is unblocked by forceStop()
+                // from the interrupt watchdog. See #180.
+                if (Thread.currentThread().isInterrupted()) {
+                    forceStop();
+                    throw new TypeScriptDaemonException("Interrupted while awaiting the daemon response.",
+                            TypeScriptDaemonException.CODE_DAEMON_ERROR);
+                }
+                line = reader.readLine();
+                if (line == null) {
+                    break;
+                }
                 if (line.trim().isEmpty()) {
                     continue;
                 }
@@ -223,6 +236,41 @@ public final class TypeScriptDaemon implements AutoCloseable {
             tempDir = null;
         }
         releasePermit();
+    }
+
+    /**
+     * Kills the daemon process immediately, unblocking any thread parked in {@link #request} on a
+     * read so a cancelled parse stops instead of running to completion out-of-process.
+     *
+     * <p>Deliberately NOT synchronized: the thread holding this monitor is the one blocked in
+     * {@code readLine()}, so a synchronized {@code forceStop()} would deadlock against it. Called from
+     * the {@link com.hadi.clarpse.compiler.InterruptWatchdog} on another thread; {@code
+     * destroyForcibly()} and closing the pipe are thread-safe and are what makes the blocked read
+     * return. {@link #close()} still runs afterward to release the temp dir and permit. See #180.
+     */
+    public void forceStop() {
+        final Process current = process;
+        if (current != null) {
+            current.destroyForcibly();
+        }
+        closeQuietly(reader);
+        closeQuietly(writer);
+    }
+
+    /** Whether the daemon process is currently running. Used to verify {@link #forceStop}. */
+    public boolean isProcessAlive() {
+        final Process current = process;
+        return current != null && current.isAlive();
+    }
+
+    private static void closeQuietly(final java.io.Closeable closeable) {
+        if (closeable != null) {
+            try {
+                closeable.close();
+            } catch (final IOException ignored) {
+                // Best-effort: the daemon is being torn down.
+            }
+        }
     }
 
     public static final class InitResult {

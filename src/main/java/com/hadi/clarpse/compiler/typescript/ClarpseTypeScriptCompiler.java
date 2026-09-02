@@ -5,6 +5,7 @@ import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
@@ -56,11 +57,21 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         }
 
         final String persistDir = projectFiles.projectDir();
-        try (TypeScriptDaemon daemon = new TypeScriptDaemon()) {
+        try (TypeScriptDaemon daemon = new TypeScriptDaemon();
+                // TypeScript parses single-threaded on this thread, blocking in the daemon's
+                // readLine(), which Thread.interrupt() cannot unblock. The watchdog destroys the
+                // daemon when this thread is interrupted (e.g. an analysis deadline), unblocking the
+                // read; the between-files check below covers interrupts that land between files. #180.
+                InterruptWatchdog watchdog =
+                        new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
             daemon.start();
             final TypeScriptDaemon.InitResult initResult = daemon.initRepo(persistDir);
             addInvalidConfigFailures(initResult, compileFailures, persistDir);
             for (final ProjectFile file : tsFiles) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new CompileException("Interrupted while parsing TypeScript files.",
+                            new InterruptedException());
+                }
                 final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
                 final TypeScriptFileModel fileModel;
                 try {

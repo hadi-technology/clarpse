@@ -3,6 +3,7 @@ package com.hadi.clarpse.compiler.java;
 import com.hadi.clarpse.compiler.ProjectFile;
 
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 
 /**
  * A {@link Callable} task for parsing a single Java file in a parallel execution context.
@@ -31,6 +32,17 @@ public class ParseTask implements Callable<ParseOutcome> {
 
     @Override
     public ParseOutcome call() {
+        // Cooperative cancellation. JavaParser never checks the interrupt flag once it is parsing, so
+        // a task in flight cannot be stopped mid-file — but checking here means a shutdownNow() on a
+        // cancelled compile drains the tasks that have not started yet instead of parsing every
+        // remaining file after the result is already being discarded. See #178.
+        if (Thread.currentThread().isInterrupted()) {
+            String path = "<unknown>";
+            if (file != null) {
+                path = file.path();
+            }
+            throw new CancellationException("Java parse task for " + path + " cancelled before start.");
+        }
         final ParserContext parserContext = context.get();
         return FileParser.parseFile(parserContext.parser(), parserContext.typeSolver(), file, index);
     }

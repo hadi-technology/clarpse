@@ -104,6 +104,13 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                     () -> new ParserContext(persistDir, sourceRoots));
             final List<Future<ParseOutcome>> futures = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
+                // Stop dispatching once cancelled: on a large repository the submission loop itself
+                // is long, and every task queued past the interrupt is work that will be discarded.
+                // See #178.
+                if (Thread.currentThread().isInterrupted()) {
+                    futures.forEach(f -> f.cancel(true));
+                    throw new IllegalStateException("Interrupted while dispatching Java parse tasks.");
+                }
                 final ProjectFile file = files.get(i);
                 futures.add(executor.submit(new ParseTask(parserContext, file, i)));
             }
@@ -112,6 +119,11 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                 try {
                     outcomes.add(future.get());
                 } catch (InterruptedException e) {
+                    // The deadline fired. Cancel the tasks still queued or running so the pool tears
+                    // down now instead of waiting out CPU-bound work whose result is discarded, then
+                    // restore the flag and abort. The finally's awaitTermination then returns at once
+                    // because this thread's interrupt flag is set, so shutdownNow() runs immediately.
+                    futures.forEach(f -> f.cancel(true));
                     Thread.currentThread().interrupt();
                     throw new IllegalStateException("Interrupted while parsing Java files.", e);
                 } catch (ExecutionException e) {

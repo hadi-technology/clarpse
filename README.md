@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>11.1.1</version>
+  <version>11.2.0</version>
 </dependency>
 ```
 
@@ -273,6 +273,22 @@ Standardized error codes:
 - `2003` File parse/model extraction failed.
 - `2004` Daemon transport/runtime error.
 - `2005` File skipped due to excluded path rules.
+
+## Cancellation
+Clarpse honors `Thread.interrupt()` cooperatively, so a caller enforcing a time budget can abort a
+runaway parse without killing the JVM. When the parsing thread is interrupted:
+- **Java and C#** (in-process): queued per-file tasks stop draining and outstanding tasks are
+  cancelled.
+- **Python and TypeScript** (out-of-process Node daemon): the daemon process is destroyed, which
+  unblocks the transport read that `Thread.interrupt()` alone cannot — the daemon computes in a
+  separate process, so the interrupt is delivered by killing it.
+- Model merging checks the interrupt flag periodically.
+
+Cancellation is best-effort and safe: a cancelled parse throws (`CompileException` /
+`CancellationException`) rather than returning a partial model. An interrupt is a request, not a
+guarantee — work already deep inside a single file's parse or the external daemon stops at the next
+checkpoint (per-file boundary, response line, or process teardown), typically within a few hundred
+milliseconds.
 
 # Adding or Updating a Language
 Checklist for adding or updating a language implementation:

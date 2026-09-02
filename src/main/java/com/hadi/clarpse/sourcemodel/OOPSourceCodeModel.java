@@ -9,6 +9,7 @@ import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
 import java.util.stream.Stream;
 
 /**
@@ -142,14 +143,43 @@ public class OOPSourceCodeModel implements Serializable {
         return Optional.ofNullable(this.getComponents().get(componentName));
     }
 
+    /**
+     * How many components are inserted between interrupt checks during a merge.
+     *
+     * <p>Merging a large model is single-threaded and CPU-bound, and is where a caller enforcing a
+     * time budget otherwise sits past its interrupt (see #178). Checking every component would add a
+     * volatile read per insert; checking every few thousand keeps cancellation responsive within
+     * milliseconds while the overhead stays unmeasurable.
+     */
+    private static final int INTERRUPT_CHECK_INTERVAL = 2048;
+
     public void insertComponents(final Map<String, Component> newCmps) {
         if (newCmps == null) {
             return;
         }
+        // Upfront as well as periodic, so a merge that begins already-cancelled stops before it
+        // touches the first component rather than after the first batch.
+        throwIfCancelled();
+        int sinceCheck = 0;
         for (final Map.Entry<String, Component> entry : newCmps.entrySet()) {
+            if (++sinceCheck >= INTERRUPT_CHECK_INTERVAL) {
+                sinceCheck = 0;
+                throwIfCancelled();
+            }
             if (entry.getValue() != null) {
                 insertComponent(entry.getValue());
             }
+        }
+    }
+
+    /**
+     * Aborts a merge when the calling thread has been interrupted. Cooperative cancellation: an
+     * interrupt is a caller's request to stop a runaway parse without killing the JVM, and the merge
+     * is the deepest single-call CPU wedge that otherwise ignores it. See #178.
+     */
+    private static void throwIfCancelled() {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new CancellationException("Interrupted while merging components into the model.");
         }
     }
 
