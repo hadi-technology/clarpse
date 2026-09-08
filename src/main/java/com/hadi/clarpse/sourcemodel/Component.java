@@ -45,6 +45,8 @@ public final class Component implements Serializable {
     private Set<String> imports = new HashSet<>();
     @JsonInclude(Include.NON_EMPTY)
     private Set<String> modifiers = new LinkedHashSet<>();
+    @JsonInclude(Include.NON_EMPTY)
+    private Set<String> annotations = new LinkedHashSet<>();
     private ComponentType type;
     @JsonIgnore
     private Set<ComponentReference> internalReferences = new LinkedHashSet<>();
@@ -74,6 +76,7 @@ public final class Component implements Serializable {
     public Component(final Component component, final StringPool pool) {
         if (pool == null) {
             this.modifiers = new LinkedHashSet<>(component.modifiers);
+            this.annotations = new LinkedHashSet<>(component.annotations);
             this.imports = new LinkedHashSet<>(component.imports);
             this.codeFragment = component.codeFragment;
             this.componentName = component.componentName;
@@ -86,6 +89,7 @@ public final class Component implements Serializable {
             this.children.addAll(component.children);
         } else {
             this.modifiers = pool.pooledSet(component.modifiers);
+            this.annotations = pool.pooledSet(component.annotations);
             this.imports = pool.pooledSet(component.imports);
             this.codeFragment = pool.pooled(component.codeFragment);
             this.componentName = pool.pooled(component.componentName);
@@ -306,6 +310,32 @@ public final class Component implements Serializable {
             throw new IllegalArgumentException(modifier + " is an invalid modifier!");
         }
         modifiers.add(OOPSourceModelConstants.getAccessModifierMap().get(resolved));
+    }
+
+    /**
+     * The names of the annotations applied to this component's declaration.
+     *
+     * <p>Each entry is the annotation type's fully qualified name where the parser could resolve it
+     * (through an import or the symbol solver), and its simple name otherwise. An applied annotation
+     * such as {@code @Service} or {@code @Transactional} carries architectural intent that the rest
+     * of the model cannot express, so it is recorded as a first-class fact here rather than being
+     * left in the source text. The member arguments of an annotation (for example the {@code "/x"}
+     * in {@code @RequestMapping("/x")}) are not retained in this representation -- only the name.
+     *
+     * @return Unmodifiable view of the annotation names, in declaration order.
+     */
+    public Set<String> annotations() {
+        return Collections.unmodifiableSet(annotations);
+    }
+
+    /**
+     * Records that this component's declaration carries the given annotation.
+     *
+     * @param annotation Annotation type name -- fully qualified where the parser could resolve it,
+     *                   simple otherwise.
+     */
+    public void insertAnnotation(final String annotation) {
+        annotations.add(annotation);
     }
 
     public ComponentType componentType() {

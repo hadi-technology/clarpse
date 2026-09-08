@@ -16,6 +16,7 @@ import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.RecordDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
+import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.ClassExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
@@ -221,6 +222,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
 
             cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
+            recordAnnotations(ctx.getAnnotations(), cmp);
             cmp.setComponentName(ParseUtil.generateComponentName(ctx.getNameAsString(),
                     componentStack));
             cmp.setName(ctx.getNameAsString());
@@ -298,6 +300,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 cmp.setCodeFragment(typeParametersCodeFragment(ctx.getTypeParameters()));
             }
             cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
+            recordAnnotations(ctx.getAnnotations(), cmp);
             // A record is implicitly final, which its modifier list does not spell out.
             cmp.insertAccessModifier("final");
             cmp.setComponentName(ParseUtil.generateComponentName(ctx.getNameAsString(), componentStack));
@@ -460,6 +463,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             enumCmp.setImports(currentImports);
             enumCmp.setName(ctx.getNameAsString());
             enumCmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
+            recordAnnotations(ctx.getAnnotations(), enumCmp);
             ParseUtil.pointParentsToGivenChild(enumCmp, componentStack);
             if (ctx.getComment().isPresent()) {
                 enumCmp.setComment(ctx.getComment().get().toString());
@@ -548,6 +552,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             currMethodCmp.setName(ctx.getNameAsString());
             currMethodCmp.setCodeFragment(ctx.getType().asString());
             currMethodCmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
+            recordAnnotations(ctx.getAnnotations(), currMethodCmp);
             String formalParametersString = "(";
             if (ctx.getParameters() != null) {
                 formalParametersString += getFormalParameterTypesList(ctx.getParameters());
@@ -618,6 +623,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             final String methodName = ctx.getNameAsString();
             currMethodCmp.setName(methodName);
             currMethodCmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
+            recordAnnotations(ctx.getAnnotations(), currMethodCmp);
             if (ctx.getComment().isPresent()) {
                 currMethodCmp.setComment(ctx.getComment().get().toString());
             }
@@ -676,6 +682,39 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             modifierList.add(modifier.toString().toLowerCase(Locale.ROOT).trim());
         }
         return modifierList;
+    }
+
+    /**
+     * Records each annotation applied to a declaration onto the component that declaration became.
+     *
+     * @param annotations The declaration's applied annotations.
+     * @param cmp         The component to record them on.
+     */
+    private void recordAnnotations(final NodeList<AnnotationExpr> annotations, final Component cmp) {
+        for (final AnnotationExpr annotation : annotations) {
+            cmp.insertAnnotation(resolveAnnotationName(annotation));
+        }
+    }
+
+    /**
+     * Resolves an applied annotation to a type name the same way the listener resolves any other type
+     * name: to a fully qualified name where an import or the symbol solver can supply one, and to the
+     * simple name written in the source otherwise. Resolution never assumes the current package -- an
+     * annotation whose type is not on the parse path is far more useful reported as {@code Service}
+     * than invented as {@code <package>.Service}, which is the failure mode {@code resolveType}'s
+     * {@code assumeCurrentPackage=false} path exists to avoid.
+     */
+    private String resolveAnnotationName(final AnnotationExpr annotation) {
+        final String writtenName = annotation.getNameAsString();
+        try {
+            final String resolved = resolveType(writtenName, false);
+            if (resolved != null && !resolved.isEmpty()) {
+                return resolved;
+            }
+        } catch (final Exception ignored) {
+            // Fall back to the name as written; an unresolvable annotation is still a real fact.
+        }
+        return writtenName;
     }
 
     @Override
@@ -761,6 +800,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                     cmp.setComment(ctx.getComment().get().toString());
                 }
                 cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
+                recordAnnotations(ctx.getAnnotations(), cmp);
                 for (final VariableDeclarator copy : ctx.getVariables()) {
                     final Component tmp = new Component(cmp);
                     tmp.setName(copy.getNameAsString());
