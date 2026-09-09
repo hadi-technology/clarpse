@@ -667,6 +667,41 @@ function buildHeritageReferences(node, checker) {
   return references;
 }
 
+function decoratorTypeName(expression) {
+  if (!expression) {
+    return null;
+  }
+  if (state.ts.isCallExpression(expression)) {
+    return decoratorTypeName(expression.expression);
+  }
+  if (state.ts.isPropertyAccessExpression(expression)) {
+    return expression.name.text;
+  }
+  if (state.ts.isIdentifier(expression)) {
+    return expression.text;
+  }
+  return expression.getText ? expression.getText() : null;
+}
+
+// An applied decorator (`@Component`, `@Injectable`) names a type the way `extends`/`implements` do,
+// so it is emitted as an "annotation"-kind reference rather than a separate field. The decorator's
+// call arguments are not retained -- only the decorator type's name. Decorators live outside
+// `node.modifiers` in TypeScript 5, so they are read through `getDecorators`.
+function buildDecoratorReferences(node) {
+  const references = [];
+  if (!node || typeof state.ts.canHaveDecorators !== "function" || !state.ts.canHaveDecorators(node)) {
+    return references;
+  }
+  const decorators = state.ts.getDecorators(node) || [];
+  for (const decorator of decorators) {
+    const name = decoratorTypeName(decorator.expression);
+    if (name) {
+      references.push({ kind: "annotation", external: true, displayName: name });
+    }
+  }
+  return references;
+}
+
 function buildCallReferences(node, checker) {
   const references = [];
   if (!node) {
@@ -831,7 +866,10 @@ function buildFieldModel(node, checker) {
     implementationHash: stableImplementationHash(node.getText()),
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
-    references: buildReferenceModelsFromType(fieldType, checker, "type")
+    references: mergeReferences(
+      buildReferenceModelsFromType(fieldType, checker, "type"),
+      buildDecoratorReferences(node)
+    )
   };
 }
 
@@ -855,7 +893,8 @@ function buildMethodModel(node, checker, kindLabel) {
     members: paramModels.concat(bodyDetails.locals),
     references: mergeReferences(
       returnTypeObject ? buildReferenceModelsFromType(returnTypeObject, checker, "type") : [],
-      bodyDetails.references
+      bodyDetails.references,
+      buildDecoratorReferences(node)
     )
   };
 }
@@ -876,7 +915,7 @@ function buildAccessorModel(node, checker, accessorKind) {
     jsDoc: getJsDoc(node),
     cyclo: computeCyclo(state.ts, node),
     members: buildParameterModels(node.parameters || [], checker).concat(bodyDetails.locals),
-    references: mergeReferences(bodyDetails.references)
+    references: mergeReferences(bodyDetails.references, buildDecoratorReferences(node))
   };
 }
 
@@ -961,7 +1000,10 @@ function buildClassModel(node, checker) {
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
     members,
-    references: buildHeritageReferences(node, checker)
+    references: mergeReferences(
+      buildHeritageReferences(node, checker),
+      buildDecoratorReferences(node)
+    )
   };
 }
 

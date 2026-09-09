@@ -6,6 +6,7 @@ import com.hadi.clarpse.compiler.typescript.model.TypeScriptFileModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptReferenceModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptTargetModel;
 import com.hadi.clarpse.listener.ParseUtil;
+import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
@@ -291,6 +292,9 @@ final class TypeScriptModelAssembler {
         }
         if ("implements".equals(reference.kind)) {
             return new TypeImplementationReference(invoked);
+        }
+        if ("annotation".equals(reference.kind)) {
+            return new AnnotationReference(invoked);
         }
         return new SimpleTypeReference(invoked);
     }

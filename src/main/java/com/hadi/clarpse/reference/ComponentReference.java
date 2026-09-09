@@ -19,7 +19,8 @@ import java.io.Serializable;
 @JsonSubTypes({
         @Type(value = SimpleTypeReference.class, name = "simple"),
         @Type(value = TypeExtensionReference.class, name = "extension"),
-        @Type(value = TypeImplementationReference.class, name = "implementation")})
+        @Type(value = TypeImplementationReference.class, name = "implementation"),
+        @Type(value = AnnotationReference.class, name = "annotation")})
 public abstract class ComponentReference implements Serializable, Cloneable {
 
     private static final long serialVersionUID = -242718695900611890L;

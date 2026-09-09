@@ -18,6 +18,8 @@ public class PythonMethodModel {
     public int cyclo;
     public boolean classMethod;
     public boolean staticMethod;
+    /** Names of the decorators ({@code @app.route}) applied to this method or function. */
+    public List<String> decorators = new ArrayList<>();
     public List<PythonParamModel> params = new ArrayList<>();
 
     @JsonProperty("return")

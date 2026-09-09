@@ -1,5 +1,6 @@
 package com.hadi.clarpse.listener;
 
+import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
@@ -50,7 +51,13 @@ public class ParseUtil {
                 // could extend its containing class component. Without this check
                 // this would cause the parent class to have a type extension to itself
                 // which will cause problems down the line.
-                if (!(invocation instanceof TypeExtensionReference || invocation instanceof TypeImplementationReference)) {
+                //
+                // Applied annotations are excluded for the same reason of scope: an annotation is a
+                // fact about the exact declaration it sits on, so a method's `@Override` or a field's
+                // `@Autowired` must not surface as an annotation on the enclosing type.
+                if (!(invocation instanceof TypeExtensionReference
+                        || invocation instanceof TypeImplementationReference
+                        || invocation instanceof AnnotationReference)) {
                     parentCmp.insertCmpRef(invocation);
                 }
             }

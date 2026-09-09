@@ -1,5 +1,6 @@
 package com.hadi.clarpse.sourcemodel;
 
+import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
@@ -312,7 +313,8 @@ public final class OOPSourceModelConstants {
 
         SIMPLE(SimpleTypeReference.class),
         EXTENSION(TypeExtensionReference.class),
-        IMPLEMENTATION(TypeImplementationReference.class);
+        IMPLEMENTATION(TypeImplementationReference.class),
+        ANNOTATION(AnnotationReference.class);
 
         private Class<? extends ComponentReference> matchingClass = null;
 

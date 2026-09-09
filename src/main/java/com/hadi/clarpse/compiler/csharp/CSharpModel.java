@@ -98,6 +98,8 @@ final class CSharpModel {
         /** Hash over the whole declaration, body included, so that implementation edits are visible. */
         int implementationHash;
         List<String> modifiers = new ArrayList<>();
+        /** Names of the attributes ({@code [ApiController]}) applied to this type declaration. */
+        List<String> annotations = new ArrayList<>();
         List<String> baseTypes = new ArrayList<>();
         List<CSharpMemberModel> members = new ArrayList<>();
         List<CSharpTypeModel> nestedTypes = new ArrayList<>();
@@ -122,6 +124,8 @@ final class CSharpModel {
         /** Hash over the whole declaration, body included, so that implementation edits are visible. */
         int implementationHash;
         List<String> modifiers = new ArrayList<>();
+        /** Names of the attributes ({@code [HttpGet]}) applied to this member declaration. */
+        List<String> annotations = new ArrayList<>();
         List<CSharpParameterModel> parameters = new ArrayList<>();
         List<CSharpMemberModel> locals = new ArrayList<>();
         List<String> simpleTypeUsages = new ArrayList<>();

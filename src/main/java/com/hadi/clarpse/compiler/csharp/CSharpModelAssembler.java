@@ -1,6 +1,7 @@
 package com.hadi.clarpse.compiler.csharp;
 
 import com.hadi.clarpse.listener.ParseUtil;
+import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
@@ -188,6 +189,7 @@ final class CSharpModelAssembler {
                                    final Stack<Component> stack) {
         final Component typeComponent = buildTypeComponent(typeModel);
         ParseUtil.pointParentsToGivenChild(typeComponent, stack);
+        attachAnnotationReferences(typeComponent, typeModel.annotations, typeIndex, typeModel);
         stack.push(typeComponent);
         for (final String baseType : typeModel.baseTypes) {
             for (final String rawToken : CSharpFileParser.extractTypeTokens(baseType)) {
@@ -274,6 +276,7 @@ final class CSharpModelAssembler {
             return;
         }
         ParseUtil.pointParentsToGivenChild(component, stack);
+        attachAnnotationReferences(component, memberModel.annotations, typeIndex, ownerType);
         stack.push(component);
         if (component.componentType().isMethodComponent()) {
             for (final CSharpModel.CSharpParameterModel parameter : memberModel.parameters) {
@@ -373,6 +376,39 @@ final class CSharpModelAssembler {
         }
         applyCodeHash(component, localModel.implementationHash, localModel.codeFragment);
         return component;
+    }
+
+    /**
+     * Records each applied attribute as an {@link AnnotationReference} on the component -- the same
+     * mechanism base types use for extension/implementation, so an attribute is a distinct kind of
+     * reference rather than a separate field. The attribute type is resolved to a repository unique
+     * name where one exists, and otherwise kept as the name written in source: an attribute is a
+     * real fact whether or not its declaring type is on the parse path, so an unresolved one is
+     * still recorded (unlike a base type, which is dropped when it cannot be resolved).
+     */
+    private static void attachAnnotationReferences(final Component component,
+                                                   final Collection<String> annotationNames,
+                                                   final TypeIndex typeIndex,
+                                                   final CSharpModel.CSharpTypeModel ownerType) {
+        if (annotationNames == null) {
+            return;
+        }
+        final Set<String> seen = new LinkedHashSet<>();
+        for (final String annotationName : annotationNames) {
+            if (annotationName == null || annotationName.isBlank()) {
+                continue;
+            }
+            final String token = annotationName.trim();
+            final String resolved = typeIndex.resolveType(token, ownerType, null);
+            String invoked = token;
+            if (resolved != null) {
+                invoked = resolved;
+            }
+            if (invoked.isEmpty() || invoked.equals(component.uniqueName()) || !seen.add(invoked)) {
+                continue;
+            }
+            component.insertCmpRef(new AnnotationReference(invoked));
+        }
     }
 
     private static void attachTypeReferences(final Component component,

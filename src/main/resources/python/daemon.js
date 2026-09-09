@@ -1822,6 +1822,7 @@ function extractMethod(methodNode, ctx, parseNodeType) {
     cyclo,
     classMethod: isClassMethod,
     staticMethod: isStaticMethod,
+    decorators,
     params,
     return: returnRef,
     bodyReferences
@@ -1834,6 +1835,7 @@ function extractFunction(functionNode, ctx, parseNodeType) {
     return null;
   }
   const comment = extractSuiteDocString(functionNode.d ? functionNode.d.suite : null, ctx.fileText);
+  const decorators = extractDecoratorNames(functionNode, ctx.fileText);
   const params = extractParams(functionNode, ctx, parseNodeType);
   const returnNode = getNodeProp(functionNode, ['returnTypeAnnotation', 'returnType', 'returnAnnotation']);
   const returnRawText = returnNode ? textForNode(returnNode, ctx.fileText) : 'Any';
@@ -1858,6 +1860,7 @@ function extractFunction(functionNode, ctx, parseNodeType) {
     cyclo,
     classMethod: false,
     staticMethod: false,
+    decorators,
     params,
     return: returnRef,
     bodyReferences
@@ -2008,6 +2011,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
     }
     const classUniqueName = resolveClassUniqueName(className, ctx, parentUniqueName);
     const classComment = extractSuiteDocString(statement.d ? statement.d.suite : null, ctx.fileText);
+    const classDecorators = extractDecoratorNames(statement, ctx.fileText);
     let baseExprs = [];
     if (statement.d && Array.isArray(statement.d.baseClassExpressions)) {
       baseExprs = statement.d.baseClassExpressions;
@@ -2059,6 +2063,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       uniqueName: classUniqueName,
       comment: classComment,
       implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
+      decorators: classDecorators,
       bases,
       methods,
       fields,
