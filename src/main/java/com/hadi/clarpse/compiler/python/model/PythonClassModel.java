@@ -12,6 +12,8 @@ public class PythonClassModel {
     public String uniqueName;
     public String comment;
     public int implementationHash;
+    /** Names of the decorators ({@code @dataclass}) applied to this class. */
+    public List<String> decorators = new ArrayList<>();
     public List<PythonTypeRefModel> bases = new ArrayList<>();
     public List<PythonMethodModel> methods = new ArrayList<>();
     public List<PythonFieldModel> fields = new ArrayList<>();

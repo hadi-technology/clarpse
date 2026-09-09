@@ -8,6 +8,7 @@ import com.hadi.clarpse.compiler.python.model.PythonMethodModel;
 import com.hadi.clarpse.compiler.python.model.PythonParamModel;
 import com.hadi.clarpse.compiler.python.model.PythonTypeRefModel;
 import com.hadi.clarpse.listener.ParseUtil;
+import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
@@ -210,7 +211,32 @@ final class PythonModelAssembler {
                 }
             }
         }
+        attachDecoratorReferences(component, classModel.decorators);
         return component;
+    }
+
+    /**
+     * Records each applied decorator as an {@link AnnotationReference} on the component -- the same
+     * mechanism a base class uses for its extension reference, so a decorator is a distinct kind of
+     * reference and not a separate field. The daemon has already reduced each decorator to its type
+     * name ({@code app.route} to {@code route}); an unresolved decorator is still a real fact, so it
+     * is kept under that name.
+     */
+    private static void attachDecoratorReferences(final Component component, final java.util.List<String> decorators) {
+        if (decorators == null) {
+            return;
+        }
+        final Set<String> seen = new java.util.LinkedHashSet<>();
+        for (final String decorator : decorators) {
+            if (decorator == null || decorator.isBlank()) {
+                continue;
+            }
+            final String invoked = decorator.trim();
+            if (invoked.equals(component.uniqueName()) || !seen.add(invoked)) {
+                continue;
+            }
+            component.insertCmpRef(new AnnotationReference(invoked));
+        }
     }
 
     private static Component buildFieldComponent(final Package pkg,
@@ -334,6 +360,7 @@ final class PythonModelAssembler {
                 }
             }
         }
+        attachDecoratorReferences(component, method.decorators);
         return component;
     }
 
@@ -375,6 +402,7 @@ final class PythonModelAssembler {
                 }
             }
         }
+        attachDecoratorReferences(component, function.decorators);
         return component;
     }
 

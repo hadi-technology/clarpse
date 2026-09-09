@@ -346,6 +346,7 @@ final class CSharpFileParser {
         typeModel.sourceText = fileModel.sourceText;
         typeModel.comment = extractLeadingComment(fileModel.sourceText, node.startOffset);
         typeModel.modifiers = parseModifiers(node.text);
+        typeModel.annotations = precedingAttributeNames(node);
         typeModel.partial = typeModel.modifiers.contains("partial");
         typeModel.startOffset = node.startOffset;
         typeModel.endOffset = node.endOffset;
@@ -438,6 +439,14 @@ final class CSharpFileParser {
                 break;
             default:
                 break;
+        }
+        // The member's attributes sit on the declaration node and apply to every component it yields
+        // (a `[Required] public int A, B;` decorates both fields).
+        final List<String> attributeNames = precedingAttributeNames(node);
+        if (!attributeNames.isEmpty()) {
+            for (final CSharpModel.CSharpMemberModel member : members) {
+                member.annotations = new ArrayList<>(attributeNames);
+            }
         }
         return members;
     }
@@ -640,6 +649,38 @@ final class CSharpFileParser {
         }
         final SyntaxNode block = firstChild(parent, "cs:block-list");
         return block == null || child.endOffset <= block.startOffset;
+    }
+
+    /**
+     * The names of the attributes applied to a type or member declaration.
+     *
+     * <p>An attribute section ({@code [ApiController]}) is not a child of the declaration it decorates;
+     * the parser emits it as a {@code cs:attribute-declaration} sibling immediately preceding the
+     * declaration in the same block. So the attributes for {@code node} are the run of
+     * {@code cs:attribute-declaration} siblings directly before it, and each attribute's name is the
+     * {@code cs:id-role} it wraps ({@code Route} in {@code [Route("/x")]}). A single section may carry
+     * several attributes ({@code [A, B]}), which appear as several {@code cs:id-role} children.
+     */
+    private static List<String> precedingAttributeNames(final SyntaxNode node) {
+        final List<String> names = new ArrayList<>();
+        if (node == null || node.parent == null) {
+            return names;
+        }
+        final List<SyntaxNode> siblings = node.parent.children;
+        final int index = siblings.indexOf(node);
+        if (index < 0) {
+            return names;
+        }
+        for (int i = index - 1; i >= 0; i -= 1) {
+            final SyntaxNode sibling = siblings.get(i);
+            if (!"cs:attribute-declaration".equals(sibling.type)) {
+                break;
+            }
+            final List<String> attributeNames = directChildTexts(sibling, "cs:id-role");
+            // Prepend so declaration order is preserved across the backward walk.
+            names.addAll(0, attributeNames);
+        }
+        return names;
     }
 
     /**

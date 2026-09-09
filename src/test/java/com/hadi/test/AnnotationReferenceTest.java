@@ -5,9 +5,13 @@ import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
+import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.sourcemodel.Component;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
+import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.TypeReferences;
 import org.junit.Test;
+
+import java.util.List;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -15,10 +19,12 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * Applied annotations ({@code @Service} on a class, {@code @Override} on a method, {@code @Autowired}
- * on a field) carry first-class architectural intent, so the parsed model must record them on the
- * component they annotate. See issue #181.
+ * on a field) carry first-class architectural intent, so the parsed model records each as a distinct
+ * {@code ANNOTATION}-kind {@link ComponentReference} on the component it annotates -- the same way
+ * {@code extends} and {@code implements} are modelled -- rather than as a separate field. See issue
+ * #181.
  */
-public class AnnotationCaptureTest {
+public class AnnotationReferenceTest {
 
     @Test
     public void classLevelAnnotationIsCaptured() throws Exception {
@@ -27,7 +33,7 @@ public class AnnotationCaptureTest {
                 "@Service",
                 "public class Foo {}");
         final Component foo = component(compile("/app/Foo.java", java), "app.Foo");
-        assertTrue("class annotation @Service should be captured: " + foo.annotations(),
+        assertTrue("class annotation @Service should be an annotation reference: " + annotations(foo),
                 hasAnnotation(foo, "Service"));
     }
 
@@ -41,9 +47,9 @@ public class AnnotationCaptureTest {
                 "    public String toString() { return null; }",
                 "}");
         final Component method = component(compile("/app/Foo.java", java), "app.Foo.toString()");
-        assertTrue("@Override should be captured: " + method.annotations(),
+        assertTrue("@Override should be an annotation reference: " + annotations(method),
                 hasAnnotation(method, "Override"));
-        assertTrue("@Deprecated should be captured: " + method.annotations(),
+        assertTrue("@Deprecated should be an annotation reference: " + annotations(method),
                 hasAnnotation(method, "Deprecated"));
     }
 
@@ -56,7 +62,7 @@ public class AnnotationCaptureTest {
                 "    private Bar bar;",
                 "}");
         final Component field = component(compile("/app/Foo.java", java), "app.Foo.bar");
-        assertTrue("@Autowired should be captured on the field: " + field.annotations(),
+        assertTrue("@Autowired should be an annotation reference on the field: " + annotations(field),
                 hasAnnotation(field, "Autowired"));
     }
 
@@ -67,7 +73,7 @@ public class AnnotationCaptureTest {
                 "@RequestMapping(\"/x\")",
                 "public class Foo {}");
         final Component foo = component(compile("/app/Foo.java", java), "app.Foo");
-        assertTrue("@RequestMapping name should be captured even with members: " + foo.annotations(),
+        assertTrue("@RequestMapping name should be captured even with members: " + annotations(foo),
                 hasAnnotation(foo, "RequestMapping"));
     }
 
@@ -79,19 +85,19 @@ public class AnnotationCaptureTest {
                 "@Validated",
                 "public class Foo {}");
         final Component foo = component(compile("/app/Foo.java", java), "app.Foo");
-        assertTrue("@Service should be captured: " + foo.annotations(), hasAnnotation(foo, "Service"));
-        assertTrue("@Validated should be captured: " + foo.annotations(), hasAnnotation(foo, "Validated"));
+        assertTrue("@Service should be captured: " + annotations(foo), hasAnnotation(foo, "Service"));
+        assertTrue("@Validated should be captured: " + annotations(foo), hasAnnotation(foo, "Validated"));
     }
 
     @Test
-    public void unannotatedClassHasEmptyNonNullAnnotations() throws Exception {
+    public void unannotatedClassHasNoAnnotationReferences() throws Exception {
         final String java = String.join("\n",
                 "package app;",
                 "public class Foo {}");
         final Component foo = component(compile("/app/Foo.java", java), "app.Foo");
-        assertNotNull("annotations() must never be null", foo.annotations());
-        assertTrue("an un-annotated class has no annotations: " + foo.annotations(),
-                foo.annotations().isEmpty());
+        assertNotNull("references(ANNOTATION) must never be null", foo.references(TypeReferences.ANNOTATION));
+        assertTrue("an un-annotated class has no annotation references: " + annotations(foo),
+                foo.references(TypeReferences.ANNOTATION).isEmpty());
     }
 
     @Test
@@ -102,19 +108,25 @@ public class AnnotationCaptureTest {
                 "@Service",
                 "public class Foo {}");
         final Component foo = component(compile("/app/Foo.java", java), "app.Foo");
-        assertTrue("an imported annotation should resolve to its import FQN: " + foo.annotations(),
-                foo.annotations().contains("org.springframework.stereotype.Service"));
-        assertFalse("it should not also be recorded under its bare simple name: " + foo.annotations(),
-                foo.annotations().contains("Service"));
+        assertTrue("an imported annotation should resolve to its import FQN: " + annotations(foo),
+                annotations(foo).contains("org.springframework.stereotype.Service"));
+        assertFalse("it should not also be recorded under its bare simple name: " + annotations(foo),
+                annotations(foo).contains("Service"));
+    }
+
+    private static List<String> annotations(final Component component) {
+        return component.references(TypeReferences.ANNOTATION).stream()
+                .map(ComponentReference::invokedComponent)
+                .collect(java.util.stream.Collectors.toList());
     }
 
     /**
-     * An annotation is matched by its simple name so the assertion holds whether the listener resolved
-     * it to an import FQN ({@code org.springframework.stereotype.Service}) or fell back to the simple
-     * name ({@code Service}).
+     * An annotation reference is matched by its simple name so the assertion holds whether the parser
+     * resolved it to an import FQN ({@code org.springframework.stereotype.Service}) or fell back to the
+     * simple name ({@code Service}).
      */
     private static boolean hasAnnotation(final Component component, final String simpleName) {
-        return component.annotations().stream()
+        return annotations(component).stream()
                 .anyMatch(a -> a.equals(simpleName) || a.endsWith("." + simpleName));
     }
 

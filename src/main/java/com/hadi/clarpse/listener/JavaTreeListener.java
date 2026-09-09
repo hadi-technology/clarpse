@@ -46,6 +46,7 @@ import com.github.javaparser.resolution.model.SymbolReference;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.TypeNames;
+import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
@@ -685,14 +686,17 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     }
 
     /**
-     * Records each annotation applied to a declaration onto the component that declaration became.
+     * Records each annotation applied to a declaration as an {@link AnnotationReference} on the
+     * component that declaration became -- the same mechanism {@code extends} and {@code implements}
+     * use, so that an applied annotation is a distinct kind of reference and not a separate field.
      *
      * @param annotations The declaration's applied annotations.
      * @param cmp         The component to record them on.
      */
     private void recordAnnotations(final NodeList<AnnotationExpr> annotations, final Component cmp) {
         for (final AnnotationExpr annotation : annotations) {
-            cmp.insertAnnotation(resolveAnnotationName(annotation));
+            ParseUtil.insertCmpRef(cmp, new AnnotationReference(resolveAnnotationName(annotation)),
+                    this.componentStack);
         }
     }
 
