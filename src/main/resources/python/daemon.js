@@ -41,7 +41,8 @@ let state = {
   serviceProvider: null,
   importResolver: null,
   program: null,
-  fileUriMap: new Map()
+  fileUriMap: new Map(),
+  moduleClasses: new Map()
 };
 
 function writeResponse(id, result) {
@@ -619,10 +620,11 @@ function extractCandidateNames(raw) {
   return candidates.filter(Boolean);
 }
 
-function resolveModuleSymbol(moduleName, symbolName, ctx) {
-  if (!moduleName || !symbolName) {
-    return null;
-  }
+/**
+ * The repo file a module name refers to from the current file: as written, then relative to the
+ * current package, then relative to the current module's parent. Null when the module is not in the repo.
+ */
+function moduleFileFor(moduleName, ctx) {
   let filePath = ctx.moduleIndex.get(moduleName);
   if (!filePath && ctx.packageName) {
     filePath = ctx.moduleIndex.get(ctx.packageName + '.' + moduleName);
@@ -634,6 +636,74 @@ function resolveModuleSymbol(moduleName, symbolName, ctx) {
       filePath = ctx.moduleIndex.get(parts.join('.') + '.' + moduleName) || filePath;
     }
   }
+  return filePath || null;
+}
+
+/**
+ * The classes a repo module defines at its top level, read from its own source and cached per repo.
+ * This is the evidence that a name imported from the module is a class -- and not a function, a
+ * constant or a re-export -- before a use of that name is recorded as a type reference. A module
+ * that cannot be read or parsed confirms no class, so a use of a name from it is simply not
+ * recorded; it is never recorded as something else.
+ */
+function classesDefinedIn(filePath) {
+  if (state.moduleClasses.has(filePath)) {
+    return state.moduleClasses.get(filePath);
+  }
+  let classes = new Set();
+  try {
+    const api = getPyrightApi();
+    const parser = new api.parser.Parser();
+    const parseOptions = new api.parser.ParseOptions();
+    const versionEnum = resolvePythonVersionEnum(state.pythonVersion, api);
+    if (versionEnum && 'pythonVersion' in parseOptions) {
+      parseOptions.pythonVersion = versionEnum;
+    }
+    const parseResult = parser.parseSourceFile(fs.readFileSync(filePath, 'utf8'), parseOptions, undefined);
+    let parseTree = null;
+    if (parseResult && parseResult.parserOutput && parseResult.parserOutput.parseTree) {
+      parseTree = parseResult.parserOutput.parseTree;
+    } else if (parseResult && parseResult.parseTree) {
+      parseTree = parseResult.parseTree;
+    }
+    if (parseTree) {
+      classes = collectLocalClasses(parseTree, getParseNodeTypeEnum(api));
+    }
+  } catch (err) {
+    classes = new Set();
+  }
+  state.moduleClasses.set(filePath, classes);
+  return classes;
+}
+
+/**
+ * The unique name of the repo class a plain name refers to in the current file -- a class defined at
+ * the top of this file, or one imported from a repo module that defines it -- or null for anything
+ * else: a function, a constant, a re-export, or a name from outside the repo.
+ */
+function resolveRepoClass(name, ctx) {
+  if (!name) {
+    return null;
+  }
+  if (ctx.localClasses && ctx.localClasses.has(name)) {
+    return resolveCandidate(name, ctx);
+  }
+  const imported = ctx.importedSymbols ? ctx.importedSymbols.get(name) : null;
+  if (!imported || !imported.moduleName || !imported.symbolName) {
+    return null;
+  }
+  const filePath = moduleFileFor(imported.moduleName, ctx);
+  if (!filePath || !classesDefinedIn(filePath).has(imported.symbolName)) {
+    return null;
+  }
+  return resolveModuleSymbol(imported.moduleName, imported.symbolName, ctx);
+}
+
+function resolveModuleSymbol(moduleName, symbolName, ctx) {
+  if (!moduleName || !symbolName) {
+    return null;
+  }
+  const filePath = moduleFileFor(moduleName, ctx);
   if (!filePath) {
     return null;
   }
@@ -1874,6 +1944,7 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
   const seen = new Set();
   const localNames = collectLocalNames(functionNode, parseNodeType);
   const moduleMemberTargets = new Set();
+  const calleeNames = new Set();
 
   /**
    * A dotted name whose first segment is a module binding the function does not shadow resolves the
@@ -1894,11 +1965,33 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
     if (!resolved) {
       return false;
     }
-    if (!moduleMemberTargets.has(resolved)) {
-      moduleMemberTargets.add(resolved);
-      refs.push({ raw: dotted, targetUniqueName: resolved, externalLabel: resolved });
-    }
+    pushTarget(dotted, resolved);
     return true;
+  }
+
+  /**
+   * A repo class used by name in the body is a dependency however it is used -- `User.create()`,
+   * `User.LIMIT`, `isinstance(x, User)`, `register(User)`, `handler = User`, `(User, Admin)` -- as
+   * it already was when called, `User()`. Only a name that is a repo class counts, and only where the
+   * function does not bind that name itself.
+   */
+  function addClassRef(name, raw) {
+    if (!name || localNames.has(name)) {
+      return false;
+    }
+    const resolved = resolveRepoClass(name, ctx);
+    if (!resolved) {
+      return false;
+    }
+    pushTarget(raw, resolved);
+    return true;
+  }
+
+  function pushTarget(raw, target) {
+    if (!moduleMemberTargets.has(target)) {
+      moduleMemberTargets.add(target);
+      refs.push({ raw, targetUniqueName: target, externalLabel: target });
+    }
   }
 
   function isKnownImport(baseName) {
@@ -1934,25 +2027,53 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
 
     if (isClassNode(node, parseNodeType) || isFunctionNode(node, parseNodeType)) return;
 
+    // A binding or a scope declaration names nothing it uses: a function-local import, and the targets of
+    // `global` and `nonlocal`.
+    if (parseNodeType && (node.nodeType === parseNodeType.Import || node.nodeType === parseNodeType.ImportFrom
+      || node.nodeType === parseNodeType.Global || node.nodeType === parseNodeType.Nonlocal)) {
+      return;
+    }
+
     if (parseNodeType && parseNodeType.Call !== undefined && node.nodeType === parseNodeType.Call) {
       const calleeNode = node.d.leftExpr;
       if (calleeNode && !addModuleMemberRef(dottedNameOf(calleeNode, parseNodeType))) {
         addRef(textForNode(calleeNode, ctx.fileText));
       }
+      if (calleeNode && calleeNode.nodeType === parseNodeType.Name) {
+        // `User()` is recorded by addRef above, as it always has been.
+        calleeNames.add(calleeNode);
+      }
     }
 
-    // A class reached through a module is a dependency wherever it is used, not only when called:
-    // `pkg.models.User.LIMIT`, `isinstance(x, models.User)`. A chain of plain names holds nothing
-    // further to visit.
+    // A class reached through a module, or named directly, is a dependency wherever it is used, not only
+    // when called: `pkg.models.User.LIMIT`, `isinstance(x, models.User)`, `User.create()`. A chain of
+    // plain names holds nothing further to visit.
     if (parseNodeType && parseNodeType.MemberAccess !== undefined && node.nodeType === parseNodeType.MemberAccess) {
       const dotted = dottedNameOf(node, parseNodeType);
       if (dotted) {
-        addModuleMemberRef(dotted);
+        if (!addModuleMemberRef(dotted)) {
+          addClassRef(dotted.substring(0, dotted.indexOf('.')), dotted);
+        }
         return;
       }
     }
 
+    if (parseNodeType && parseNodeType.Name !== undefined && node.nodeType === parseNodeType.Name) {
+      if (!calleeNames.has(node)) {
+        addClassRef(nameFromNode(node), nameFromNode(node));
+      }
+      return;
+    }
+
+    // The keyword of `f(User=1)` and `case Point(x=px)`, and the attribute of `obj().User`, are names that
+    // refer to nothing in this scope.
+    const nonUseKey = !parseNodeType ? null
+      : (node.nodeType === parseNodeType.Argument || node.nodeType === parseNodeType.PatternClassArgument) ? 'name'
+        : node.nodeType === parseNodeType.MemberAccess ? 'member' : null;
     for (const key of Object.keys(node.d)) {
+      if (key === nonUseKey) {
+        continue;
+      }
       const child = node.d[key];
       if (Array.isArray(child)) {
         for (const item of child) {
@@ -2302,6 +2423,7 @@ async function handleInitRepo(params) {
   const scannedFiles = scanRepo(normalized);
   state.moduleIndex = buildModuleIndex(normalized, extraPaths, scannedFiles);
   state.fileUriMap = new Map();
+  state.moduleClasses = new Map();
   state.program = null;
   state.importResolver = null;
   state.serviceProvider = null;
