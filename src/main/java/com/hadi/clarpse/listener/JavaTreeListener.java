@@ -198,17 +198,26 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         super.visit(ctx, arg);
     }
 
+    /**
+     * A class literal -- {@code Foo.class}, {@code a.b.Foo.class}, {@code Foo[].class} -- writes its
+     * type in a type position, and is a dependency on it exactly as {@code Foo x;} is:
+     * {@code store.save(record, Foo.class)} can be the only place a class mentions {@code Foo}. The
+     * type is resolved the way every other written type is. {@code int.class} and {@code void.class}
+     * name no class and contribute nothing.
+     */
     @Override
     public final void visit(final ClassExpr ctx, final Object arg) {
-        if (ctx.toString().endsWith(".class")) {
-            for (final Node node : ctx.getChildNodes()) {
-                if (node.toString().equals(ctx.toString().substring(0, ctx.toString().indexOf(
-                        ".class")))) {
-                    ctx.remove(node);
-                }
-            }
+        ctx.getType().accept(this, arg);
+    }
 
-        }
+    /**
+     * The values of the annotations on a type declaration -- {@code @Uses(Foo.class)},
+     * {@code @Path(Routes.BASE)} -- are dependencies of that type, as they already are on methods,
+     * constructors, fields and enums. The annotation type itself is recorded separately, as an
+     * {@link AnnotationReference}, by {@link #recordAnnotations}.
+     */
+    private void visitAnnotationValues(final NodeList<AnnotationExpr> annotations, final Object arg) {
+        annotations.forEach(annotation -> annotation.accept(this, arg));
     }
 
     @Override
@@ -259,6 +268,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
 
             componentStack.push(cmp);
+            visitAnnotationValues(ctx.getAnnotations(), arg);
             visitTypeBody(ctx, arg);
             completeComponent();
         }
@@ -325,6 +335,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
 
             componentStack.push(cmp);
+            visitAnnotationValues(ctx.getAnnotations(), arg);
             insertRecordComponentFields(ctx, arg);
             insertRecordCanonicalConstructor(ctx, arg);
             visitTypeBody(ctx, arg);
