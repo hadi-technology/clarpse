@@ -76,8 +76,12 @@ public class SimpleTypeReferenceTest {
         rawData.insertFile(new ProjectFile("/Logger.java", codeB));
         final ClarpseProject parseService = new ClarpseProject(rawData, Lang.JAVA);
         OOPSourceCodeModel generatedSourceModel = parseService.result().model();
-        Assert.assertEquals(
-                1, generatedSourceModel.copyOfComponent("Test.log").get().references(TypeReferences.SIMPLE).size());
+        // The imported field type resolves through the import; the class literal passed to the
+        // constructor is a type use of its own, of a type that is not on the parse path.
+        final java.util.Set<String> invoked = new java.util.HashSet<>();
+        generatedSourceModel.copyOfComponent("Test.log").get().references(TypeReferences.SIMPLE)
+                .forEach(ref -> invoked.add(ref.invokedComponent()));
+        Assert.assertEquals(java.util.Set.of("some.maven.pkg.Logger", "Lol"), invoked);
     }
 
     @Test

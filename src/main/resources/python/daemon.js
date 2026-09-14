@@ -1726,12 +1726,180 @@ function extractParams(funcNode, ctx, parseNodeType) {
   return params;
 }
 
-function collectBodyReferences(suite, ctx, parseNodeType) {
+/**
+ * The names a function binds for itself: its parameters, and every name it assigns, loops over,
+ * catches, imports, deletes or otherwise declares anywhere in its body. Python decides scope per
+ * function, not per statement -- a name bound anywhere in a function is local throughout it -- so in
+ * `models = pick(); models.User()` the `models` is never the module imported under that name, on
+ * whichever line the assignment sits. Nested functions and classes contribute only their own name.
+ * Lambdas and comprehensions have scopes of their own but are counted in, which can only withhold a
+ * reference, never invent one.
+ */
+function collectLocalNames(functionNode, parseNodeType) {
+  const names = new Set();
+  const globals = new Set();
+  const types = parseNodeType || {};
+
+  function addTarget(expr) {
+    if (!expr || !expr.d) {
+      return;
+    }
+    if (expr.nodeType === types.Name) {
+      names.add(nameFromNode(expr));
+    } else if (expr.nodeType === types.Tuple || expr.nodeType === types.List) {
+      (expr.d.items || []).forEach(addTarget);
+    } else if (expr.nodeType === types.TypeAnnotation) {
+      addTarget(expr.d.valueExpr);
+    } else if (expr.nodeType === types.Unpack) {
+      addTarget(expr.d.expr);
+    }
+    // Assigning to an attribute or an item -- `a.b = x`, `a[0] = x` -- binds no name.
+  }
+
+  function visit(node, isRoot) {
+    if (!node || typeof node !== 'object' || !node.d) {
+      return;
+    }
+    if (!isRoot && (isFunctionNode(node, parseNodeType) || isClassNode(node, parseNodeType))) {
+      names.add(nameFromNode(node.d.name));
+      return;
+    }
+    const type = node.nodeType;
+    if (type === types.Parameter || type === types.Except || type === types.AssignmentExpression) {
+      addTarget(node.d.name);
+    } else if (type === types.Assignment || type === types.AugmentedAssignment) {
+      addTarget(node.d.leftExpr);
+    } else if (type === types.TypeAnnotation) {
+      addTarget(node.d.valueExpr);
+    } else if (type === types.For || type === types.ComprehensionFor) {
+      addTarget(node.d.targetExpr);
+    } else if (type === types.WithItem || type === types.PatternCapture || type === types.PatternAs) {
+      addTarget(node.d.target);
+    } else if (type === types.Del || type === types.Nonlocal) {
+      (node.d.targets || []).forEach(addTarget);
+    } else if (type === types.Global) {
+      (node.d.targets || []).forEach(target => globals.add(nameFromNode(target)));
+    } else if (type === types.ImportAs) {
+      const nameParts = node.d.module && node.d.module.d ? node.d.module.d.nameParts : null;
+      if (node.d.alias) {
+        addTarget(node.d.alias);
+      } else if (Array.isArray(nameParts) && nameParts.length) {
+        addTarget(nameParts[0]);
+      }
+    } else if (type === types.ImportFromAs) {
+      addTarget(node.d.alias || node.d.name);
+    }
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      if (Array.isArray(child)) {
+        child.forEach(item => visit(item, false));
+      } else if (child && typeof child === 'object' && child.d) {
+        visit(child, false);
+      }
+    }
+  }
+
+  visit(functionNode, true);
+  // `global models` makes `models` the module-level name, which is the import.
+  globals.forEach(name => names.delete(name));
+  return names;
+}
+
+/**
+ * The name an expression spells when it is nothing but identifiers joined by dots -- `pkg.models.User`
+ * -- or null for anything else, `self.x`, `f().x` and `a[0].x` included where they are not plain names.
+ */
+function dottedNameOf(node, parseNodeType) {
+  if (!node || !node.d || !parseNodeType) {
+    return null;
+  }
+  if (node.nodeType === parseNodeType.Name) {
+    return nameFromNode(node) || null;
+  }
+  if (parseNodeType.MemberAccess !== undefined && node.nodeType === parseNodeType.MemberAccess) {
+    const left = dottedNameOf(node.d.leftExpr, parseNodeType);
+    const member = nameFromNode(node.d.member);
+    return left && member ? left + '.' + member : null;
+  }
+  return null;
+}
+
+/**
+ * Whether a file-level import binds the name to a module: `import a.b` binds `a`, `import a.b as m`
+ * binds `m`, and `from a import b` binds `b` when `a.b` is a module.
+ */
+function bindsModule(name, ctx) {
+  if (!name || !ctx.importedModules) {
+    return false;
+  }
+  if (ctx.importedModules.has(name)) {
+    return true;
+  }
+  for (const [localName, moduleName] of ctx.importedModules) {
+    if (localName === moduleName && localName.startsWith(name + '.')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The member a dotted name reaches through a module binding: the name immediately after the longest
+ * prefix that is a module in the repo. `m.User.LIMIT` with `m` bound to `pkg.models` is
+ * `pkg.models.User`. A name that is itself a module names no member, and a name under no repo module
+ * resolves to nothing.
+ */
+function resolveModuleMember(dotted, ctx) {
+  const parts = dotted.split('.');
+  const boundModule = ctx.importedModules.get(parts[0]);
+  const qualified = boundModule ? boundModule.split('.').concat(parts.slice(1)) : parts;
+  if (ctx.moduleIndex.has(qualified.join('.'))) {
+    return null;
+  }
+  for (let i = qualified.length - 1; i >= 1; i -= 1) {
+    const moduleName = qualified.slice(0, i).join('.');
+    if (ctx.moduleIndex.has(moduleName)) {
+      return resolveModuleSymbol(moduleName, qualified[i], ctx);
+    }
+  }
+  return null;
+}
+
+function collectBodyReferences(functionNode, ctx, parseNodeType) {
+  const suite = functionNode && functionNode.d ? functionNode.d.suite : null;
   if (!suite || !suite.d) {
     return [];
   }
   const refs = [];
   const seen = new Set();
+  const localNames = collectLocalNames(functionNode, parseNodeType);
+  const moduleMemberTargets = new Set();
+
+  /**
+   * A dotted name whose first segment is a module binding the function does not shadow resolves the
+   * way the same name written as an annotation does, to the member of the repo module it names. That
+   * is the same reference `User()` gets after `from pkg.models import User`: a class in the repo is an
+   * internal dependency, and anything else -- a function, a constant, a name the module does not
+   * define -- is classified external by the model, as the imported form's is.
+   */
+  function addModuleMemberRef(dotted) {
+    if (!dotted || dotted.indexOf('.') < 0) {
+      return false;
+    }
+    const base = dotted.substring(0, dotted.indexOf('.'));
+    if (localNames.has(base) || !bindsModule(base, ctx)) {
+      return false;
+    }
+    const resolved = resolveModuleMember(dotted, ctx);
+    if (!resolved) {
+      return false;
+    }
+    if (!moduleMemberTargets.has(resolved)) {
+      moduleMemberTargets.add(resolved);
+      refs.push({ raw: dotted, targetUniqueName: resolved, externalLabel: resolved });
+    }
+    return true;
+  }
 
   function isKnownImport(baseName) {
     if (!baseName) return false;
@@ -1768,8 +1936,19 @@ function collectBodyReferences(suite, ctx, parseNodeType) {
 
     if (parseNodeType && parseNodeType.Call !== undefined && node.nodeType === parseNodeType.Call) {
       const calleeNode = node.d.leftExpr;
-      if (calleeNode) {
+      if (calleeNode && !addModuleMemberRef(dottedNameOf(calleeNode, parseNodeType))) {
         addRef(textForNode(calleeNode, ctx.fileText));
+      }
+    }
+
+    // A class reached through a module is a dependency wherever it is used, not only when called:
+    // `pkg.models.User.LIMIT`, `isinstance(x, models.User)`. A chain of plain names holds nothing
+    // further to visit.
+    if (parseNodeType && parseNodeType.MemberAccess !== undefined && node.nodeType === parseNodeType.MemberAccess) {
+      const dotted = dottedNameOf(node, parseNodeType);
+      if (dotted) {
+        addModuleMemberRef(dotted);
+        return;
       }
     }
 
@@ -1812,7 +1991,7 @@ function extractMethod(methodNode, ctx, parseNodeType) {
   const cyclo = computeCyclo(methodNode, ctx.fileText);
   // The whole def, not just its suite: a changed signature or decorator is a change too.
   const implementationHash = stableImplementationHash(textForNode(methodNode, ctx.fileText));
-  const bodyReferences = collectBodyReferences(methodNode.d ? methodNode.d.suite : null, ctx, parseNodeType);
+  const bodyReferences = collectBodyReferences(methodNode, ctx, parseNodeType);
   return {
     name,
     signature,
@@ -1850,7 +2029,7 @@ function extractFunction(functionNode, ctx, parseNodeType) {
   const cyclo = computeCyclo(functionNode, ctx.fileText);
   // The whole def, not just its suite: a changed signature or decorator is a change too.
   const implementationHash = stableImplementationHash(textForNode(functionNode, ctx.fileText));
-  const bodyReferences = collectBodyReferences(functionNode.d ? functionNode.d.suite : null, ctx, parseNodeType);
+  const bodyReferences = collectBodyReferences(functionNode, ctx, parseNodeType);
   return {
     name,
     signature,
