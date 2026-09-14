@@ -19,7 +19,9 @@ import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.ClassExpr;
 import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.SimpleName;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.nodeTypes.NodeWithTypeParameters;
@@ -507,6 +509,27 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         completeComponent();
     }
 
+    /**
+     * A type named by its qualified name in an expression -- {@code a.b.C.CONSTANT} -- is a
+     * dependency on {@code a.b.C} exactly as {@code C.CONSTANT} with {@code a.b.C} imported is. The
+     * unqualified form reaches the import map through its first identifier; the qualified form has no
+     * single identifier that names the type, so it is recognised here, as a whole. Its qualifier is
+     * part of that one name -- a package, or the type it is nested in -- and is not visited on its
+     * own, just as the qualifier of a qualified type is not.
+     */
+    @Override
+    public final void visit(final FieldAccessExpr ctx, final Object arg) {
+        if (!componentStack.isEmpty()) {
+            final String qualifiedType = typeNamedByQualifiedName(ctx);
+            if (qualifiedType != null) {
+                ParseUtil.insertCmpRef(componentStack.peek(), new SimpleTypeReference(qualifiedType),
+                        this.componentStack);
+                return;
+            }
+        }
+        super.visit(ctx, arg);
+    }
+
     @Override
     public final void visit(final MethodCallExpr ctx, final Object arg) {
         if (!componentStack.isEmpty()) {
@@ -540,7 +563,15 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 return resolveType(scope.asNameExpr().getNameAsString());
             }
             if (scope.isFieldAccessExpr()) {
-                return resolveType(scope.asFieldAccessExpr().getNameAsString());
+                final String qualifiedType = typeNamedByQualifiedName(scope.asFieldAccessExpr());
+                if (qualifiedType != null) {
+                    return qualifiedType;
+                }
+                // A field access names a member of its scope, or a type in the package its scope
+                // names -- never a top-level type of the current package, which is all the
+                // current-package assumption could supply. `a.b.C.m()` with `a.b.C` outside the
+                // parse path would otherwise become a call on `<current package>.C`.
+                return resolveType(scope.asFieldAccessExpr().getNameAsString(), false);
             }
         }
         return resolveType(ctx.getNameAsString());
@@ -829,8 +860,33 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         ctx.getInitializer().ifPresent(init -> init.accept(this, arg));
     }
 
+    /**
+     * A type written with a qualifier -- {@code a.b.C}, {@code Outer.Inner} -- names one type, and is
+     * resolved as one name. Visiting its segments one at a time, the way an unqualified type is
+     * handled, resolves the last segment as if it had been written alone: the qualifier is lost, and
+     * {@code a.b.C} used from package {@code x} becomes a reference to {@code x.C}, a type that need
+     * not exist -- or, where it does, the wrong one. Only the type arguments written anywhere along
+     * the name are references in their own right, so only they are visited further.
+     */
     @Override
     public final void visit(final ClassOrInterfaceType ctx, final Object arg) {
+        if (ctx.getScope().isPresent()) {
+            if (!componentStack.isEmpty()) {
+                final String resolvedType = resolveType(ctx.getNameWithScope());
+                if (resolvedType != null) {
+                    ParseUtil.insertCmpRef(componentStack.peek(), new SimpleTypeReference(resolvedType),
+                            this.componentStack);
+                }
+            }
+            ClassOrInterfaceType segment = ctx;
+            while (segment != null) {
+                segment.getTypeArguments().ifPresent(typeArguments -> typeArguments.forEach(
+                        typeArgument -> typeArgument.accept(this, arg)));
+                segment.getAnnotations().forEach(annotation -> annotation.accept(this, arg));
+                segment = segment.getScope().orElse(null);
+            }
+            return;
+        }
         if (Character.isUpperCase(ctx.asString().codePointAt(0)) && ctx.getChildNodes().isEmpty()) {
             if (!componentStack.isEmpty()) {
                 final Component currCmp = componentStack.peek();
@@ -988,6 +1044,9 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 }
             }
         }
+        if (resolvedType.isEmpty() && type.indexOf('.') > 0) {
+            return resolveQualifiedName(type, assumeCurrentPackage);
+        }
         if (resolvedType.isEmpty()) {
             if (!assumeCurrentPackage) {
                 return null;
@@ -1025,6 +1084,97 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             return resolvedClassType;
         } else {
             return null;
+        }
+    }
+
+    /**
+     * Resolves a qualified type name that no lookup recognised as a whole -- a type outside the parse
+     * path, or one nested in a type named by its simple name.
+     *
+     * <p>The qualifier says where the type lives, so the current-package assumption, which exists for
+     * unqualified names, can never apply to the name as a whole: {@code a.b.C} written in package
+     * {@code x} is never {@code x.C}, nor {@code x.a.b.C}. What the qualifier can be is a type, in
+     * which case the name is a type nested in it and is resolved relative to wherever that type
+     * resolves -- {@code Outer.Inner} with {@code Outer} imported from {@code p} is
+     * {@code p.Outer.Inner}. Otherwise the qualifier is a package and the name is already fully
+     * qualified, and is kept exactly as written, which is what an import of it would have recorded.
+     */
+    private String resolveQualifiedName(final String type, final boolean assumeCurrentPackage) {
+        final int lastDot = type.lastIndexOf('.');
+        final String enclosingType = resolveType(type.substring(0, lastDot), assumeCurrentPackage);
+        if (enclosingType != null) {
+            return enclosingType + type.substring(lastDot);
+        }
+        if (!assumeCurrentPackage) {
+            return null;
+        }
+        final String writtenName = extractClassName(type);
+        if (writtenName.isEmpty()) {
+            return null;
+        }
+        return writtenName;
+    }
+
+    /**
+     * The type a qualified name in expression position refers to, when it refers to one --
+     * {@code a.b.C} in {@code a.b.C.CONSTANT} or {@code a.b.C.create()}.
+     *
+     * <p>In an expression a dotted name is ambiguous in a way it is not in a type position: it may be
+     * a package-qualified type, or a chain of field accesses on a variable. Two things must hold for
+     * it to be read as a type. The type solver must find a type of exactly that name, so that nothing
+     * outside what it can see is guessed at; and the first segment must not name a variable, because
+     * a variable in scope takes precedence over a package of the same name, so {@code a.b.C} where
+     * {@code a} is a local is a field access however the packages are laid out.
+     */
+    private String typeNamedByQualifiedName(final FieldAccessExpr access) {
+        if (!Character.isUpperCase(access.getNameAsString().codePointAt(0))) {
+            return null;
+        }
+        final String dottedName = dottedName(access);
+        if (dottedName == null) {
+            return null;
+        }
+        final SymbolReference<ResolvedReferenceTypeDeclaration> symbol = typeSolver.tryToSolveType(dottedName);
+        if (!symbol.isSolved() || namesAValue(firstSegment(access))) {
+            return null;
+        }
+        final String resolvedType = extractClassName(symbol.getCorrespondingDeclaration().getQualifiedName());
+        if (resolvedType.isEmpty()) {
+            return null;
+        }
+        return resolvedType;
+    }
+
+    /**
+     * The name an expression spells when it is nothing but identifiers joined by dots, or null.
+     */
+    private static String dottedName(final Expression expression) {
+        if (expression.isNameExpr()) {
+            return expression.asNameExpr().getNameAsString();
+        }
+        if (expression.isFieldAccessExpr()) {
+            final String scope = dottedName(expression.asFieldAccessExpr().getScope());
+            if (scope != null) {
+                return scope + "." + expression.asFieldAccessExpr().getNameAsString();
+            }
+        }
+        return null;
+    }
+
+    private static NameExpr firstSegment(final FieldAccessExpr access) {
+        Expression current = access;
+        while (current.isFieldAccessExpr()) {
+            current = current.asFieldAccessExpr().getScope();
+        }
+        return current.asNameExpr();
+    }
+
+    private static boolean namesAValue(final NameExpr name) {
+        try {
+            name.resolve();
+            return true;
+        } catch (final Exception notAValue) {
+            return false;
         }
     }
 
