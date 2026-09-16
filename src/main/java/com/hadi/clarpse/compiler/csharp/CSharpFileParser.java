@@ -44,6 +44,9 @@ final class CSharpFileParser {
             "cs:property-declaration",
             "cs:event-declaration",
             "cs:field-declaration",
+            // A `const` field is its own production, and was in no member set, so a type's constants
+            // were absent from the model entirely.
+            "cs:const-declaration",
             "cs:multiple-fields-declaration",
             "cs:ctor-declaration",
             "cs:method-declaration",
@@ -406,6 +409,7 @@ final class CSharpFileParser {
         final List<CSharpModel.CSharpMemberModel> members = new ArrayList<>();
         switch (node.type) {
             case "cs:field-declaration":
+            case "cs:const-declaration":
             case "cs:multiple-fields-declaration":
                 members.addAll(parseFieldLike(node, fileModel, ownerType, "field"));
                 break;
@@ -492,6 +496,9 @@ final class CSharpFileParser {
                     parameter.declaredType = firstDirectChildText(child, "cs:type-usage-role");
                     parameter.modifiers = parseModifiers(child.text);
                     parameter.implementationHash = implementationHash(child.text);
+                    // `this` is not in the modifier vocabulary, but it is what makes the method an
+                    // extension of the type this parameter names.
+                    parameter.extensionReceiver = normalizeWhitespace(child.text).startsWith("this ");
                     member.parameters.add(parameter);
                 }
             }
@@ -500,7 +507,7 @@ final class CSharpFileParser {
         if (block != null) {
             member.cyclo = calculateCyclo(block.text);
             member.locals.addAll(parseLocals(block, fileModel, ownerType));
-            collectBodyRefs(block, member);
+            collectBodyRefs(block, member, fileModel.sourceText);
         }
         return member;
     }
@@ -540,7 +547,9 @@ final class CSharpFileParser {
         return locals;
     }
 
-    private static void collectBodyRefs(final SyntaxNode block, final CSharpModel.CSharpMemberModel member) {
+    private static void collectBodyRefs(final SyntaxNode block,
+                                        final CSharpModel.CSharpMemberModel member,
+                                        final String sourceText) {
         for (final SyntaxNode descendant : descendants(block)) {
             if ("cs:new-expression".equals(descendant.type)) {
                 final String typeText = firstDirectChildText(descendant, "cs:type-usage-role");
@@ -549,7 +558,7 @@ final class CSharpFileParser {
                 }
             } else if ("cs:field-usage-role".equals(descendant.type)) {
                 final String fieldName = descendant.text.trim();
-                if (!fieldName.isEmpty()) {
+                if (!fieldName.isEmpty() && namesAMemberOfTheEnclosingType(sourceText, descendant)) {
                     member.memberUsages.add(fieldName);
                 }
             } else if ("cs:line-statement".equals(descendant.type)) {
@@ -563,6 +572,42 @@ final class CSharpFileParser {
                 }
             }
         }
+    }
+
+    /**
+     * Whether a name used in a body can be a member of the type that body belongs to.
+     *
+     * <p>A bare name can be: it is resolved in the enclosing type's own scope. A name reached
+     * through a receiver cannot, unless that receiver is {@code this}. This parser does not resolve
+     * the type of a receiver, so binding {@code maybe.Value} to a member called {@code Value} on the
+     * enclosing type invents a dependency between two types that have nothing to do with each other
+     * - the {@code .Value} of a {@code Nullable<T>} is not a user class's property.
+     *
+     * @param sourceText The file's source.
+     * @param usage      The node naming the member.
+     * @return True if the name may be resolved against the enclosing type.
+     */
+    private static boolean namesAMemberOfTheEnclosingType(final String sourceText, final SyntaxNode usage) {
+        if (sourceText == null || usage.startOffset <= 0 || usage.startOffset > sourceText.length()) {
+            return true;
+        }
+        int index = usage.startOffset - 1;
+        while (index >= 0 && Character.isWhitespace(sourceText.charAt(index))) {
+            index -= 1;
+        }
+        if (index < 0 || sourceText.charAt(index) != '.') {
+            return true;
+        }
+        int receiverEnd = index;
+        while (receiverEnd > 0 && Character.isWhitespace(sourceText.charAt(receiverEnd - 1))) {
+            receiverEnd -= 1;
+        }
+        int receiverStart = receiverEnd;
+        while (receiverStart > 0 && (Character.isLetterOrDigit(sourceText.charAt(receiverStart - 1))
+                || sourceText.charAt(receiverStart - 1) == '_')) {
+            receiverStart -= 1;
+        }
+        return "this".equals(sourceText.substring(receiverStart, receiverEnd));
     }
 
     private static CSharpModel.CSharpMemberModel buildSingleMember(final SyntaxNode node,
@@ -811,7 +856,7 @@ final class CSharpFileParser {
             }
             final String trimmed = line.trim();
             if (trimmed.startsWith("///") || trimmed.startsWith("//")) {
-                commentLines.add(0, trimmed);
+                commentLines.add(0, stripLineCommentMarker(trimmed));
                 continue;
             }
             if (trimmed.endsWith("*/")) {
@@ -832,6 +877,29 @@ final class CSharpFileParser {
             return "";
         }
         return String.join("\n", commentLines) + "\n";
+    }
+
+    /**
+     * A line comment's text without the marker that introduced it.
+     *
+     * <p>Only the marker at the start of the line is removed, and at most one space after it, so
+     * everything the author wrote survives - a {@code //} later in the line, in a URL for instance,
+     * is part of the text and is left alone.
+     *
+     * @param line A trimmed source line known to start with a line-comment marker.
+     * @return The comment text, marker removed.
+     */
+    private static String stripLineCommentMarker(final String line) {
+        String text = line;
+        if (text.startsWith("///") || text.startsWith("//!")) {
+            text = text.substring(3);
+        } else if (text.startsWith("//")) {
+            text = text.substring(2);
+        }
+        if (text.startsWith(" ")) {
+            text = text.substring(1);
+        }
+        return text;
     }
 
     private static List<String> parseModifiers(final String text) {

@@ -617,7 +617,11 @@ function extractCandidateNames(raw) {
   if (current) {
     candidates.push(current);
   }
-  return candidates.filter(Boolean);
+  // A type name starts with a letter or an underscore. `.` has to be part of the candidate alphabet
+  // for `pkg.models.User` to survive, and that alone made `...` a candidate -- so `tuple[str, ...]`
+  // and `Callable[..., Any]` produced a reference to `...`, which is punctuation and names no type
+  // under any reading.
+  return candidates.filter((candidate) => /^[A-Za-z_]/.test(candidate));
 }
 
 /**
@@ -858,6 +862,70 @@ function splitTopLevelCsv(text) {
     values.push(current.trim());
   }
   return values;
+}
+
+/**
+ * The arms of a top-level union annotation. `Foo | Bar` is two names; `dict[str, int | None]` is
+ * one, because that `|` is nested inside a type argument. Brackets and quotes are respected so only
+ * a top-level separator splits.
+ */
+function splitTopLevelUnion(text) {
+  const parts = [];
+  if (!text) {
+    return parts;
+  }
+  let current = '';
+  let depth = 0;
+  let quote = '';
+  let escape = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      current += ch;
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === quote) {
+        quote = '';
+      }
+      continue;
+    }
+    if (ch === DOUBLE_QUOTE || ch === SINGLE_QUOTE) {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === '[' || ch === '(' || ch === '{') {
+      depth += 1;
+      current += ch;
+      continue;
+    }
+    if (ch === ']' || ch === ')' || ch === '}') {
+      depth = Math.max(0, depth - 1);
+      current += ch;
+      continue;
+    }
+    if (ch === '|' && depth === 0) {
+      if (current.trim()) {
+        parts.push(current.trim());
+      }
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+  return parts;
+}
+
+// `None` in a union spells the absence of a value, not a type the declaration depends on.
+const UNION_NON_TYPES = new Set(['none', 'nonetype']);
+
+function isUnionNonType(text) {
+  return UNION_NON_TYPES.has(String(text || '').trim().toLowerCase());
 }
 
 function literalTokenToPythonType(token) {
@@ -1690,18 +1758,53 @@ function resolveTypeWithEvaluator(node, raw, ctx) {
   return null;
 }
 
-function resolveTypeRef(annotationNode, rawText, ctx) {
+function resolveSingleTypeRef(annotationNode, rawText, ctx) {
   const raw = rawText ? rawText.trim() : '';
   const evaluated = resolveTypeWithEvaluator(annotationNode, raw, ctx);
   if (evaluated && evaluated.targetUniqueName) {
-    return evaluated;
+    return { raw, targetUniqueName: evaluated.targetUniqueName, externalLabel: null, alternates: [] };
   }
   const resolved = resolveTypeFromRaw(raw, ctx);
   if (resolved) {
-    return { raw, targetUniqueName: resolved, externalLabel: null };
+    return { raw, targetUniqueName: resolved, externalLabel: null, alternates: [] };
   }
   const externalLabel = evaluated && evaluated.externalLabel ? evaluated.externalLabel : externalLabelFor(raw, ctx);
-  return { raw, targetUniqueName: null, externalLabel };
+  return { raw, targetUniqueName: null, externalLabel, alternates: [] };
+}
+
+/**
+ * The type or types an annotation names.
+ *
+ * A union names one type per arm, so it becomes one reference per arm: the first is the reference
+ * itself and the rest are its alternates. `None` is dropped, being the absence of a value rather
+ * than a dependency. Recording the union expression instead -- `str | None` -- matched no component
+ * and never could, and got it wrong in both directions at once: the edge into `str` was missing,
+ * and the declaration carried an edge out to a type that does not exist.
+ *
+ * The annotation text itself is preserved as `raw`, so a field still displays the type the author
+ * wrote while depending on the types that type names.
+ */
+function resolveTypeRef(annotationNode, rawText, ctx) {
+  const raw = rawText ? rawText.trim() : '';
+  const arms = splitTopLevelUnion(raw);
+  if (arms.length < 2) {
+    return resolveSingleTypeRef(annotationNode, raw, ctx);
+  }
+  const resolvedArms = [];
+  for (const arm of arms) {
+    if (isUnionNonType(arm)) {
+      continue;
+    }
+    // Resolved without the annotation node: the evaluator's type covers the whole union, not an arm.
+    resolvedArms.push(resolveSingleTypeRef(null, arm, ctx));
+  }
+  if (!resolvedArms.length) {
+    return { raw, targetUniqueName: null, externalLabel: null, alternates: [] };
+  }
+  const primary = resolvedArms[0];
+  primary.alternates = resolvedArms.slice(1);
+  primary.raw = raw;
+  return primary;
 }
 
 function buildSignature(name, params, returnType) {
@@ -1790,7 +1893,8 @@ function extractParams(funcNode, ctx, parseNodeType) {
       rawType: ref ? ref.raw : rawType,
       implementationHash: stableImplementationHash(textForNode(param, ctx.fileText)),
       targetUniqueName: ref ? ref.targetUniqueName : null,
-      externalLabel: ref ? ref.externalLabel : null
+      externalLabel: ref ? ref.externalLabel : null,
+      alternates: ref ? ref.alternates : []
     });
   }
   return params;
@@ -2092,6 +2196,125 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
   return refs;
 }
 
+/**
+ * The local variables a function binds in its own body.
+ *
+ * Python rebinds freely -- `x = 1` then `x = "a"` is one variable, not two -- and a component is
+ * identified by its name, so this yields one local per distinct name bound, taking the first
+ * binding for the declared type and the hash. What counts as binding a variable: an assignment, an
+ * annotated assignment, a `for` target, a `with ... as`, an `except ... as`, a walrus, a `match`
+ * capture, and the elements of a tuple or list unpacking.
+ *
+ * Deliberately excluded. Parameters, which are components of their own. `self` and `cls`. Attribute
+ * and subscript targets -- `self.x = 1` and `a[0] = 1` bind no name, and the first is already
+ * modelled as a field. Anything a nested function or class binds, and the nested definition's own
+ * name. Comprehension iteration variables, which have a scope of their own in Python 3. Imports,
+ * which bind a module rather than a variable. And names declared `global` or `nonlocal`, which name
+ * a binding in another scope entirely.
+ */
+function collectLocalVariables(functionNode, ctx, parseNodeType) {
+  const types = parseNodeType || {};
+  const found = new Map();
+  const declaredElsewhere = new Set();
+  const parameterNames = new Set();
+
+  const rawParams = (functionNode && functionNode.d
+    && (functionNode.d.parameters || functionNode.d.params)) || [];
+  for (const param of rawParams) {
+    const paramName = nameFromNode(getNodeProp(param, ['name', 'paramName', 'target']));
+    if (paramName) {
+      parameterNames.add(paramName);
+    }
+  }
+
+  function record(expr, statement, annotationNode) {
+    if (!expr || !expr.d) {
+      return;
+    }
+    if (expr.nodeType === types.Name) {
+      const localName = nameFromNode(expr);
+      if (!localName || localName === 'self' || localName === 'cls') {
+        return;
+      }
+      if (parameterNames.has(localName) || found.has(localName)) {
+        return;
+      }
+      found.set(localName, { name: localName, statement, annotationNode });
+      return;
+    }
+    if (expr.nodeType === types.Tuple || expr.nodeType === types.List) {
+      (expr.d.items || []).forEach(item => record(item, statement, null));
+      return;
+    }
+    if (expr.nodeType === types.TypeAnnotation) {
+      record(expr.d.valueExpr, statement, getNodeProp(expr, ANNOTATION_KEYS));
+      return;
+    }
+    if (expr.nodeType === types.Unpack) {
+      record(expr.d.expr, statement, null);
+    }
+    // An attribute or subscript target binds no name.
+  }
+
+  function visit(node, isRoot) {
+    if (!node || typeof node !== 'object' || !node.d) {
+      return;
+    }
+    if (!isRoot && (isFunctionNode(node, parseNodeType) || isClassNode(node, parseNodeType))) {
+      return;
+    }
+    const type = node.nodeType;
+    if (type === types.Import || type === types.ImportFrom || type === types.ComprehensionFor) {
+      return;
+    }
+    if (type === types.Global || type === types.Nonlocal) {
+      (node.d.targets || []).forEach(target => declaredElsewhere.add(nameFromNode(target)));
+      return;
+    }
+    if (type === types.Assignment) {
+      record(node.d.leftExpr, node, null);
+    } else if (type === types.TypeAnnotation) {
+      record(node.d.valueExpr, node, getNodeProp(node, ANNOTATION_KEYS));
+    } else if (type === types.For) {
+      record(node.d.targetExpr, node, null);
+    } else if (type === types.WithItem) {
+      record(node.d.target, node, null);
+    } else if (type === types.Except || type === types.AssignmentExpression) {
+      record(node.d.name, node, null);
+    } else if (type === types.PatternCapture || type === types.PatternAs) {
+      record(node.d.target, node, null);
+    }
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      if (Array.isArray(child)) {
+        child.forEach(item => visit(item, false));
+      } else if (child && typeof child === 'object' && child.d) {
+        visit(child, false);
+      }
+    }
+  }
+
+  visit(functionNode, true);
+  declaredElsewhere.forEach(name => found.delete(name));
+
+  const locals = [];
+  for (const entry of found.values()) {
+    // An unannotated binding displays as `Any`, the way an unannotated parameter does, and is not a
+    // dependency on anything.
+    const rawType = entry.annotationNode ? textForNode(entry.annotationNode, ctx.fileText) : 'Any';
+    const ref = entry.annotationNode ? resolveTypeRef(entry.annotationNode, rawType, ctx) : null;
+    locals.push({
+      name: entry.name,
+      rawType: ref ? ref.raw : rawType,
+      implementationHash: stableImplementationHash(textForNode(entry.statement, ctx.fileText)),
+      targetUniqueName: ref ? ref.targetUniqueName : null,
+      externalLabel: ref ? ref.externalLabel : null,
+      alternates: ref ? ref.alternates : []
+    });
+  }
+  return locals;
+}
+
 function extractMethod(methodNode, ctx, parseNodeType) {
   const name = nameFromNode(methodNode.d && methodNode.d.name ? methodNode.d.name : null);
   if (!name) {
@@ -2124,6 +2347,7 @@ function extractMethod(methodNode, ctx, parseNodeType) {
     staticMethod: isStaticMethod,
     decorators,
     params,
+    locals: collectLocalVariables(methodNode, ctx, parseNodeType),
     return: returnRef,
     bodyReferences
   };
@@ -2162,6 +2386,7 @@ function extractFunction(functionNode, ctx, parseNodeType) {
     staticMethod: false,
     decorators,
     params,
+    locals: collectLocalVariables(functionNode, ctx, parseNodeType),
     return: returnRef,
     bodyReferences
   };
@@ -2186,6 +2411,21 @@ function annotationForFieldStatement(statement) {
   }
   const target = getNodeProp(statement, ['leftExpr', 'leftExpression']);
   return target ? getNodeProp(target, ANNOTATION_KEYS) : null;
+}
+
+/**
+ * Whether a statement is an assignment, and so declares something.
+ *
+ * A class body holds more than declarations -- a docstring, a call, a conditional -- and none of
+ * those names a field. Gating on the statement being an assignment is what lets an unannotated
+ * `kind = "standard"` be read as a field without a docstring becoming one too.
+ */
+function isAssignmentStatement(statement, parseNodeType) {
+  if (!statement || !parseNodeType) {
+    return false;
+  }
+  return statement.nodeType === parseNodeType.Assignment
+    || statement.nodeType === parseNodeType.TypeAnnotation;
 }
 
 function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
@@ -2217,7 +2457,8 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
     rawType: ref ? ref.raw : rawType,
     implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
     targetUniqueName: ref ? ref.targetUniqueName : null,
-    externalLabel: ref ? ref.externalLabel : null
+    externalLabel: ref ? ref.externalLabel : null,
+    alternates: ref ? ref.alternates : []
   };
 }
 
@@ -2264,7 +2505,8 @@ function extractInstanceFieldFromStatement(statement, ctx) {
     rawType: ref ? ref.raw : rawType,
     implementationHash: stableImplementationHash(statementText),
     targetUniqueName: ref ? ref.targetUniqueName : null,
-    externalLabel: ref ? ref.externalLabel : null
+    externalLabel: ref ? ref.externalLabel : null,
+    alternates: ref ? ref.alternates : []
   };
 }
 
@@ -2284,6 +2526,22 @@ function extractInstanceFieldsFromMethod(methodNode, ctx) {
     fields.push(field);
   }
   return fields;
+}
+
+// The standard library's enum bases. A class deriving from one of these is an enumeration, and its
+// class-level assignments are its members.
+const ENUM_BASE_NAMES = new Set(['Enum', 'IntEnum', 'StrEnum', 'Flag', 'IntFlag', 'ReprEnum']);
+
+/**
+ * Whether a base class expression names one of the enum bases. Matched on the last dotted segment,
+ * so `enum.Enum` and an `Enum` imported from it are both recognised.
+ */
+function isEnumBase(rawBase) {
+  if (!rawBase) {
+    return false;
+  }
+  const segments = String(rawBase).trim().split('.');
+  return ENUM_BASE_NAMES.has(segments[segments.length - 1]);
 }
 
 function resolveClassUniqueName(className, ctx, parentUniqueName) {
@@ -2321,6 +2579,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         .filter(Boolean);
     }
     const bases = baseExprs.map(expr => resolveTypeRef(expr, textForNode(expr, ctx.fileText), ctx)).filter(Boolean);
+    const isEnum = baseExprs.some(expr => isEnumBase(textForNode(expr, ctx.fileText)));
     const classCtx = Object.assign({}, ctx, { className, classUniqueName });
     const suiteStatements = getStatementsFromSuite(statement.d ? statement.d.suite : null);
     const methods = [];
@@ -2352,14 +2611,23 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         }
         continue;
       }
-      const field = extractFieldFromStatement(node, classCtx, parseNodeType, { requireAnnotation: true });
+      // A class-level assignment declares a field whether or not it carries an annotation:
+      // `kind = "standard"` is as much a member of the class as `limit: int = 10`, and requiring an
+      // annotation left every unannotated one out of the model.
+      const field = extractFieldFromStatement(node, classCtx, parseNodeType, {
+        requireAnnotation: !isAssignmentStatement(node, parseNodeType)
+      });
       if (field && field.name && !fieldNames.has(field.name)) {
+        // In an enumeration an unannotated class-level assignment names a member of it rather than
+        // an ordinary field: `FAST = 1` is what `Mode.FAST` is.
+        field.enumConstant = isEnum && !annotationForFieldStatement(node);
         fieldNames.add(field.name);
         fields.push(field);
       }
     }
     classes.push({
       className,
+      kind: isEnum ? 'enum' : 'class',
       uniqueName: classUniqueName,
       comment: classComment,
       implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),

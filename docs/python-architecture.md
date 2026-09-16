@@ -14,7 +14,7 @@ class diagrams while treating external libraries as labels only.
 
 # Requirements
 - Discover .py files.
-- Extract classes, methods, and fields with type annotations.
+- Extract classes, methods, and fields, with or without type annotations.
 - Resolve internal types across modules.
 - Treat external types as labels only.
 - Skip large dependency folders like .venv, venv, __pycache__, .tox, build, dist.
@@ -71,6 +71,22 @@ and can be mapped through imports or local class declarations.
 - A missing or invalid file yields a file level error that the compiler records.
 - Module-level functions are emitted as `FUNCTION` components.
 - Module-level variables are emitted as `MODULE_FIELD` components.
+- Class-level assignments are emitted as `FIELD` components whether or not they carry an annotation.
+  Gated on the statement being an assignment, so a docstring or a call in a class body declares
+  nothing.
+- A class deriving from a standard-library enum base (`Enum`, `IntEnum`, `StrEnum`, `Flag`,
+  `IntFlag`, `ReprEnum`) is emitted as an `ENUM`, and its unannotated class-level assignments as its
+  `ENUM_CONSTANT` members. The base is matched on its last dotted segment, so `enum.IntEnum` and an
+  `Enum` imported from the module are both recognised.
+- Local variables are emitted as `LOCAL` components, one per distinct name a body binds. Python
+  rebinds freely, so a name assigned more than once in a function is one variable and one component;
+  the first binding supplies the declared type and the code hash. An assignment, an annotated
+  assignment, a `for` target, a `with ... as`, an `except ... as`, a walrus, a `match` capture and
+  the elements of a tuple or list unpacking all bind one. Parameters, `self` and `cls`, attribute and
+  subscript targets, anything a nested function or class binds, comprehension iteration variables,
+  imports, and names declared `global` or `nonlocal` do not. A local carries no visibility modifier,
+  for the same reason a parameter carries none: it cannot be reached from outside the body that
+  binds it.
 - Nested classes are fully supported with proper unique name chaining.
 - Docstrings are extracted and attached to the component's comment field.
 - Cyclomatic complexity is calculated and stored in the component's cyclo field.
@@ -116,6 +132,12 @@ Label precedence:
 1) Qualified annotation text like pkg.Type
 2) Import based label like pydantic.BaseModel
 3) Raw annotation text
+
+A union annotation names one type per arm, so it yields one reference per arm: a declaration
+annotated `Foo | Bar` depends on both. `None` is dropped, being the absence of a value rather than a
+dependency, and `...` (`Ellipsis`) is never emitted - it is punctuation, not a type name. The
+annotation text the author wrote is preserved on the component, so a field annotated `str | None`
+still displays that while depending on `str`.
 
 # Excludes
 Default excluded directories:

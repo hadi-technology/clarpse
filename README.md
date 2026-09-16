@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>11.2.0</version>
+  <version>11.4.0</version>
 </dependency>
 ```
 
@@ -120,6 +120,11 @@ Clarpse includes configurable limits for zip processing to prevent resource exha
 - `CLARPSE_NODE_PATH` or `-Dclarpse.node.path=<path>` sets a custom Node.js executable path.
 - `CLARPSE_NODE_DISABLED` or `-Dclarpse.node.disabled=true` disables Node.js (TypeScript and Python parsing will fail).
 - `CLARPSE_NODE_HEAP_SIZE` or `-Dclarpse.node.heapSize=<MB>` sets Node.js heap size in MB (default: 4096). Increase for large TypeScript/Python projects.
+- `CLARPSE_TS_MAX_PROGRAMS` or `-Dclarpse.typescript.maxPrograms=<n>` caps how many TypeScript
+  programs the daemon holds at once (default: 2). A program retains every source file it reaches and
+  a type checker over them, so this, rather than the heap size, is what bounds a repository with many
+  `tsconfig.json` files. Raise it to trade memory for fewer rebuilds when files are interleaved
+  across projects.
 
 Example for large projects:
 ```bash

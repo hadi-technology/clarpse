@@ -28,6 +28,8 @@ public final class TypeExtensionReference extends ComponentReference implements 
 
     @Override
     public Object clone() {
-        return new TypeExtensionReference(invokedComponent());
+        final TypeExtensionReference copy = new TypeExtensionReference(invokedComponent());
+        copy.setResolutionKind(resolutionKind());
+        return copy;
     }
 }

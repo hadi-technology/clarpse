@@ -26,6 +26,7 @@ public abstract class ComponentReference implements Serializable, Cloneable {
     private static final long serialVersionUID = -242718695900611890L;
     private String invokedComponent = "";
     private boolean external = false;
+    private ResolutionKind resolutionKind = ResolutionKind.UNSPECIFIED;
 
     public ComponentReference(final String invocationComponentName) {
         invokedComponent = pooled(named(invocationComponentName));
@@ -109,6 +110,28 @@ public abstract class ComponentReference implements Serializable, Cloneable {
 
     public void setExternal(final boolean external) {
         this.external = external;
+    }
+
+    /**
+     * How this reference was resolved, so a consumer can tell a name an import settled from one a
+     * short-name match guessed at.
+     *
+     * <p>Deliberately not part of {@link #equals}: two references to the same type are the same
+     * reference however each was arrived at, and folding this in would change what a set of
+     * references deduplicates to.
+     *
+     * @return The resolution kind, {@link ResolutionKind#UNSPECIFIED} where the front end did not say.
+     */
+    public ResolutionKind resolutionKind() {
+        return resolutionKind;
+    }
+
+    public void setResolutionKind(final ResolutionKind resolutionKind) {
+        if (resolutionKind == null) {
+            this.resolutionKind = ResolutionKind.UNSPECIFIED;
+        } else {
+            this.resolutionKind = resolutionKind;
+        }
     }
 
     @Override

@@ -29,6 +29,8 @@ public class TypeImplementationReference extends ComponentReference implements S
     @Override
     public Object clone() throws CloneNotSupportedException {
         super.clone();
-        return new TypeImplementationReference(invokedComponent());
+        final TypeImplementationReference copy = new TypeImplementationReference(invokedComponent());
+        copy.setResolutionKind(resolutionKind());
+        return copy;
     }
 }

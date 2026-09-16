@@ -1,0 +1,6 @@
+{
+  "compilerOptions": { "target": "ES2019", "strict": false },
+  "files": [],
+  "include": [],
+  "references": [{ "path": "./tsconfig.lib.json" }]
+}

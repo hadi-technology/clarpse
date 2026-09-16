@@ -14,11 +14,20 @@ const ERROR_CODES = {
 
 const MAX_TYPE_DEPTH = 10;
 
+// How many TypeScript programs may be resident at once. A program is the expensive object in this
+// daemon: it holds every source file it reaches plus a type checker over them. Two is enough for
+// files to be answered from a warm program while walking a tree in directory order, and small
+// enough that a repository with dozens of configs cannot exhaust the heap.
+const DEFAULT_MAX_PROGRAMS = 2;
+
 let state = {
   repoRoot: null,
   ts: null,
-  programs: [],
-  fileMap: new Map()
+  configs: [],
+  fileMap: new Map(),
+  programCache: new Map(),
+  programOrder: [],
+  maxPrograms: DEFAULT_MAX_PROGRAMS
 };
 
 function writeResponse(id, result) {
@@ -137,31 +146,124 @@ function filterTypeScriptRoots(fileNames) {
   return fileNames.filter(isTypeScriptFile);
 }
 
-function buildPrograms(ts, repoRoot, configPaths) {
-  const programs = [];
-  const invalidConfigs = [];
+// Diagnostics that mean "this config's `extends` chain could not be resolved", rather than "this
+// config is broken". TS5083 -- "Cannot read file '...'" -- is what a config gets when the base it
+// extends is absent, and it was not among them, so such a config was discarded along with every
+// source file its own `include` claimed. The others are 6053 (file not found), 6075 (base config
+// resolution) and 18003 (no inputs found).
+const EXTENDS_ERROR_CODES = new Set([5083, 6053, 6075, 18003]);
 
-  // Wrapper around ts.sys.readFile that normalizes tsconfig JSON
-  const readAndNormalizeConfig = (filePath) => {
+function isExtendsError(diagnostic) {
+  if (!diagnostic) {
+    return false;
+  }
+  if (diagnostic.code && EXTENDS_ERROR_CODES.has(diagnostic.code)) {
+    return true;
+  }
+  const text = typeof diagnostic.messageText === "string"
+    ? diagnostic.messageText
+    : String(diagnostic.messageText || diagnostic.message || diagnostic);
+  return text.includes("extends");
+}
+
+// Reads a tsconfig, tolerating the trailing commas that are legal in a tsconfig but not in JSON.
+function readNormalizedConfigFile(ts, configPath) {
+  return ts.readConfigFile(configPath, (filePath) => {
     const content = ts.sys.readFile(filePath);
     if (content === undefined) {
       return undefined;
     }
-    // Remove trailing commas from JSON to handle non-standard tsconfig files
-    // Pattern: comma followed by optional whitespace then closing brace or bracket
-    const normalized = content.replace(/,(\s*[}\]])/g, '$1');
-    return normalized;
-  };
+    return content.replace(/,(\s*[}\]])/g, "$1");
+  });
+}
+
+/**
+ * The config files a config's `references` entries point at. A reference names either a config file
+ * or a directory holding a `tsconfig.json`, and is resolved relative to the referring config.
+ */
+function referencedConfigPaths(ts, configPath) {
+  let raw;
+  try {
+    raw = readNormalizedConfigFile(ts, configPath);
+  } catch (err) {
+    return [];
+  }
+  const references = raw && raw.config && Array.isArray(raw.config.references)
+    ? raw.config.references
+    : [];
+  const configDir = path.dirname(configPath);
+  const results = [];
+  for (const reference of references) {
+    const referencePath = typeof reference === "string" ? reference : (reference && reference.path);
+    if (!referencePath) {
+      continue;
+    }
+    const resolved = path.resolve(configDir, referencePath);
+    try {
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+        results.push(path.join(resolved, "tsconfig.json"));
+      } else {
+        results.push(resolved);
+      }
+    } catch (err) {
+      continue;
+    }
+  }
+  return results;
+}
+
+/**
+ * Every config reachable from the given ones, the projects they reference included.
+ *
+ * A solution-style `tsconfig.json` -- the shape Nx and similar tools generate -- carries
+ * `"files": []`, `"include": []` and a `references` array, so it owns no source of its own and the
+ * projects it points at hold the code. Those projects are routinely named `tsconfig.lib.json`
+ * rather than `tsconfig.json`, so walking the tree for that exact name never reaches them: their
+ * sources land in no program, yield no components, and look exactly like a project that declares
+ * nothing.
+ */
+function expandProjectReferences(ts, configPaths) {
+  const ordered = [];
+  const seen = new Set();
+  const queue = configPaths.slice();
+  while (queue.length > 0) {
+    const configPath = queue.shift();
+    const key = normalizePath(ts, configPath);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    try {
+      if (!fs.existsSync(configPath) || !fs.statSync(configPath).isFile()) {
+        continue;
+      }
+    } catch (err) {
+      continue;
+    }
+    ordered.push(configPath);
+    for (const referenced of referencedConfigPaths(ts, configPath)) {
+      queue.push(referenced);
+    }
+  }
+  return ordered;
+}
+
+/**
+ * Reads every tsconfig into the compiler options and root file names it implies, and builds no
+ * programs. `parseJsonConfigFileContent` expands `include`/`exclude` globs on its own, so which
+ * files a config owns is known without constructing a program for it.
+ */
+function parseConfigs(ts, repoRoot, configPaths) {
+  const configs = [];
+  const invalidConfigs = [];
 
   for (const configPath of configPaths) {
     let configFile;
     try {
-      configFile = ts.readConfigFile(configPath, readAndNormalizeConfig);
+      configFile = readNormalizedConfigFile(ts, configPath);
     } catch (err) {
-      // Check if the read failure is extends-related
-      const errStr = err.toString();
-      if (errStr.includes("extends") || err.code === 6075 || err.code === 18003 || err.code === 6053) {
-        // Treat as extends error - will use minimal options
+      if (isExtendsError(err)) {
+        // The extends chain could not be read; fall through to minimal compiler options.
         configFile = null;
       } else {
         invalidConfigs.push({ configPath, error: "CONFIG_READ_FAILED" });
@@ -169,15 +271,9 @@ function buildPrograms(ts, repoRoot, configPaths) {
       }
     }
 
-    // If there's a configFile.error, check if it's extends-related
-    if (configFile && configFile.error) {
-      const errStr = configFile.error.toString();
-      if (errStr.includes("extends") || (configFile.error.code && (configFile.error.code === 6075 || configFile.error.code === 18003 || configFile.error.code === 6053))) {
-        // Treat as extends error - will use minimal options
-      } else {
-        invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
-        continue;
-      }
+    if (configFile && configFile.error && !isExtendsError(configFile.error)) {
+      invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
+      continue;
     }
 
     let config;
@@ -189,13 +285,10 @@ function buildPrograms(ts, repoRoot, configPaths) {
           ts.sys,
           path.dirname(configPath)
         );
-        hasExtendErrors = config && config.errors && config.errors.some(e =>
-          e.messageText && (e.messageText.includes("extends") || e.code === 6075 || e.code === 18003 || e.code === 6053)
-        );
+        hasExtendErrors = config && config.errors && config.errors.some(isExtendsError);
       } catch (err) {
         // parseJsonConfigFileContent threw an exception - check if it's extends-related
-        const errStr = err.toString();
-        if (errStr.includes("extends") || err.code === 6075 || err.code === 18003 || err.code === 6053) {
+        if (isExtendsError(err)) {
           hasExtendErrors = true;
           config = null;
         } else {
@@ -258,19 +351,16 @@ function buildPrograms(ts, repoRoot, configPaths) {
       rootNames = filterTypeScriptRoots(config.fileNames);
       projectReferences = config.projectReferences || [];
     }
-    try {
-      const program = ts.createProgram({
-        rootNames,
-        options,
-        projectReferences
-      });
-      programs.push({ configPath, program, options, checker: program.getTypeChecker() });
-    } catch (err) {
-      console.error("[CLARPSE-DEBUG] PROGRAM_CREATE_FAILED for", configPath, err.message);
-      invalidConfigs.push({ configPath, error: "PROGRAM_CREATE_FAILED" });
-    }
+    configs.push({
+      configPath,
+      dir: normalizePath(ts, path.dirname(configPath)),
+      options,
+      rootNames,
+      projectReferences,
+      programFailed: false
+    });
   }
-  return { programs, invalidConfigs };
+  return { configs, invalidConfigs };
 }
 
 function normalizePath(ts, filePath) {
@@ -288,21 +378,100 @@ function normalizePath(ts, filePath) {
   return normalized;
 }
 
-function findProgramEntryForFile(filePath) {
-  if (state.fileMap && state.fileMap.has(filePath)) {
-    const entry = state.fileMap.get(filePath);
-    const source = entry.program.getSourceFile(filePath);
-    if (source) {
-      return { entry, source };
+/**
+ * The program for a config, built on first use and evicted once `maxPrograms` newer ones are in
+ * front of it. A config whose program cannot be built is remembered as failed and never retried, so
+ * one broken config costs one attempt rather than one per file.
+ */
+function programFor(index) {
+  const cached = state.programCache.get(index);
+  if (cached) {
+    touchProgram(index);
+    return cached;
+  }
+  const config = state.configs[index];
+  if (!config || config.programFailed) {
+    return null;
+  }
+  let program;
+  try {
+    program = state.ts.createProgram({
+      rootNames: config.rootNames,
+      options: config.options,
+      projectReferences: config.projectReferences
+    });
+  } catch (err) {
+    console.error("[clarpse] PROGRAM_CREATE_FAILED for", config.configPath, err.message);
+    config.programFailed = true;
+    return null;
+  }
+  const entry = {
+    configPath: config.configPath,
+    program,
+    options: config.options,
+    checker: program.getTypeChecker()
+  };
+  state.programCache.set(index, entry);
+  state.programOrder.push(index);
+  while (state.programOrder.length > state.maxPrograms) {
+    state.programCache.delete(state.programOrder.shift());
+  }
+  return entry;
+}
+
+function touchProgram(index) {
+  const at = state.programOrder.indexOf(index);
+  if (at >= 0) {
+    state.programOrder.splice(at, 1);
+  }
+  state.programOrder.push(index);
+}
+
+/**
+ * The configs that may own a file: the one listing it as a root file, and otherwise the configs
+ * whose directory encloses it, nearest first. A file can belong to a program through an import
+ * rather than an `include` glob, and trying enclosing configs finds it without building every
+ * program in the repository to answer one question.
+ */
+function configIndicesForFile(filePath) {
+  if (state.fileMap.has(filePath)) {
+    return [state.fileMap.get(filePath)];
+  }
+  const candidates = [];
+  for (let i = 0; i < state.configs.length; i += 1) {
+    const config = state.configs[i];
+    if (!config.rootNames.length || config.programFailed) {
+      continue;
+    }
+    if (filePath === config.dir || filePath.startsWith(config.dir + path.sep)) {
+      candidates.push(i);
     }
   }
-  for (const entry of state.programs) {
+  candidates.sort((a, b) => state.configs[b].dir.length - state.configs[a].dir.length);
+  return candidates;
+}
+
+function findProgramEntryForFile(filePath) {
+  for (const index of configIndicesForFile(filePath)) {
+    const entry = programFor(index);
+    if (!entry) {
+      continue;
+    }
     const source = entry.program.getSourceFile(filePath);
     if (source) {
+      state.fileMap.set(filePath, index);
       return { entry, source };
     }
   }
   return null;
+}
+
+function resolveMaxPrograms(params) {
+  const requested = Number.parseInt(params && params.maxPrograms, 10);
+  if (Number.isFinite(requested) && requested > 0) {
+    return requested;
+  }
+  return DEFAULT_MAX_PROGRAMS;
 }
 
 function collectModifiers(ts, node) {
@@ -595,6 +764,17 @@ function mergeReferences(...lists) {
   return merged;
 }
 
+// TypeScript's own names for symbols it synthesises: the anonymous object type a mixin factory
+// returns, a call or index signature, an anonymous class. None of them names a type a consumer can
+// look up, so recording one as a dependency invents an edge to something that does not exist.
+const TS_INTERNAL_SYMBOL_NAMES = new Set([
+  "__object", "__type", "__function", "__class", "__call", "__new", "__index", "__constructor", "__global"
+]);
+
+function isInternalSymbolName(name) {
+  return !!name && TS_INTERNAL_SYMBOL_NAMES.has(name);
+}
+
 function buildReferenceModelsFromType(type, checker, kind) {
   const references = [];
   const seen = new Set();
@@ -611,6 +791,9 @@ function buildReferenceModelsFromType(type, checker, kind) {
   }
   for (const entry of entries) {
     const name = resolveSymbolName(entry.symbol, checker);
+    if (isInternalSymbolName(name)) {
+      continue;
+    }
     const decls = (entry.symbol.flags & state.ts.SymbolFlags.Alias)
       ? checker.getAliasedSymbol(entry.symbol).declarations
       : entry.symbol.declarations;
@@ -702,6 +885,67 @@ function buildDecoratorReferences(node) {
   return references;
 }
 
+/**
+ * The module-level function a call names, when it names one in this repository.
+ *
+ * A call's own type is the type it evaluates to -- `number`, for a function returning one -- so
+ * building references from that alone recorded what a call produced and never what it called. One
+ * module-level function calling another therefore yielded no edge at all, which is the ordinary
+ * shape of TypeScript written as functions rather than classes: such a codebase came back with no
+ * relations between its files.
+ *
+ * Deliberately limited to a function declared at the top level of its file. That is the one callee
+ * whose component name is derivable from its declaration -- `<package>.<module>.<name>`, which is
+ * how a top-level function is named here. A method's name would have to carry its signature and its
+ * declaring type, and guessing at it would point the edge at a component that does not exist.
+ */
+function buildCalleeReference(node, checker) {
+  const expr = node.expression;
+  if (!expr) {
+    return null;
+  }
+  let symbol;
+  try {
+    symbol = checker.getSymbolAtLocation(expr);
+  } catch (err) {
+    return null;
+  }
+  if (!symbol) {
+    return null;
+  }
+  let actual = symbol;
+  if (symbol.flags & state.ts.SymbolFlags.Alias) {
+    try {
+      actual = checker.getAliasedSymbol(symbol);
+    } catch (err) {
+      actual = symbol;
+    }
+  }
+  const name = actual.getName ? actual.getName() : null;
+  if (!name || isInternalSymbolName(name)) {
+    return null;
+  }
+  const declarations = actual.declarations || [];
+  const declaration = declarations.length ? declarations[0] : null;
+  if (!declaration || !declaration.getSourceFile) {
+    return null;
+  }
+  if (!state.ts.isFunctionDeclaration(declaration)
+    || !declaration.parent
+    || !state.ts.isSourceFile(declaration.parent)) {
+    return null;
+  }
+  const fileName = declaration.getSourceFile().fileName;
+  if (!fileName || !isInternalFile(fileName)) {
+    return null;
+  }
+  return {
+    kind: "type",
+    external: false,
+    target: { filePath: path.resolve(fileName), symbolName: name }
+  };
+}
+
 function buildCallReferences(node, checker) {
   const references = [];
   if (!node) {
@@ -709,6 +953,10 @@ function buildCallReferences(node, checker) {
   }
   const callType = checker.getTypeAtLocation(node);
   references.push(...buildReferenceModelsFromType(callType, checker, "type"));
+  const callee = buildCalleeReference(node, checker);
+  if (callee) {
+    references.push(callee);
+  }
   const expr = node.expression;
   if (state.ts.isPropertyAccessExpression(expr) || state.ts.isElementAccessExpression(expr)) {
     const receiverType = checker.getTypeAtLocation(expr.expression);
@@ -959,7 +1207,128 @@ function buildInterfaceModel(node, checker) {
   };
 }
 
-function buildClassModel(node, checker) {
+/**
+ * The `extends` clause whose expression is a call, or null.
+ *
+ * `class User extends Schema.Class<User>("User")({...})` declares its members in the argument to a
+ * call rather than in its own body, which is the shape the Effect `Schema.Class` and `Context.Tag`
+ * patterns take. The class body is then empty and the members look absent.
+ */
+function classProducingBaseExpression(node) {
+  if (!node.heritageClauses) {
+    return null;
+  }
+  for (const clause of node.heritageClauses) {
+    if (clause.token !== state.ts.SyntaxKind.ExtendsKeyword) {
+      continue;
+    }
+    for (const typeNode of clause.types) {
+      if (typeNode.expression && state.ts.isCallExpression(typeNode.expression)) {
+        return typeNode;
+      }
+    }
+  }
+  return null;
+}
+
+function signatureParameterTypes(signature, checker, location) {
+  const parameters = signature.getParameters ? signature.getParameters() : [];
+  return parameters.map((parameter) => {
+    try {
+      return checker.typeToString(checker.getTypeOfSymbolAtLocation(parameter, location));
+    } catch (err) {
+      return "any";
+    }
+  });
+}
+
+/**
+ * The members a class gets from a class-producing base expression, as the type checker sees them.
+ *
+ * Only the members the class does not declare itself are built, and only for a class whose base is
+ * a call expression -- an ordinary `extends Base` is left alone, so a subclass does not absorb a
+ * copy of everything its superclass declares.
+ */
+function buildBaseExpressionMembers(node, checker, declaredNames) {
+  const models = [];
+  const symbol = node.name ? checker.getSymbolAtLocation(node.name) : null;
+  if (!symbol) {
+    return models;
+  }
+  let instanceType;
+  try {
+    instanceType = checker.getDeclaredTypeOfSymbol(symbol);
+  } catch (err) {
+    return models;
+  }
+  if (!instanceType) {
+    return models;
+  }
+  let properties;
+  try {
+    properties = checker.getPropertiesOfType(instanceType) || [];
+  } catch (err) {
+    return models;
+  }
+  for (const property of properties) {
+    const name = property.getName ? property.getName() : null;
+    if (!name || declaredNames.has(name) || isInternalSymbolName(name)) {
+      continue;
+    }
+    let propertyType;
+    try {
+      propertyType = checker.getTypeOfSymbolAtLocation(property, node);
+    } catch (err) {
+      continue;
+    }
+    if (!propertyType) {
+      continue;
+    }
+    let callSignatures = [];
+    try {
+      callSignatures = checker.getSignaturesOfType(propertyType, state.ts.SignatureKind.Call) || [];
+    } catch (err) {
+      callSignatures = [];
+    }
+    const references = buildReferenceModelsFromType(propertyType, checker, "type");
+    if (callSignatures.length > 0) {
+      const signature = callSignatures[0];
+      const paramTypes = signatureParameterTypes(signature, checker, node);
+      let returnType = "";
+      try {
+        returnType = normalizeReturnType(checker.getReturnTypeOfSignature(signature), checker);
+      } catch (err) {
+        returnType = "";
+      }
+      models.push({
+        kind: "method",
+        name,
+        signature: `${name}(${paramTypes.join(", ")})`,
+        implementationHash: stableImplementationHash(`${name}(${paramTypes.join(", ")}):${returnType}`),
+        returnType,
+        modifiers: [],
+        jsDoc: "",
+        cyclo: 0,
+        members: [],
+        references
+      });
+      continue;
+    }
+    const typeText = checker.typeToString(propertyType);
+    models.push({
+      kind: "field",
+      name,
+      type: typeText,
+      implementationHash: stableImplementationHash(`${name}:${typeText}`),
+      modifiers: [],
+      jsDoc: "",
+      references
+    });
+  }
+  return models;
+}
+
+function buildClassModel(node, checker, unresolvedBases) {
   const members = [];
   for (const member of node.members) {
     if (state.ts.isConstructorDeclaration(member)) {
@@ -987,6 +1356,23 @@ function buildClassModel(node, checker) {
     }
     if (state.ts.isSetAccessorDeclaration(member)) {
       members.push(buildAccessorModel(member, checker, "set"));
+    }
+  }
+  const baseExpression = classProducingBaseExpression(node);
+  if (baseExpression) {
+    const declaredNames = new Set();
+    for (const member of members) {
+      if (member && member.name) {
+        declaredNames.add(member.name);
+      }
+    }
+    const inherited = buildBaseExpressionMembers(node, checker, declaredNames);
+    if (inherited.length > 0) {
+      members.push(...inherited);
+    } else if (Array.isArray(unresolvedBases)) {
+      // The base is a call and the checker could see no members through it. Saying nothing here
+      // would leave the class looking like one that genuinely declares none.
+      unresolvedBases.push(`${node.name.text} extends ${baseExpression.getText()}`);
     }
   }
   const typeParams = node.typeParameters && node.typeParameters.length
@@ -1017,11 +1403,11 @@ function buildFunctionModel(node, checker) {
   return buildMethodModel(node, checker, "function");
 }
 
-function collectTopLevelDeclarations(ts, sourceFile, checker) {
+function collectTopLevelDeclarations(ts, sourceFile, checker, unresolvedBases) {
   const declarations = [];
   sourceFile.forEachChild((node) => {
     if (ts.isClassDeclaration(node) && node.name) {
-      declarations.push(buildClassModel(node, checker));
+      declarations.push(buildClassModel(node, checker, unresolvedBases));
       return;
     }
     if (ts.isInterfaceDeclaration(node)) {
@@ -1063,17 +1449,17 @@ async function handleInitRepo(params) {
     err.code = ERROR_CODES.TYPESCRIPT_NOT_FOUND;
     throw err;
   }
-  const configs = findTsconfigs(repoRoot).sort();
+  const configs = expandProjectReferences(ts, findTsconfigs(repoRoot).sort());
   if (!configs.length) {
     const err = new Error("NO_TSCONFIG");
     err.code = ERROR_CODES.NO_TSCONFIG;
     throw err;
   }
-  let programs = [];
+  let parsedConfigs = [];
   let invalidConfigs = [];
   try {
-    const result = buildPrograms(ts, repoRoot, configs);
-    programs = result.programs || [];
+    const result = parseConfigs(ts, repoRoot, configs);
+    parsedConfigs = result.configs || [];
     invalidConfigs = result.invalidConfigs || [];
   } catch (err) {
     const errObj = new Error("CONFIG_PARSE_FAILED");
@@ -1081,42 +1467,50 @@ async function handleInitRepo(params) {
     errObj.data = err.message;
     throw errObj;
   }
-  if (!programs.length) {
+  if (!parsedConfigs.length) {
     const errObj = new Error("CONFIG_PARSE_FAILED");
     errObj.code = ERROR_CODES.CONFIG_PARSE_FAILED;
     errObj.data = invalidConfigs.map((entry) => entry.configPath);
     throw errObj;
   }
   const fileMap = new Map();
-  for (const entry of programs) {
-    for (const sourceFile of entry.program.getSourceFiles()) {
-      const normalized = normalizePath(ts, sourceFile.fileName);
+  parsedConfigs.forEach((config, index) => {
+    for (const rootName of config.rootNames) {
+      const normalized = normalizePath(ts, rootName);
       if (!isInternalFile(normalized, repoRoot)) {
         continue;
       }
       if (!fileMap.has(normalized)) {
-        fileMap.set(normalized, entry);
+        fileMap.set(normalized, index);
       }
     }
-  }
+  });
   state = {
     repoRoot,
     ts,
-    programs,
-    fileMap
+    configs: parsedConfigs,
+    fileMap,
+    programCache: new Map(),
+    programOrder: [],
+    maxPrograms: resolveMaxPrograms(params)
   };
-  const fileCount = programs.reduce((sum, entry) => sum + entry.program.getRootFileNames().length, 0);
+  const fileCount = parsedConfigs.reduce((sum, config) => sum + config.rootNames.length, 0);
   return {
     tsVersion: ts.version || "",
-    configCount: programs.length,
+    configCount: parsedConfigs.length,
     fileCount,
     invalidConfigCount: invalidConfigs.length,
-    invalidConfigs
+    invalidConfigs,
+    // Zero by construction: initialization reads configs and builds no programs. Reported so a
+    // caller can tell that the daemon is not holding a program per config before any file is asked
+    // for, which is what exhausted the heap on a large monorepo.
+    residentProgramCount: state.programCache.size,
+    maxPrograms: state.maxPrograms
   };
 }
 
 async function handleGetFileModel(params) {
-  if (!state.ts || !state.programs || !state.programs.length) {
+  if (!state.ts || !state.configs || !state.configs.length) {
     const err = new Error("PROGRAM_NOT_READY");
     err.code = ERROR_CODES.PROGRAM_CREATE_FAILED;
     throw err;
@@ -1136,9 +1530,10 @@ async function handleGetFileModel(params) {
     throw err;
   }
   const checker = entryInfo.entry.checker || entryInfo.entry.program.getTypeChecker();
+  const unresolvedBases = [];
   let declarations;
   try {
-    declarations = collectTopLevelDeclarations(ts, entryInfo.source, checker);
+    declarations = collectTopLevelDeclarations(ts, entryInfo.source, checker, unresolvedBases);
   } catch (err) {
     if (err instanceof RangeError || (err.message && err.message.includes("Maximum call stack size exceeded"))) {
       console.warn(`[clarpse] Stack overflow during type resolution for ${filePath}.`);
@@ -1157,7 +1552,8 @@ async function handleGetFileModel(params) {
   return {
     filePath: normalized,
     declarations,
-    imports
+    imports,
+    unresolvedBases
   };
 }
 

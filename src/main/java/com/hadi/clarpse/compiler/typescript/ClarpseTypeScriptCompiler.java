@@ -77,10 +77,6 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 try {
                     fileModel = daemon.getFileModel(diskPath);
                 } catch (final TypeScriptDaemonException e) {
-                    if (e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM) {
-                        LOGGER.debug("Skipping TypeScript file outside program scope: {}", file.path());
-                        continue;
-                    }
                     if (isFileLevelFailure(e)) {
                         compileFailures.add(new CompileFailure(file, e.getMessage(), e.code()));
                         LOGGER.warn("TypeScript resolver failed for file {} (code={}).",
@@ -92,6 +88,7 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 final Package pkg = TypeScriptModelAssembler.resolvePackage(persistDir, diskPath);
                 final String moduleName = CompilerSupport.moduleNameForFile(diskPath);
                 TypeScriptModelAssembler.insertFileModel(pkg, moduleName, file.path(), persistDir, fileModel, srcModel);
+                addUnresolvedBaseFailures(file, fileModel, compileFailures);
             }
             CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(
                     OOPSourceModelConstants.ComponentType.CLASS,
@@ -116,12 +113,41 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         return new CompileResult(srcModel, compileFailures);
     }
 
+    /**
+     * Records a failure for each class whose base expression the type checker could not see members
+     * through. Such a class carries the members it declares itself and no others, which is
+     * indistinguishable in the model from a class that declares none - so the difference has to be
+     * carried where a caller can read it.
+     *
+     * @param file           The source file the class was declared in.
+     * @param fileModel      The daemon's model for that file.
+     * @param compileFailures Failure set to add to.
+     */
+    private static void addUnresolvedBaseFailures(final ProjectFile file,
+                                                  final TypeScriptFileModel fileModel,
+                                                  final Set<CompileFailure> compileFailures) {
+        if (fileModel == null || fileModel.unresolvedBases == null) {
+            return;
+        }
+        for (final String unresolvedBase : fileModel.unresolvedBases) {
+            compileFailures.add(new CompileFailure(file,
+                    "UNRESOLVED_BASE_EXPRESSION: " + unresolvedBase,
+                    FailureCode.RESOLUTION_FAILED));
+            LOGGER.warn("Could not resolve the base expression of {} in {}.",
+                    unresolvedBase, file.path());
+        }
+    }
+
     private static boolean isFileLevelFailure(final TypeScriptDaemonException e) {
         if (e == null) {
             return false;
         }
         return e.code() == TypeScriptDaemonException.CODE_FILE_NOT_FOUND
-                || e.code() == TypeScriptDaemonException.CODE_RESOLUTION_FAILED;
+                || e.code() == TypeScriptDaemonException.CODE_RESOLUTION_FAILED
+                // A file that belongs to no program was skipped at DEBUG and recorded nowhere, so
+                // it reached a caller as a file that was parsed and declared nothing. Whether a
+                // file was analysed at all is exactly what the failure list is for.
+                || e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM;
     }
 
     private static void addInvalidConfigFailures(final TypeScriptDaemon.InitResult initResult,

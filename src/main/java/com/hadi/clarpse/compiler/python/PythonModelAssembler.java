@@ -94,6 +94,13 @@ final class PythonModelAssembler {
                             insertComponent(paramComponent, stack, srcModel, null);
                         }
                     }
+                    if (function.locals != null) {
+                        for (final PythonFieldModel local : function.locals) {
+                            final Component localComponent = buildLocalComponent(pkg, moduleName, sourcePath,
+                                    fileModel.packageName, function, local);
+                            insertComponent(localComponent, stack, srcModel, null);
+                        }
+                    }
                 });
             }
         }
@@ -155,6 +162,13 @@ final class PythonModelAssembler {
                                 insertComponent(paramComponent, stack, srcModel, null);
                             }
                         }
+                        if (method.locals != null) {
+                            for (final PythonFieldModel local : method.locals) {
+                                final Component localComponent = buildLocalComponent(pkg, moduleName, sourcePath,
+                                        packageName, method, local);
+                                insertComponent(localComponent, stack, srcModel, null);
+                            }
+                        }
                     });
                 }
             }
@@ -194,7 +208,13 @@ final class PythonModelAssembler {
         final Component component = new Component();
         component.setPkg(pkg);
         component.setModule(moduleName);
-        component.setComponentType(OOPSourceModelConstants.ComponentType.CLASS);
+        // An enum and a class were indistinguishable in a Python model, though the language draws
+        // the distinction and every other language here reports it.
+        if ("enum".equals(classModel.kind)) {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.ENUM);
+        } else {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.CLASS);
+        }
         component.setName(classModel.className);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, classModel.uniqueName));
         component.setSourceFilePath(sourcePath);
@@ -205,10 +225,7 @@ final class PythonModelAssembler {
         }
         if (classModel.bases != null) {
             for (final PythonTypeRefModel base : classModel.bases) {
-                final ComponentReference ref = buildReference(base, true);
-                if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-                    component.insertCmpRef(ref);
-                }
+                insertReferences(component, base, true);
             }
         }
         attachDecoratorReferences(component, classModel.decorators);
@@ -251,7 +268,11 @@ final class PythonModelAssembler {
         final Component component = new Component();
         component.setPkg(pkg);
         component.setModule(moduleName);
-        component.setComponentType(OOPSourceModelConstants.ComponentType.FIELD);
+        if (field.enumConstant) {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.ENUM_CONSTANT);
+        } else {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.FIELD);
+        }
         component.setName(field.name);
         final String fieldUniqueName = CompilerSupport.uniqueNameForMember(classModel.uniqueName, field.name);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, fieldUniqueName));
@@ -265,10 +286,8 @@ final class PythonModelAssembler {
         typeRef.raw = field.rawType;
         typeRef.targetUniqueName = field.targetUniqueName;
         typeRef.externalLabel = field.externalLabel;
-        final ComponentReference ref = buildReference(typeRef, false);
-        if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-            component.insertCmpRef(ref);
-        }
+        typeRef.alternates = field.alternates;
+        insertReferences(component, typeRef, false);
         return component;
     }
 
@@ -303,10 +322,8 @@ final class PythonModelAssembler {
         typeRef.raw = field.rawType;
         typeRef.targetUniqueName = field.targetUniqueName;
         typeRef.externalLabel = field.externalLabel;
-        final ComponentReference ref = buildReference(typeRef, false);
-        if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-            component.insertCmpRef(ref);
-        }
+        typeRef.alternates = field.alternates;
+        insertReferences(component, typeRef, false);
         return component;
     }
 
@@ -347,17 +364,11 @@ final class PythonModelAssembler {
         }
         applyCodeHash(component, method.implementationHash, method.signature);
         if (method.returnType != null) {
-            final ComponentReference ref = buildReference(method.returnType, false);
-            if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-                component.insertCmpRef(ref);
-            }
+            insertReferences(component, method.returnType, false);
         }
         if (method.bodyReferences != null) {
             for (final PythonTypeRefModel bodyRef : method.bodyReferences) {
-                final ComponentReference ref = buildReference(bodyRef, false);
-                if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-                    component.insertCmpRef(ref);
-                }
+                insertReferences(component, bodyRef, false);
             }
         }
         attachDecoratorReferences(component, method.decorators);
@@ -389,17 +400,11 @@ final class PythonModelAssembler {
         }
         applyCodeHash(component, function.implementationHash, function.signature);
         if (function.returnType != null) {
-            final ComponentReference ref = buildReference(function.returnType, false);
-            if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-                component.insertCmpRef(ref);
-            }
+            insertReferences(component, function.returnType, false);
         }
         if (function.bodyReferences != null) {
             for (final PythonTypeRefModel bodyRef : function.bodyReferences) {
-                final ComponentReference ref = buildReference(bodyRef, false);
-                if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-                    component.insertCmpRef(ref);
-                }
+                insertReferences(component, bodyRef, false);
             }
         }
         attachDecoratorReferences(component, function.decorators);
@@ -438,10 +443,8 @@ final class PythonModelAssembler {
         typeRef.raw = param.rawType;
         typeRef.targetUniqueName = param.targetUniqueName;
         typeRef.externalLabel = param.externalLabel;
-        final ComponentReference ref = buildReference(typeRef, false);
-        if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-            component.insertCmpRef(ref);
-        }
+        typeRef.alternates = param.alternates;
+        insertReferences(component, typeRef, false);
         return component;
     }
 
@@ -470,10 +473,81 @@ final class PythonModelAssembler {
         typeRef.raw = param.rawType;
         typeRef.targetUniqueName = param.targetUniqueName;
         typeRef.externalLabel = param.externalLabel;
-        final ComponentReference ref = buildReference(typeRef, false);
+        typeRef.alternates = param.alternates;
+        insertReferences(component, typeRef, false);
+        return component;
+    }
+
+    /**
+     * Records a type reference and the remaining arms of its union, if it has any.
+     *
+     * @param component  Component to record on.
+     * @param ref        The resolved annotation, or {@code null}.
+     * @param isExtends  Whether the annotation is a base class rather than an ordinary type use.
+     */
+    private static void insertReferences(final Component component,
+                                         final PythonTypeRefModel ref,
+                                         final boolean isExtends) {
+        if (ref == null) {
+            return;
+        }
+        insertReference(component, buildReference(ref, isExtends));
+        if (ref.alternates != null) {
+            for (final PythonTypeRefModel alternate : ref.alternates) {
+                insertReference(component, buildReference(alternate, isExtends));
+            }
+        }
+    }
+
+    private static void insertReference(final Component component, final ComponentReference ref) {
         if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
             component.insertCmpRef(ref);
         }
+    }
+
+    /**
+     * A local variable of a method or function.
+     *
+     * <p>Carries no visibility modifier. Visibility answers whether a member can be reached from
+     * outside the thing that declares it, and a local cannot be reached from outside the body that
+     * binds it - which is why a parameter carries none either. Reading a leading underscore as
+     * "protected" here would answer a question the component does not raise.
+     *
+     * @param pkg        Package of the declaring file.
+     * @param moduleName Module the local is declared in.
+     * @param sourcePath Path of the declaring file.
+     * @param packageName Package name, to trim from the component name.
+     * @param owner      The method or function whose body binds it.
+     * @param local      The binding.
+     * @return The local's component, or {@code null} if it has no name.
+     */
+    private static Component buildLocalComponent(final Package pkg,
+                                                 final String moduleName,
+                                                 final String sourcePath,
+                                                 final String packageName,
+                                                 final PythonMethodModel owner,
+                                                 final PythonFieldModel local) {
+        if (local == null || local.name == null || local.name.isEmpty()) {
+            return null;
+        }
+        final Component component = new Component();
+        component.setPkg(pkg);
+        component.setModule(moduleName);
+        component.setComponentType(OOPSourceModelConstants.ComponentType.LOCAL);
+        component.setName(local.name);
+        final String localUniqueName = CompilerSupport.uniqueNameForMember(owner.uniqueName, local.name);
+        component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, localUniqueName));
+        component.setSourceFilePath(sourcePath);
+        if (local.rawType != null && !local.rawType.isEmpty()) {
+            component.setCodeFragment(local.name + " : " + local.rawType);
+        }
+        applyCodeHash(component, local.implementationHash, component.codeFragment());
+        final PythonTypeRefModel typeRef = new PythonTypeRefModel();
+        typeRef.raw = local.rawType;
+        typeRef.targetUniqueName = local.targetUniqueName;
+        typeRef.externalLabel = local.externalLabel;
+        typeRef.alternates = local.alternates;
+        insertReferences(component, typeRef, false);
         return component;
     }
 

@@ -6,6 +6,7 @@ import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.PackageDeclaration;
 import com.github.javaparser.ast.body.AnnotationDeclaration;
+import com.github.javaparser.ast.body.AnnotationMemberDeclaration;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.CompactConstructorDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
@@ -283,7 +284,8 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             if (node instanceof FieldDeclaration || node instanceof Statement || node instanceof Expression
                     || node instanceof MethodDeclaration || node instanceof ConstructorDeclaration
                     || node instanceof ClassOrInterfaceDeclaration || node instanceof EnumDeclaration
-                    || node instanceof AnnotationDeclaration || node instanceof RecordDeclaration) {
+                    || node instanceof AnnotationDeclaration || node instanceof RecordDeclaration
+                    || node instanceof AnnotationMemberDeclaration) {
                 node.accept(this, arg);
             }
         }
@@ -337,6 +339,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             componentStack.push(cmp);
             visitAnnotationValues(ctx.getAnnotations(), arg);
             insertRecordComponentFields(ctx, arg);
+            insertRecordAccessors(ctx, arg);
             insertRecordCanonicalConstructor(ctx, arg);
             visitTypeBody(ctx, arg);
             completeComponent();
@@ -362,6 +365,55 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             recordComponent.getType().accept(this, arg);
             completeComponent();
         }
+    }
+
+    /**
+     * Models the accessor the compiler generates for each record component: a public method named for
+     * the component, taking nothing and returning its type.
+     *
+     * <p>Only the implicit ones. A record may declare an accessor itself, to validate or to copy, and
+     * that declaration is modelled by {@link #visit(MethodDeclaration, Object)} like any other method --
+     * synthesizing a second one would give the record two members of the same name.
+     */
+    private void insertRecordAccessors(final RecordDeclaration ctx, final Object arg) {
+        for (final Parameter recordComponent : ctx.getParameters()) {
+            final String accessorName = recordComponent.getNameAsString();
+            if (declaresAccessor(ctx, accessorName)) {
+                continue;
+            }
+            final Component accessorCmp = createComponent(recordComponent, ComponentType.METHOD);
+            accessorCmp.setName(accessorName);
+            final String signature = accessorName + "()";
+            final String returnType = recordComponent.getType().asString();
+            accessorCmp.setCodeFragment(signature + " : " + returnType);
+            accessorCmp.setComponentName(ParseUtil.generateComponentName(signature, componentStack));
+            // An implicit accessor is as public as the record's own surface.
+            accessorCmp.setAccessModifiers(Arrays.asList("public"));
+            // Hashed on the accessor's own signature, so an edit elsewhere in the record does not read
+            // as a change to it.
+            accessorCmp.setCodeHash((signature + returnType).hashCode());
+            ParseUtil.pointParentsToGivenChild(accessorCmp, componentStack);
+            componentStack.push(accessorCmp);
+            recordComponent.getType().accept(this, arg);
+            currCyclomaticComplexity = 1;
+            completeComponent();
+        }
+    }
+
+    /**
+     * True if the record body declares the accessor for the named component itself.
+     */
+    private static boolean declaresAccessor(final RecordDeclaration ctx, final String accessorName) {
+        for (final Node member : ctx.getMembers()) {
+            if (!(member instanceof MethodDeclaration)) {
+                continue;
+            }
+            final MethodDeclaration method = (MethodDeclaration) member;
+            if (method.getParameters().isEmpty() && method.getNameAsString().equals(accessorName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -466,6 +518,60 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
         }
         return visibility;
+    }
+
+    /**
+     * An annotation type is a type. {@code @interface Retry {}} declares one, and the listener had no
+     * visitor for it, so it produced no component at all -- neither the type nor its elements existed
+     * in the model, and {@link ComponentType#ANNOTATION} had no producer in any language.
+     */
+    @Override
+    public final void visit(final AnnotationDeclaration ctx, final Object arg) {
+        if (!ParseUtil.componentStackContainsMethod(componentStack)) {
+            final Component cmp = createComponent(ctx, ComponentType.ANNOTATION);
+            cmp.setComponentName(ParseUtil.generateComponentName(ctx.getNameAsString(), componentStack));
+            cmp.setName(ctx.getNameAsString());
+            cmp.setImports(currentImports);
+            cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
+            recordAnnotations(ctx.getAnnotations(), cmp);
+            if (ctx.getComment().isPresent()) {
+                cmp.setComment(ctx.getComment().get().toString());
+            }
+            ParseUtil.pointParentsToGivenChild(cmp, componentStack);
+            componentStack.push(cmp);
+            visitAnnotationValues(ctx.getAnnotations(), arg);
+            visitTypeBody(ctx, arg);
+            completeComponent();
+        }
+    }
+
+    /**
+     * An annotation element -- {@code int attempts() default 3;} -- is a method of the annotation type,
+     * which is how the compiler models it. Its declared type is a dependency of the annotation, exactly
+     * as a method's return type is.
+     */
+    @Override
+    public final void visit(final AnnotationMemberDeclaration ctx, final Object arg) {
+        if (componentStack.isEmpty()) {
+            return;
+        }
+        final Component cmp = createComponent(ctx, ComponentType.METHOD);
+        cmp.setName(ctx.getNameAsString());
+        final String signature = ctx.getNameAsString() + "()";
+        cmp.setCodeFragment(signature + " : " + ctx.getType().asString());
+        cmp.setComponentName(ParseUtil.generateComponentName(signature, componentStack));
+        cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
+        recordAnnotations(ctx.getAnnotations(), cmp);
+        if (ctx.getComment().isPresent()) {
+            cmp.setComment(ctx.getComment().get().toString());
+        }
+        ParseUtil.pointParentsToGivenChild(cmp, componentStack);
+        componentStack.push(cmp);
+        ctx.getType().accept(this, arg);
+        ctx.getDefaultValue().ifPresent(defaultValue -> defaultValue.accept(this, arg));
+        // An annotation element has no body, so it carries the complexity of one straight-line method.
+        currCyclomaticComplexity = 1;
+        completeComponent();
     }
 
     @Override

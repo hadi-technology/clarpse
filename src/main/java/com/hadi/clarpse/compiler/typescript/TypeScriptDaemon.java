@@ -35,6 +35,46 @@ public final class TypeScriptDaemon implements AutoCloseable {
     private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
     private static final String NODE_HEAP_SIZE_ENV = "CLARPSE_NODE_HEAP_SIZE";
     private static final String NODE_HEAP_SIZE_PROP = "clarpse.node.heapSize";
+    private static final String MAX_PROGRAMS_ENV = "CLARPSE_TS_MAX_PROGRAMS";
+    private static final String MAX_PROGRAMS_PROP = "clarpse.typescript.maxPrograms";
+    private static final int DEFAULT_MAX_PROGRAMS = 2;
+
+    /**
+     * How many TypeScript programs the daemon may hold at once. A program retains every source file
+     * it reaches and a type checker over them, so the count of resident programs - not the size of
+     * any one of them - is what decides whether a repository with many tsconfig files fits in the
+     * daemon's heap.
+     *
+     * @return The configured limit, or the default when none is set or the value is not a positive
+     *     integer.
+     */
+    private static int resolveMaxPrograms() {
+        final String systemProp = System.getProperty(MAX_PROGRAMS_PROP);
+        final Integer fromProperty = parsePositiveInt(systemProp);
+        if (fromProperty != null) {
+            return fromProperty;
+        }
+        final Integer fromEnv = parsePositiveInt(System.getenv(MAX_PROGRAMS_ENV));
+        if (fromEnv != null) {
+            return fromEnv;
+        }
+        return ClarpseProperties.getInt(MAX_PROGRAMS_PROP, DEFAULT_MAX_PROGRAMS);
+    }
+
+    private static Integer parsePositiveInt(final String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            final int value = Integer.parseInt(raw.trim());
+            if (value > 0) {
+                return value;
+            }
+        } catch (final NumberFormatException e) {
+            LOGGER.warn("Invalid TypeScript program limit '{}', using the default.", raw);
+        }
+        return null;
+    }
 
     private static String resolveNodeHeapSize() {
         // System property overrides everything
@@ -105,13 +145,16 @@ public final class TypeScriptDaemon implements AutoCloseable {
         ensureStarted();
         ObjectNode params = objectMapper.createObjectNode();
         params.put("repoRoot", repoRoot);
+        params.put("maxPrograms", resolveMaxPrograms());
         JsonNode result = request("initRepo", params);
         return new InitResult(
                 result.path("tsVersion").asText(""),
                 result.path("configCount").asInt(0),
                 result.path("fileCount").asInt(0),
                 result.path("invalidConfigCount").asInt(0),
-                parseInvalidConfigs(result.path("invalidConfigs"))
+                parseInvalidConfigs(result.path("invalidConfigs")),
+                result.path("residentProgramCount").asInt(0),
+                result.path("maxPrograms").asInt(DEFAULT_MAX_PROGRAMS)
         );
     }
 
@@ -279,14 +322,37 @@ public final class TypeScriptDaemon implements AutoCloseable {
         private final int fileCount;
         private final int invalidConfigCount;
         private final List<InvalidConfig> invalidConfigs;
+        private final int residentProgramCount;
+        private final int maxPrograms;
 
         public InitResult(final String tsVersion, final int configCount, final int fileCount,
-                          final int invalidConfigCount, final List<InvalidConfig> invalidConfigs) {
+                          final int invalidConfigCount, final List<InvalidConfig> invalidConfigs,
+                          final int residentProgramCount, final int maxPrograms) {
             this.tsVersion = tsVersion;
             this.configCount = configCount;
             this.fileCount = fileCount;
             this.invalidConfigCount = invalidConfigCount;
             this.invalidConfigs = invalidConfigs;
+            this.residentProgramCount = residentProgramCount;
+            this.maxPrograms = maxPrograms;
+        }
+
+        /**
+         * How many TypeScript programs the daemon holds after initialization.
+         *
+         * @return Resident program count, which is zero because programs are built on first use.
+         */
+        public int residentProgramCount() {
+            return residentProgramCount;
+        }
+
+        /**
+         * The daemon's ceiling on resident programs.
+         *
+         * @return The configured limit in effect for this repository.
+         */
+        public int maxPrograms() {
+            return maxPrograms;
         }
 
         public String tsVersion() {

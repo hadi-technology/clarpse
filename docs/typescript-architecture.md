@@ -11,6 +11,11 @@ architecture-level model as Java, with strict correctness guarantees and explici
 - Node.js is required at runtime; the TypeScript compiler API is bundled with Clarpse.
 - The daemon resolves only the bundled TypeScript runtime (no local/global fallback).
 - A valid `tsconfig.json` exists in the project tree.
+- Project references are followed: a config named by another config's `references` is analysed even
+  when it is not itself called `tsconfig.json`, which is how solution-style layouts reach the
+  `tsconfig.lib.json` holding the sources.
+- A config whose `extends` target cannot be read falls back to minimal compiler options and keeps
+  its own `include`, rather than being discarded along with the files it claims.
 - Only `.ts`, `.tsx`, and `.d.ts` files are parsed; JavaScript is not parsed.
 - The TypeScript compiler is the single source of truth for resolution.
 - If TypeScript cannot resolve a file or program, the compiler fails explicitly (no heuristics).
@@ -44,7 +49,8 @@ Layer 3: TypeScript daemon (Node)
 1) `ProjectFiles` collects `.ts/.tsx/.d.ts` files.
 2) `ClarpseProject` selects `ClarpseTypeScriptCompiler`.
 3) `ClarpseTypeScriptCompiler` starts the TypeScript daemon.
-4) The daemon builds programs for all `tsconfig.json` files.
+4) The daemon reads every `tsconfig.json` for its compiler options and root file names, and builds
+   programs lazily, on the first file that needs one.
 5) Each file is resolved via `getFileModel(file)` and mapped into Clarpse components.
 
 # Identity and Naming
@@ -106,8 +112,16 @@ class Example {
 These are properly modeled as fields with their corresponding visibility modifiers, enabling accurate architectural analysis.
 
 # Efficiency Notes
-- Programs are built once per `tsconfig.json` and reused for all files in that config.
-- A file->program map is built during daemon initialization for faster lookups.
+- A program holds every source file it reaches plus a type checker over them, so the number of
+  programs resident at once is what decides whether a repository fits in the daemon's heap. They are
+  therefore built on first use and at most `maxPrograms` (default 2) are kept, least-recently-used
+  evicted first. Configured with `CLARPSE_TS_MAX_PROGRAMS` or `-Dclarpse.typescript.maxPrograms`.
+- Which config owns a file is known without building anything: `parseJsonConfigFileContent` expands
+  the `include`/`exclude` globs, and a file->config map is built from those root file names during
+  initialization. A file that no config lists is looked for in the programs of the configs whose
+  directory encloses it, nearest first.
+- A config whose program fails to build is remembered as failed, so one broken config costs one
+  attempt rather than one per file.
 - The daemon is single-threaded; Java parsing can run in parallel.
 - Monorepo support: Multiple `tsconfig.json` files are handled by building separate programs and correctly scoping files to their appropriate config.
 
@@ -122,10 +136,17 @@ These are properly modeled as fields with their corresponding visibility modifie
 # Additional Features
 ## Monorepo Support
 Clarpse supports monorepo setups with multiple `tsconfig.json` files:
-- Each `tsconfig.json` creates a separate TypeScript program instance.
-- Files are correctly scoped to their appropriate program based on `tsconfig` references.
-- Project references (`composite: true`, `references` arrays) are properly handled.
-- Files not in any valid program scope are reported with appropriate error codes.
+- The config set is the `tsconfig.json` files found in the tree, plus every config reachable from
+  them through `references`, transitively. A solution-style config carries `"files": []`,
+  `"include": []` and a `references` array, so the projects it points at - often named
+  `tsconfig.lib.json` - are where the sources are.
+- Each config owns the root files its `include`/`exclude`/`files` rules expand to, and gets its own
+  program, built on first use.
+- A config that expands to no root files owns nothing and never becomes a program.
+- Files in no program scope are reported as `CODE_FILE_NOT_IN_PROGRAM` failures. This includes files
+  a config deliberately excludes, such as tests and scripts: `CompileResult.failures()` records that
+  they were not analysed, which is what distinguishes them from files that were analysed and
+  declared nothing.
 
 ## Constructor Parameter Properties
 TypeScript's parameter properties are fully supported:
