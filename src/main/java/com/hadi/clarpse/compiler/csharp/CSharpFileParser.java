@@ -811,7 +811,7 @@ final class CSharpFileParser {
             }
             final String trimmed = line.trim();
             if (trimmed.startsWith("///") || trimmed.startsWith("//")) {
-                commentLines.add(0, trimmed);
+                commentLines.add(0, stripLineCommentMarker(trimmed));
                 continue;
             }
             if (trimmed.endsWith("*/")) {
@@ -832,6 +832,29 @@ final class CSharpFileParser {
             return "";
         }
         return String.join("\n", commentLines) + "\n";
+    }
+
+    /**
+     * A line comment's text without the marker that introduced it.
+     *
+     * <p>Only the marker at the start of the line is removed, and at most one space after it, so
+     * everything the author wrote survives - a {@code //} later in the line, in a URL for instance,
+     * is part of the text and is left alone.
+     *
+     * @param line A trimmed source line known to start with a line-comment marker.
+     * @return The comment text, marker removed.
+     */
+    private static String stripLineCommentMarker(final String line) {
+        String text = line;
+        if (text.startsWith("///") || text.startsWith("//!")) {
+            text = text.substring(3);
+        } else if (text.startsWith("//")) {
+            text = text.substring(2);
+        }
+        if (text.startsWith(" ")) {
+            text = text.substring(1);
+        }
+        return text;
     }
 
     private static List<String> parseModifiers(final String text) {
