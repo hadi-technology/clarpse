@@ -44,6 +44,8 @@ public final class AnnotationReference extends ComponentReference implements Ser
 
     @Override
     public Object clone() {
-        return new AnnotationReference(invokedComponent());
+        final AnnotationReference copy = new AnnotationReference(invokedComponent());
+        copy.setResolutionKind(resolutionKind());
+        return copy;
     }
 }
