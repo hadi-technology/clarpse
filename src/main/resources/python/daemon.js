@@ -617,7 +617,11 @@ function extractCandidateNames(raw) {
   if (current) {
     candidates.push(current);
   }
-  return candidates.filter(Boolean);
+  // A type name starts with a letter or an underscore. `.` has to be part of the candidate alphabet
+  // for `pkg.models.User` to survive, and that alone made `...` a candidate -- so `tuple[str, ...]`
+  // and `Callable[..., Any]` produced a reference to `...`, which is punctuation and names no type
+  // under any reading.
+  return candidates.filter((candidate) => /^[A-Za-z_]/.test(candidate));
 }
 
 /**
@@ -858,6 +862,70 @@ function splitTopLevelCsv(text) {
     values.push(current.trim());
   }
   return values;
+}
+
+/**
+ * The arms of a top-level union annotation. `Foo | Bar` is two names; `dict[str, int | None]` is
+ * one, because that `|` is nested inside a type argument. Brackets and quotes are respected so only
+ * a top-level separator splits.
+ */
+function splitTopLevelUnion(text) {
+  const parts = [];
+  if (!text) {
+    return parts;
+  }
+  let current = '';
+  let depth = 0;
+  let quote = '';
+  let escape = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      current += ch;
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === quote) {
+        quote = '';
+      }
+      continue;
+    }
+    if (ch === DOUBLE_QUOTE || ch === SINGLE_QUOTE) {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === '[' || ch === '(' || ch === '{') {
+      depth += 1;
+      current += ch;
+      continue;
+    }
+    if (ch === ']' || ch === ')' || ch === '}') {
+      depth = Math.max(0, depth - 1);
+      current += ch;
+      continue;
+    }
+    if (ch === '|' && depth === 0) {
+      if (current.trim()) {
+        parts.push(current.trim());
+      }
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+  return parts;
+}
+
+// `None` in a union spells the absence of a value, not a type the declaration depends on.
+const UNION_NON_TYPES = new Set(['none', 'nonetype']);
+
+function isUnionNonType(text) {
+  return UNION_NON_TYPES.has(String(text || '').trim().toLowerCase());
 }
 
 function literalTokenToPythonType(token) {
@@ -1690,18 +1758,53 @@ function resolveTypeWithEvaluator(node, raw, ctx) {
   return null;
 }
 
-function resolveTypeRef(annotationNode, rawText, ctx) {
+function resolveSingleTypeRef(annotationNode, rawText, ctx) {
   const raw = rawText ? rawText.trim() : '';
   const evaluated = resolveTypeWithEvaluator(annotationNode, raw, ctx);
   if (evaluated && evaluated.targetUniqueName) {
-    return evaluated;
+    return { raw, targetUniqueName: evaluated.targetUniqueName, externalLabel: null, alternates: [] };
   }
   const resolved = resolveTypeFromRaw(raw, ctx);
   if (resolved) {
-    return { raw, targetUniqueName: resolved, externalLabel: null };
+    return { raw, targetUniqueName: resolved, externalLabel: null, alternates: [] };
   }
   const externalLabel = evaluated && evaluated.externalLabel ? evaluated.externalLabel : externalLabelFor(raw, ctx);
-  return { raw, targetUniqueName: null, externalLabel };
+  return { raw, targetUniqueName: null, externalLabel, alternates: [] };
+}
+
+/**
+ * The type or types an annotation names.
+ *
+ * A union names one type per arm, so it becomes one reference per arm: the first is the reference
+ * itself and the rest are its alternates. `None` is dropped, being the absence of a value rather
+ * than a dependency. Recording the union expression instead -- `str | None` -- matched no component
+ * and never could, and got it wrong in both directions at once: the edge into `str` was missing,
+ * and the declaration carried an edge out to a type that does not exist.
+ *
+ * The annotation text itself is preserved as `raw`, so a field still displays the type the author
+ * wrote while depending on the types that type names.
+ */
+function resolveTypeRef(annotationNode, rawText, ctx) {
+  const raw = rawText ? rawText.trim() : '';
+  const arms = splitTopLevelUnion(raw);
+  if (arms.length < 2) {
+    return resolveSingleTypeRef(annotationNode, raw, ctx);
+  }
+  const resolvedArms = [];
+  for (const arm of arms) {
+    if (isUnionNonType(arm)) {
+      continue;
+    }
+    // Resolved without the annotation node: the evaluator's type covers the whole union, not an arm.
+    resolvedArms.push(resolveSingleTypeRef(null, arm, ctx));
+  }
+  if (!resolvedArms.length) {
+    return { raw, targetUniqueName: null, externalLabel: null, alternates: [] };
+  }
+  const primary = resolvedArms[0];
+  primary.alternates = resolvedArms.slice(1);
+  primary.raw = raw;
+  return primary;
 }
 
 function buildSignature(name, params, returnType) {
@@ -1790,7 +1893,8 @@ function extractParams(funcNode, ctx, parseNodeType) {
       rawType: ref ? ref.raw : rawType,
       implementationHash: stableImplementationHash(textForNode(param, ctx.fileText)),
       targetUniqueName: ref ? ref.targetUniqueName : null,
-      externalLabel: ref ? ref.externalLabel : null
+      externalLabel: ref ? ref.externalLabel : null,
+      alternates: ref ? ref.alternates : []
     });
   }
   return params;
@@ -2232,7 +2336,8 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
     rawType: ref ? ref.raw : rawType,
     implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
     targetUniqueName: ref ? ref.targetUniqueName : null,
-    externalLabel: ref ? ref.externalLabel : null
+    externalLabel: ref ? ref.externalLabel : null,
+    alternates: ref ? ref.alternates : []
   };
 }
 
@@ -2279,7 +2384,8 @@ function extractInstanceFieldFromStatement(statement, ctx) {
     rawType: ref ? ref.raw : rawType,
     implementationHash: stableImplementationHash(statementText),
     targetUniqueName: ref ? ref.targetUniqueName : null,
-    externalLabel: ref ? ref.externalLabel : null
+    externalLabel: ref ? ref.externalLabel : null,
+    alternates: ref ? ref.alternates : []
   };
 }
 

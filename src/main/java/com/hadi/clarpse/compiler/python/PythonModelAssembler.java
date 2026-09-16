@@ -205,10 +205,7 @@ final class PythonModelAssembler {
         }
         if (classModel.bases != null) {
             for (final PythonTypeRefModel base : classModel.bases) {
-                final ComponentReference ref = buildReference(base, true);
-                if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-                    component.insertCmpRef(ref);
-                }
+                insertReferences(component, base, true);
             }
         }
         attachDecoratorReferences(component, classModel.decorators);
@@ -265,10 +262,8 @@ final class PythonModelAssembler {
         typeRef.raw = field.rawType;
         typeRef.targetUniqueName = field.targetUniqueName;
         typeRef.externalLabel = field.externalLabel;
-        final ComponentReference ref = buildReference(typeRef, false);
-        if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-            component.insertCmpRef(ref);
-        }
+        typeRef.alternates = field.alternates;
+        insertReferences(component, typeRef, false);
         return component;
     }
 
@@ -303,10 +298,8 @@ final class PythonModelAssembler {
         typeRef.raw = field.rawType;
         typeRef.targetUniqueName = field.targetUniqueName;
         typeRef.externalLabel = field.externalLabel;
-        final ComponentReference ref = buildReference(typeRef, false);
-        if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-            component.insertCmpRef(ref);
-        }
+        typeRef.alternates = field.alternates;
+        insertReferences(component, typeRef, false);
         return component;
     }
 
@@ -347,17 +340,11 @@ final class PythonModelAssembler {
         }
         applyCodeHash(component, method.implementationHash, method.signature);
         if (method.returnType != null) {
-            final ComponentReference ref = buildReference(method.returnType, false);
-            if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-                component.insertCmpRef(ref);
-            }
+            insertReferences(component, method.returnType, false);
         }
         if (method.bodyReferences != null) {
             for (final PythonTypeRefModel bodyRef : method.bodyReferences) {
-                final ComponentReference ref = buildReference(bodyRef, false);
-                if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-                    component.insertCmpRef(ref);
-                }
+                insertReferences(component, bodyRef, false);
             }
         }
         attachDecoratorReferences(component, method.decorators);
@@ -389,17 +376,11 @@ final class PythonModelAssembler {
         }
         applyCodeHash(component, function.implementationHash, function.signature);
         if (function.returnType != null) {
-            final ComponentReference ref = buildReference(function.returnType, false);
-            if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-                component.insertCmpRef(ref);
-            }
+            insertReferences(component, function.returnType, false);
         }
         if (function.bodyReferences != null) {
             for (final PythonTypeRefModel bodyRef : function.bodyReferences) {
-                final ComponentReference ref = buildReference(bodyRef, false);
-                if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-                    component.insertCmpRef(ref);
-                }
+                insertReferences(component, bodyRef, false);
             }
         }
         attachDecoratorReferences(component, function.decorators);
@@ -438,10 +419,8 @@ final class PythonModelAssembler {
         typeRef.raw = param.rawType;
         typeRef.targetUniqueName = param.targetUniqueName;
         typeRef.externalLabel = param.externalLabel;
-        final ComponentReference ref = buildReference(typeRef, false);
-        if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
-            component.insertCmpRef(ref);
-        }
+        typeRef.alternates = param.alternates;
+        insertReferences(component, typeRef, false);
         return component;
     }
 
@@ -470,11 +449,36 @@ final class PythonModelAssembler {
         typeRef.raw = param.rawType;
         typeRef.targetUniqueName = param.targetUniqueName;
         typeRef.externalLabel = param.externalLabel;
-        final ComponentReference ref = buildReference(typeRef, false);
+        typeRef.alternates = param.alternates;
+        insertReferences(component, typeRef, false);
+        return component;
+    }
+
+    /**
+     * Records a type reference and the remaining arms of its union, if it has any.
+     *
+     * @param component  Component to record on.
+     * @param ref        The resolved annotation, or {@code null}.
+     * @param isExtends  Whether the annotation is a base class rather than an ordinary type use.
+     */
+    private static void insertReferences(final Component component,
+                                         final PythonTypeRefModel ref,
+                                         final boolean isExtends) {
+        if (ref == null) {
+            return;
+        }
+        insertReference(component, buildReference(ref, isExtends));
+        if (ref.alternates != null) {
+            for (final PythonTypeRefModel alternate : ref.alternates) {
+                insertReference(component, buildReference(alternate, isExtends));
+            }
+        }
+    }
+
+    private static void insertReference(final Component component, final ComponentReference ref) {
         if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
             component.insertCmpRef(ref);
         }
-        return component;
     }
 
     private static boolean isConstructor(final PythonMethodModel method) {

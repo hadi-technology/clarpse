@@ -10,4 +10,7 @@ public class PythonFieldModel {
     public int implementationHash;
     public String targetUniqueName;
     public String externalLabel;
+
+    /** The remaining arms of a union annotation. See {@link PythonTypeRefModel#alternates}. */
+    public java.util.List<PythonTypeRefModel> alternates = new java.util.ArrayList<>();
 }
