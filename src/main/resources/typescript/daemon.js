@@ -14,11 +14,20 @@ const ERROR_CODES = {
 
 const MAX_TYPE_DEPTH = 10;
 
+// How many TypeScript programs may be resident at once. A program is the expensive object in this
+// daemon: it holds every source file it reaches plus a type checker over them. Two is enough for
+// files to be answered from a warm program while walking a tree in directory order, and small
+// enough that a repository with dozens of configs cannot exhaust the heap.
+const DEFAULT_MAX_PROGRAMS = 2;
+
 let state = {
   repoRoot: null,
   ts: null,
-  programs: [],
-  fileMap: new Map()
+  configs: [],
+  fileMap: new Map(),
+  programCache: new Map(),
+  programOrder: [],
+  maxPrograms: DEFAULT_MAX_PROGRAMS
 };
 
 function writeResponse(id, result) {
@@ -137,8 +146,13 @@ function filterTypeScriptRoots(fileNames) {
   return fileNames.filter(isTypeScriptFile);
 }
 
-function buildPrograms(ts, repoRoot, configPaths) {
-  const programs = [];
+/**
+ * Reads every tsconfig into the compiler options and root file names it implies, and builds no
+ * programs. `parseJsonConfigFileContent` expands `include`/`exclude` globs on its own, so which
+ * files a config owns is known without constructing a program for it.
+ */
+function parseConfigs(ts, repoRoot, configPaths) {
+  const configs = [];
   const invalidConfigs = [];
 
   // Wrapper around ts.sys.readFile that normalizes tsconfig JSON
@@ -258,19 +272,16 @@ function buildPrograms(ts, repoRoot, configPaths) {
       rootNames = filterTypeScriptRoots(config.fileNames);
       projectReferences = config.projectReferences || [];
     }
-    try {
-      const program = ts.createProgram({
-        rootNames,
-        options,
-        projectReferences
-      });
-      programs.push({ configPath, program, options, checker: program.getTypeChecker() });
-    } catch (err) {
-      console.error("[CLARPSE-DEBUG] PROGRAM_CREATE_FAILED for", configPath, err.message);
-      invalidConfigs.push({ configPath, error: "PROGRAM_CREATE_FAILED" });
-    }
+    configs.push({
+      configPath,
+      dir: normalizePath(ts, path.dirname(configPath)),
+      options,
+      rootNames,
+      projectReferences,
+      programFailed: false
+    });
   }
-  return { programs, invalidConfigs };
+  return { configs, invalidConfigs };
 }
 
 function normalizePath(ts, filePath) {
@@ -288,21 +299,100 @@ function normalizePath(ts, filePath) {
   return normalized;
 }
 
-function findProgramEntryForFile(filePath) {
-  if (state.fileMap && state.fileMap.has(filePath)) {
-    const entry = state.fileMap.get(filePath);
-    const source = entry.program.getSourceFile(filePath);
-    if (source) {
-      return { entry, source };
+/**
+ * The program for a config, built on first use and evicted once `maxPrograms` newer ones are in
+ * front of it. A config whose program cannot be built is remembered as failed and never retried, so
+ * one broken config costs one attempt rather than one per file.
+ */
+function programFor(index) {
+  const cached = state.programCache.get(index);
+  if (cached) {
+    touchProgram(index);
+    return cached;
+  }
+  const config = state.configs[index];
+  if (!config || config.programFailed) {
+    return null;
+  }
+  let program;
+  try {
+    program = state.ts.createProgram({
+      rootNames: config.rootNames,
+      options: config.options,
+      projectReferences: config.projectReferences
+    });
+  } catch (err) {
+    console.error("[clarpse] PROGRAM_CREATE_FAILED for", config.configPath, err.message);
+    config.programFailed = true;
+    return null;
+  }
+  const entry = {
+    configPath: config.configPath,
+    program,
+    options: config.options,
+    checker: program.getTypeChecker()
+  };
+  state.programCache.set(index, entry);
+  state.programOrder.push(index);
+  while (state.programOrder.length > state.maxPrograms) {
+    state.programCache.delete(state.programOrder.shift());
+  }
+  return entry;
+}
+
+function touchProgram(index) {
+  const at = state.programOrder.indexOf(index);
+  if (at >= 0) {
+    state.programOrder.splice(at, 1);
+  }
+  state.programOrder.push(index);
+}
+
+/**
+ * The configs that may own a file: the one listing it as a root file, and otherwise the configs
+ * whose directory encloses it, nearest first. A file can belong to a program through an import
+ * rather than an `include` glob, and trying enclosing configs finds it without building every
+ * program in the repository to answer one question.
+ */
+function configIndicesForFile(filePath) {
+  if (state.fileMap.has(filePath)) {
+    return [state.fileMap.get(filePath)];
+  }
+  const candidates = [];
+  for (let i = 0; i < state.configs.length; i += 1) {
+    const config = state.configs[i];
+    if (!config.rootNames.length || config.programFailed) {
+      continue;
+    }
+    if (filePath === config.dir || filePath.startsWith(config.dir + path.sep)) {
+      candidates.push(i);
     }
   }
-  for (const entry of state.programs) {
+  candidates.sort((a, b) => state.configs[b].dir.length - state.configs[a].dir.length);
+  return candidates;
+}
+
+function findProgramEntryForFile(filePath) {
+  for (const index of configIndicesForFile(filePath)) {
+    const entry = programFor(index);
+    if (!entry) {
+      continue;
+    }
     const source = entry.program.getSourceFile(filePath);
     if (source) {
+      state.fileMap.set(filePath, index);
       return { entry, source };
     }
   }
   return null;
+}
+
+function resolveMaxPrograms(params) {
+  const requested = Number.parseInt(params && params.maxPrograms, 10);
+  if (Number.isFinite(requested) && requested > 0) {
+    return requested;
+  }
+  return DEFAULT_MAX_PROGRAMS;
 }
 
 function collectModifiers(ts, node) {
@@ -1069,11 +1159,11 @@ async function handleInitRepo(params) {
     err.code = ERROR_CODES.NO_TSCONFIG;
     throw err;
   }
-  let programs = [];
+  let parsedConfigs = [];
   let invalidConfigs = [];
   try {
-    const result = buildPrograms(ts, repoRoot, configs);
-    programs = result.programs || [];
+    const result = parseConfigs(ts, repoRoot, configs);
+    parsedConfigs = result.configs || [];
     invalidConfigs = result.invalidConfigs || [];
   } catch (err) {
     const errObj = new Error("CONFIG_PARSE_FAILED");
@@ -1081,42 +1171,50 @@ async function handleInitRepo(params) {
     errObj.data = err.message;
     throw errObj;
   }
-  if (!programs.length) {
+  if (!parsedConfigs.length) {
     const errObj = new Error("CONFIG_PARSE_FAILED");
     errObj.code = ERROR_CODES.CONFIG_PARSE_FAILED;
     errObj.data = invalidConfigs.map((entry) => entry.configPath);
     throw errObj;
   }
   const fileMap = new Map();
-  for (const entry of programs) {
-    for (const sourceFile of entry.program.getSourceFiles()) {
-      const normalized = normalizePath(ts, sourceFile.fileName);
+  parsedConfigs.forEach((config, index) => {
+    for (const rootName of config.rootNames) {
+      const normalized = normalizePath(ts, rootName);
       if (!isInternalFile(normalized, repoRoot)) {
         continue;
       }
       if (!fileMap.has(normalized)) {
-        fileMap.set(normalized, entry);
+        fileMap.set(normalized, index);
       }
     }
-  }
+  });
   state = {
     repoRoot,
     ts,
-    programs,
-    fileMap
+    configs: parsedConfigs,
+    fileMap,
+    programCache: new Map(),
+    programOrder: [],
+    maxPrograms: resolveMaxPrograms(params)
   };
-  const fileCount = programs.reduce((sum, entry) => sum + entry.program.getRootFileNames().length, 0);
+  const fileCount = parsedConfigs.reduce((sum, config) => sum + config.rootNames.length, 0);
   return {
     tsVersion: ts.version || "",
-    configCount: programs.length,
+    configCount: parsedConfigs.length,
     fileCount,
     invalidConfigCount: invalidConfigs.length,
-    invalidConfigs
+    invalidConfigs,
+    // Zero by construction: initialization reads configs and builds no programs. Reported so a
+    // caller can tell that the daemon is not holding a program per config before any file is asked
+    // for, which is what exhausted the heap on a large monorepo.
+    residentProgramCount: state.programCache.size,
+    maxPrograms: state.maxPrograms
   };
 }
 
 async function handleGetFileModel(params) {
-  if (!state.ts || !state.programs || !state.programs.length) {
+  if (!state.ts || !state.configs || !state.configs.length) {
     const err = new Error("PROGRAM_NOT_READY");
     err.code = ERROR_CODES.PROGRAM_CREATE_FAILED;
     throw err;

@@ -44,7 +44,8 @@ Layer 3: TypeScript daemon (Node)
 1) `ProjectFiles` collects `.ts/.tsx/.d.ts` files.
 2) `ClarpseProject` selects `ClarpseTypeScriptCompiler`.
 3) `ClarpseTypeScriptCompiler` starts the TypeScript daemon.
-4) The daemon builds programs for all `tsconfig.json` files.
+4) The daemon reads every `tsconfig.json` for its compiler options and root file names, and builds
+   programs lazily, on the first file that needs one.
 5) Each file is resolved via `getFileModel(file)` and mapped into Clarpse components.
 
 # Identity and Naming
@@ -106,8 +107,16 @@ class Example {
 These are properly modeled as fields with their corresponding visibility modifiers, enabling accurate architectural analysis.
 
 # Efficiency Notes
-- Programs are built once per `tsconfig.json` and reused for all files in that config.
-- A file->program map is built during daemon initialization for faster lookups.
+- A program holds every source file it reaches plus a type checker over them, so the number of
+  programs resident at once is what decides whether a repository fits in the daemon's heap. They are
+  therefore built on first use and at most `maxPrograms` (default 2) are kept, least-recently-used
+  evicted first. Configured with `CLARPSE_TS_MAX_PROGRAMS` or `-Dclarpse.typescript.maxPrograms`.
+- Which config owns a file is known without building anything: `parseJsonConfigFileContent` expands
+  the `include`/`exclude` globs, and a file->config map is built from those root file names during
+  initialization. A file that no config lists is looked for in the programs of the configs whose
+  directory encloses it, nearest first.
+- A config whose program fails to build is remembered as failed, so one broken config costs one
+  attempt rather than one per file.
 - The daemon is single-threaded; Java parsing can run in parallel.
 - Monorepo support: Multiple `tsconfig.json` files are handled by building separate programs and correctly scoping files to their appropriate config.
 
