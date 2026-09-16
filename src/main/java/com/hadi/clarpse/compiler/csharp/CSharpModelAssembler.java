@@ -20,6 +20,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.Stack;
 
@@ -80,7 +81,54 @@ final class CSharpModelAssembler {
                 insertType(typeModel, typeIndex, model, stack);
             }
         }
+        linkExtensionMethods(mergedTypes, typeIndex, model);
         return model;
+    }
+
+    /**
+     * Links an extension method to the type it extends.
+     *
+     * <p>`public static void Reset(this Widget w)` is declared on a static class, which is where it
+     * was recorded and where it stayed. Callers write `widget.Reset()`, so asking a type what it can
+     * do had to answer without it. The method keeps its place on the declaring class, and the
+     * extended type gains a reference to it, so it is reachable from both.
+     *
+     * <p>Only a type in this repository is linked: an extension on `string` or on a framework type
+     * resolves to nothing the model holds, and is left alone.
+     */
+    private static void linkExtensionMethods(final List<CSharpModel.CSharpTypeModel> types,
+                                             final TypeIndex typeIndex,
+                                             final OOPSourceCodeModel model) {
+        for (final CSharpModel.CSharpTypeModel typeModel : types) {
+            if (typeModel.modifiers == null || !typeModel.modifiers.contains("static")) {
+                continue;
+            }
+            for (final CSharpModel.CSharpMemberModel member : typeModel.members) {
+                if (!"method".equals(member.kind) || member.parameters.isEmpty()) {
+                    continue;
+                }
+                final CSharpModel.CSharpParameterModel receiver = member.parameters.get(0);
+                if (!receiver.extensionReceiver || receiver.declaredType == null) {
+                    continue;
+                }
+                final String extendedType = typeIndex.resolveType(receiver.declaredType, typeModel, member);
+                if (extendedType == null) {
+                    continue;
+                }
+                final Optional<Component> extended = model.copyOfComponent(extendedType);
+                if (extended.isEmpty()) {
+                    continue;
+                }
+                final String methodUniqueName =
+                        typeModel.uniqueName + "." + memberComponentIdentifier(member, typeModel);
+                if (methodUniqueName.equals(extendedType)) {
+                    continue;
+                }
+                final Component component = extended.get();
+                component.insertCmpRef(new SimpleTypeReference(methodUniqueName));
+                model.insertComponent(component);
+            }
+        }
     }
 
     private static List<CSharpModel.CSharpTypeModel> mergePartials(final Collection<CSharpModel.CSharpFileModel> fileModels) {
@@ -621,6 +669,13 @@ final class CSharpModelAssembler {
                     interfaceTypes.add(type.uniqueName);
                 }
                 for (final CSharpModel.CSharpMemberModel member : type.members) {
+                    // A constant is a member of its type, but reading one is not a dependency on a
+                    // type -- `return NOTE;` says nothing about the structure of the codebase. It is
+                    // modelled as a member and kept out of the index that turns a name used in a
+                    // body into a reference.
+                    if (member.modifiers != null && member.modifiers.contains("const")) {
+                        continue;
+                    }
                     if (member.name != null && !member.name.isEmpty()) {
                         memberByTypeAndName.put(type.uniqueName + "#" + member.name,
                                 type.uniqueName + "." + memberComponentIdentifier(member, type));

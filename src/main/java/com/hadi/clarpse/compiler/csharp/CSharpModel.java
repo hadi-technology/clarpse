@@ -137,6 +137,8 @@ final class CSharpModel {
     static final class CSharpParameterModel {
         String name;
         String declaredType;
+        /** True for the {@code this} parameter of an extension method, which names the type it extends. */
+        boolean extensionReceiver;
         String comment = "";
         /** Hash over the whole parameter declaration, its modifiers and default value included. */
         int implementationHash;

@@ -44,6 +44,9 @@ final class CSharpFileParser {
             "cs:property-declaration",
             "cs:event-declaration",
             "cs:field-declaration",
+            // A `const` field is its own production, and was in no member set, so a type's constants
+            // were absent from the model entirely.
+            "cs:const-declaration",
             "cs:multiple-fields-declaration",
             "cs:ctor-declaration",
             "cs:method-declaration",
@@ -406,6 +409,7 @@ final class CSharpFileParser {
         final List<CSharpModel.CSharpMemberModel> members = new ArrayList<>();
         switch (node.type) {
             case "cs:field-declaration":
+            case "cs:const-declaration":
             case "cs:multiple-fields-declaration":
                 members.addAll(parseFieldLike(node, fileModel, ownerType, "field"));
                 break;
@@ -492,6 +496,9 @@ final class CSharpFileParser {
                     parameter.declaredType = firstDirectChildText(child, "cs:type-usage-role");
                     parameter.modifiers = parseModifiers(child.text);
                     parameter.implementationHash = implementationHash(child.text);
+                    // `this` is not in the modifier vocabulary, but it is what makes the method an
+                    // extension of the type this parameter names.
+                    parameter.extensionReceiver = normalizeWhitespace(child.text).startsWith("this ");
                     member.parameters.add(parameter);
                 }
             }
