@@ -194,7 +194,13 @@ final class PythonModelAssembler {
         final Component component = new Component();
         component.setPkg(pkg);
         component.setModule(moduleName);
-        component.setComponentType(OOPSourceModelConstants.ComponentType.CLASS);
+        // An enum and a class were indistinguishable in a Python model, though the language draws
+        // the distinction and every other language here reports it.
+        if ("enum".equals(classModel.kind)) {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.ENUM);
+        } else {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.CLASS);
+        }
         component.setName(classModel.className);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, classModel.uniqueName));
         component.setSourceFilePath(sourcePath);
@@ -248,7 +254,11 @@ final class PythonModelAssembler {
         final Component component = new Component();
         component.setPkg(pkg);
         component.setModule(moduleName);
-        component.setComponentType(OOPSourceModelConstants.ComponentType.FIELD);
+        if (field.enumConstant) {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.ENUM_CONSTANT);
+        } else {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.FIELD);
+        }
         component.setName(field.name);
         final String fieldUniqueName = CompilerSupport.uniqueNameForMember(classModel.uniqueName, field.name);
         component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, fieldUniqueName));

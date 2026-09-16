@@ -6,6 +6,8 @@ package com.hadi.clarpse.compiler.python.model;
 public class PythonFieldModel {
 
     public String name;
+    /** True for a class-level assignment in an enumeration, which names a member of it. */
+    public boolean enumConstant;
     public String rawType;
     public int implementationHash;
     public String targetUniqueName;

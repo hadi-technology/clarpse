@@ -9,6 +9,8 @@ import java.util.List;
 public class PythonClassModel {
 
     public String className;
+    /** {@code "enum"} for a class deriving from a standard-library enum base, {@code "class"} otherwise. */
+    public String kind = "class";
     public String uniqueName;
     public String comment;
     public int implementationHash;

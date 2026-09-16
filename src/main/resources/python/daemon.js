@@ -2407,6 +2407,22 @@ function extractInstanceFieldsFromMethod(methodNode, ctx) {
   return fields;
 }
 
+// The standard library's enum bases. A class deriving from one of these is an enumeration, and its
+// class-level assignments are its members.
+const ENUM_BASE_NAMES = new Set(['Enum', 'IntEnum', 'StrEnum', 'Flag', 'IntFlag', 'ReprEnum']);
+
+/**
+ * Whether a base class expression names one of the enum bases. Matched on the last dotted segment,
+ * so `enum.Enum` and an `Enum` imported from it are both recognised.
+ */
+function isEnumBase(rawBase) {
+  if (!rawBase) {
+    return false;
+  }
+  const segments = String(rawBase).trim().split('.');
+  return ENUM_BASE_NAMES.has(segments[segments.length - 1]);
+}
+
 function resolveClassUniqueName(className, ctx, parentUniqueName) {
   if (!className) {
     return '';
@@ -2442,6 +2458,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         .filter(Boolean);
     }
     const bases = baseExprs.map(expr => resolveTypeRef(expr, textForNode(expr, ctx.fileText), ctx)).filter(Boolean);
+    const isEnum = baseExprs.some(expr => isEnumBase(textForNode(expr, ctx.fileText)));
     const classCtx = Object.assign({}, ctx, { className, classUniqueName });
     const suiteStatements = getStatementsFromSuite(statement.d ? statement.d.suite : null);
     const methods = [];
@@ -2480,12 +2497,16 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         requireAnnotation: !isAssignmentStatement(node, parseNodeType)
       });
       if (field && field.name && !fieldNames.has(field.name)) {
+        // In an enumeration an unannotated class-level assignment names a member of it rather than
+        // an ordinary field: `FAST = 1` is what `Mode.FAST` is.
+        field.enumConstant = isEnum && !annotationForFieldStatement(node);
         fieldNames.add(field.name);
         fields.push(field);
       }
     }
     classes.push({
       className,
+      kind: isEnum ? 'enum' : 'class',
       uniqueName: classUniqueName,
       comment: classComment,
       implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
