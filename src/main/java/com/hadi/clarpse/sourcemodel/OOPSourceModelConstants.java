@@ -334,7 +334,7 @@ public final class OOPSourceModelConstants {
 
         CLASS("class", true, false, false), STRUCT("class", true, false, false), INTERFACE("interface", true, false,
                 false), INTERFACE_CONSTANT("interface_constant", false, false, true), ENUM("enum", true, false,
-                false), ANNOTATION("annotation", false, false, false), METHOD("method", false, true,
+                false), ANNOTATION("annotation", true, false, false), METHOD("method", false, true,
                 false), FUNCTION("function", false, true, false), CONSTRUCTOR("method", false, true, false),
                 ENUM_CONSTANT("enum_constant", false, false, true), FIELD("field_variable", false, false, true),
                 MODULE_FIELD("module_field", false, false, true),
