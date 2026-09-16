@@ -2188,6 +2188,21 @@ function annotationForFieldStatement(statement) {
   return target ? getNodeProp(target, ANNOTATION_KEYS) : null;
 }
 
+/**
+ * Whether a statement is an assignment, and so declares something.
+ *
+ * A class body holds more than declarations -- a docstring, a call, a conditional -- and none of
+ * those names a field. Gating on the statement being an assignment is what lets an unannotated
+ * `kind = "standard"` be read as a field without a docstring becoming one too.
+ */
+function isAssignmentStatement(statement, parseNodeType) {
+  if (!statement || !parseNodeType) {
+    return false;
+  }
+  return statement.nodeType === parseNodeType.Assignment
+    || statement.nodeType === parseNodeType.TypeAnnotation;
+}
+
 function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
   if (!statement) {
     return null;
@@ -2352,7 +2367,12 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         }
         continue;
       }
-      const field = extractFieldFromStatement(node, classCtx, parseNodeType, { requireAnnotation: true });
+      // A class-level assignment declares a field whether or not it carries an annotation:
+      // `kind = "standard"` is as much a member of the class as `limit: int = 10`, and requiring an
+      // annotation left every unannotated one out of the model.
+      const field = extractFieldFromStatement(node, classCtx, parseNodeType, {
+        requireAnnotation: !isAssignmentStatement(node, parseNodeType)
+      });
       if (field && field.name && !fieldNames.has(field.name)) {
         fieldNames.add(field.name);
         fields.push(field);
