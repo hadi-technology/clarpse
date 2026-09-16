@@ -11,6 +11,11 @@ architecture-level model as Java, with strict correctness guarantees and explici
 - Node.js is required at runtime; the TypeScript compiler API is bundled with Clarpse.
 - The daemon resolves only the bundled TypeScript runtime (no local/global fallback).
 - A valid `tsconfig.json` exists in the project tree.
+- Project references are followed: a config named by another config's `references` is analysed even
+  when it is not itself called `tsconfig.json`, which is how solution-style layouts reach the
+  `tsconfig.lib.json` holding the sources.
+- A config whose `extends` target cannot be read falls back to minimal compiler options and keeps
+  its own `include`, rather than being discarded along with the files it claims.
 - Only `.ts`, `.tsx`, and `.d.ts` files are parsed; JavaScript is not parsed.
 - The TypeScript compiler is the single source of truth for resolution.
 - If TypeScript cannot resolve a file or program, the compiler fails explicitly (no heuristics).
@@ -131,10 +136,17 @@ These are properly modeled as fields with their corresponding visibility modifie
 # Additional Features
 ## Monorepo Support
 Clarpse supports monorepo setups with multiple `tsconfig.json` files:
-- Each `tsconfig.json` creates a separate TypeScript program instance.
-- Files are correctly scoped to their appropriate program based on `tsconfig` references.
-- Project references (`composite: true`, `references` arrays) are properly handled.
-- Files not in any valid program scope are reported with appropriate error codes.
+- The config set is the `tsconfig.json` files found in the tree, plus every config reachable from
+  them through `references`, transitively. A solution-style config carries `"files": []`,
+  `"include": []` and a `references` array, so the projects it points at - often named
+  `tsconfig.lib.json` - are where the sources are.
+- Each config owns the root files its `include`/`exclude`/`files` rules expand to, and gets its own
+  program, built on first use.
+- A config that expands to no root files owns nothing and never becomes a program.
+- Files in no program scope are reported as `CODE_FILE_NOT_IN_PROGRAM` failures. This includes files
+  a config deliberately excludes, such as tests and scripts: `CompileResult.failures()` records that
+  they were not analysed, which is what distinguishes them from files that were analysed and
+  declared nothing.
 
 ## Constructor Parameter Properties
 TypeScript's parameter properties are fully supported:

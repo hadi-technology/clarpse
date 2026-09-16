@@ -509,6 +509,11 @@ public class ProjectFiles implements AutoCloseable {
         String normalized = normalizeConfigPath(path).toLowerCase(Locale.ROOT);
         return normalized.equals("tsconfig.json")
                 || normalized.endsWith("/tsconfig.json")
+                // A tsconfig variant at the repository root has no directory in front of it, so a
+                // pattern anchored on a leading slash never matches one and the file is dropped.
+                // `tsconfig.base.json` beside `tsconfig.json` is the ordinary layout, and every
+                // config that extends it fails to read it once it has been dropped.
+                || normalized.matches("tsconfig\\.[^/]+\\.json")
                 || normalized.matches(".*/tsconfig\\.[^/]+\\.json$")
                 || normalized.equals("jsconfig.json")
                 || normalized.endsWith("/jsconfig.json")

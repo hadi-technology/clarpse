@@ -146,6 +146,108 @@ function filterTypeScriptRoots(fileNames) {
   return fileNames.filter(isTypeScriptFile);
 }
 
+// Diagnostics that mean "this config's `extends` chain could not be resolved", rather than "this
+// config is broken". TS5083 -- "Cannot read file '...'" -- is what a config gets when the base it
+// extends is absent, and it was not among them, so such a config was discarded along with every
+// source file its own `include` claimed. The others are 6053 (file not found), 6075 (base config
+// resolution) and 18003 (no inputs found).
+const EXTENDS_ERROR_CODES = new Set([5083, 6053, 6075, 18003]);
+
+function isExtendsError(diagnostic) {
+  if (!diagnostic) {
+    return false;
+  }
+  if (diagnostic.code && EXTENDS_ERROR_CODES.has(diagnostic.code)) {
+    return true;
+  }
+  const text = typeof diagnostic.messageText === "string"
+    ? diagnostic.messageText
+    : String(diagnostic.messageText || diagnostic.message || diagnostic);
+  return text.includes("extends");
+}
+
+// Reads a tsconfig, tolerating the trailing commas that are legal in a tsconfig but not in JSON.
+function readNormalizedConfigFile(ts, configPath) {
+  return ts.readConfigFile(configPath, (filePath) => {
+    const content = ts.sys.readFile(filePath);
+    if (content === undefined) {
+      return undefined;
+    }
+    return content.replace(/,(\s*[}\]])/g, "$1");
+  });
+}
+
+/**
+ * The config files a config's `references` entries point at. A reference names either a config file
+ * or a directory holding a `tsconfig.json`, and is resolved relative to the referring config.
+ */
+function referencedConfigPaths(ts, configPath) {
+  let raw;
+  try {
+    raw = readNormalizedConfigFile(ts, configPath);
+  } catch (err) {
+    return [];
+  }
+  const references = raw && raw.config && Array.isArray(raw.config.references)
+    ? raw.config.references
+    : [];
+  const configDir = path.dirname(configPath);
+  const results = [];
+  for (const reference of references) {
+    const referencePath = typeof reference === "string" ? reference : (reference && reference.path);
+    if (!referencePath) {
+      continue;
+    }
+    const resolved = path.resolve(configDir, referencePath);
+    try {
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+        results.push(path.join(resolved, "tsconfig.json"));
+      } else {
+        results.push(resolved);
+      }
+    } catch (err) {
+      continue;
+    }
+  }
+  return results;
+}
+
+/**
+ * Every config reachable from the given ones, the projects they reference included.
+ *
+ * A solution-style `tsconfig.json` -- the shape Nx and similar tools generate -- carries
+ * `"files": []`, `"include": []` and a `references` array, so it owns no source of its own and the
+ * projects it points at hold the code. Those projects are routinely named `tsconfig.lib.json`
+ * rather than `tsconfig.json`, so walking the tree for that exact name never reaches them: their
+ * sources land in no program, yield no components, and look exactly like a project that declares
+ * nothing.
+ */
+function expandProjectReferences(ts, configPaths) {
+  const ordered = [];
+  const seen = new Set();
+  const queue = configPaths.slice();
+  while (queue.length > 0) {
+    const configPath = queue.shift();
+    const key = normalizePath(ts, configPath);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    try {
+      if (!fs.existsSync(configPath) || !fs.statSync(configPath).isFile()) {
+        continue;
+      }
+    } catch (err) {
+      continue;
+    }
+    ordered.push(configPath);
+    for (const referenced of referencedConfigPaths(ts, configPath)) {
+      queue.push(referenced);
+    }
+  }
+  return ordered;
+}
+
 /**
  * Reads every tsconfig into the compiler options and root file names it implies, and builds no
  * programs. `parseJsonConfigFileContent` expands `include`/`exclude` globs on its own, so which
@@ -155,27 +257,13 @@ function parseConfigs(ts, repoRoot, configPaths) {
   const configs = [];
   const invalidConfigs = [];
 
-  // Wrapper around ts.sys.readFile that normalizes tsconfig JSON
-  const readAndNormalizeConfig = (filePath) => {
-    const content = ts.sys.readFile(filePath);
-    if (content === undefined) {
-      return undefined;
-    }
-    // Remove trailing commas from JSON to handle non-standard tsconfig files
-    // Pattern: comma followed by optional whitespace then closing brace or bracket
-    const normalized = content.replace(/,(\s*[}\]])/g, '$1');
-    return normalized;
-  };
-
   for (const configPath of configPaths) {
     let configFile;
     try {
-      configFile = ts.readConfigFile(configPath, readAndNormalizeConfig);
+      configFile = readNormalizedConfigFile(ts, configPath);
     } catch (err) {
-      // Check if the read failure is extends-related
-      const errStr = err.toString();
-      if (errStr.includes("extends") || err.code === 6075 || err.code === 18003 || err.code === 6053) {
-        // Treat as extends error - will use minimal options
+      if (isExtendsError(err)) {
+        // The extends chain could not be read; fall through to minimal compiler options.
         configFile = null;
       } else {
         invalidConfigs.push({ configPath, error: "CONFIG_READ_FAILED" });
@@ -183,15 +271,9 @@ function parseConfigs(ts, repoRoot, configPaths) {
       }
     }
 
-    // If there's a configFile.error, check if it's extends-related
-    if (configFile && configFile.error) {
-      const errStr = configFile.error.toString();
-      if (errStr.includes("extends") || (configFile.error.code && (configFile.error.code === 6075 || configFile.error.code === 18003 || configFile.error.code === 6053))) {
-        // Treat as extends error - will use minimal options
-      } else {
-        invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
-        continue;
-      }
+    if (configFile && configFile.error && !isExtendsError(configFile.error)) {
+      invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
+      continue;
     }
 
     let config;
@@ -203,13 +285,10 @@ function parseConfigs(ts, repoRoot, configPaths) {
           ts.sys,
           path.dirname(configPath)
         );
-        hasExtendErrors = config && config.errors && config.errors.some(e =>
-          e.messageText && (e.messageText.includes("extends") || e.code === 6075 || e.code === 18003 || e.code === 6053)
-        );
+        hasExtendErrors = config && config.errors && config.errors.some(isExtendsError);
       } catch (err) {
         // parseJsonConfigFileContent threw an exception - check if it's extends-related
-        const errStr = err.toString();
-        if (errStr.includes("extends") || err.code === 6075 || err.code === 18003 || err.code === 6053) {
+        if (isExtendsError(err)) {
           hasExtendErrors = true;
           config = null;
         } else {
@@ -1153,7 +1232,7 @@ async function handleInitRepo(params) {
     err.code = ERROR_CODES.TYPESCRIPT_NOT_FOUND;
     throw err;
   }
-  const configs = findTsconfigs(repoRoot).sort();
+  const configs = expandProjectReferences(ts, findTsconfigs(repoRoot).sort());
   if (!configs.length) {
     const err = new Error("NO_TSCONFIG");
     err.code = ERROR_CODES.NO_TSCONFIG;

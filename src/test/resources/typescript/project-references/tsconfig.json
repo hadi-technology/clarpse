@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./libs/refonly" },
+    { "path": "./libs/plain" },
+    { "path": "./libs/missingbase" }
+  ]
+}

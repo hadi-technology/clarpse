@@ -77,10 +77,6 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 try {
                     fileModel = daemon.getFileModel(diskPath);
                 } catch (final TypeScriptDaemonException e) {
-                    if (e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM) {
-                        LOGGER.debug("Skipping TypeScript file outside program scope: {}", file.path());
-                        continue;
-                    }
                     if (isFileLevelFailure(e)) {
                         compileFailures.add(new CompileFailure(file, e.getMessage(), e.code()));
                         LOGGER.warn("TypeScript resolver failed for file {} (code={}).",
@@ -121,7 +117,11 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             return false;
         }
         return e.code() == TypeScriptDaemonException.CODE_FILE_NOT_FOUND
-                || e.code() == TypeScriptDaemonException.CODE_RESOLUTION_FAILED;
+                || e.code() == TypeScriptDaemonException.CODE_RESOLUTION_FAILED
+                // A file that belongs to no program was skipped at DEBUG and recorded nowhere, so
+                // it reached a caller as a file that was parsed and declared nothing. Whether a
+                // file was analysed at all is exactly what the failure list is for.
+                || e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM;
     }
 
     private static void addInvalidConfigFailures(final TypeScriptDaemon.InitResult initResult,

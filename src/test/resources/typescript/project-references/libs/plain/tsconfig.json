@@ -1,0 +1,4 @@
+{
+  "compilerOptions": { "target": "ES2019", "strict": false },
+  "include": ["src/**/*.ts"]
+}
