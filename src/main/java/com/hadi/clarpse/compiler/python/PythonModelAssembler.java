@@ -94,6 +94,13 @@ final class PythonModelAssembler {
                             insertComponent(paramComponent, stack, srcModel, null);
                         }
                     }
+                    if (function.locals != null) {
+                        for (final PythonFieldModel local : function.locals) {
+                            final Component localComponent = buildLocalComponent(pkg, moduleName, sourcePath,
+                                    fileModel.packageName, function, local);
+                            insertComponent(localComponent, stack, srcModel, null);
+                        }
+                    }
                 });
             }
         }
@@ -153,6 +160,13 @@ final class PythonModelAssembler {
                                 final Component paramComponent = buildParamComponent(pkg, moduleName, sourcePath,
                                         packageName, classModel, method, param);
                                 insertComponent(paramComponent, stack, srcModel, null);
+                            }
+                        }
+                        if (method.locals != null) {
+                            for (final PythonFieldModel local : method.locals) {
+                                final Component localComponent = buildLocalComponent(pkg, moduleName, sourcePath,
+                                        packageName, method, local);
+                                insertComponent(localComponent, stack, srcModel, null);
                             }
                         }
                     });
@@ -489,6 +503,52 @@ final class PythonModelAssembler {
         if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
             component.insertCmpRef(ref);
         }
+    }
+
+    /**
+     * A local variable of a method or function.
+     *
+     * <p>Carries no visibility modifier. Visibility answers whether a member can be reached from
+     * outside the thing that declares it, and a local cannot be reached from outside the body that
+     * binds it - which is why a parameter carries none either. Reading a leading underscore as
+     * "protected" here would answer a question the component does not raise.
+     *
+     * @param pkg        Package of the declaring file.
+     * @param moduleName Module the local is declared in.
+     * @param sourcePath Path of the declaring file.
+     * @param packageName Package name, to trim from the component name.
+     * @param owner      The method or function whose body binds it.
+     * @param local      The binding.
+     * @return The local's component, or {@code null} if it has no name.
+     */
+    private static Component buildLocalComponent(final Package pkg,
+                                                 final String moduleName,
+                                                 final String sourcePath,
+                                                 final String packageName,
+                                                 final PythonMethodModel owner,
+                                                 final PythonFieldModel local) {
+        if (local == null || local.name == null || local.name.isEmpty()) {
+            return null;
+        }
+        final Component component = new Component();
+        component.setPkg(pkg);
+        component.setModule(moduleName);
+        component.setComponentType(OOPSourceModelConstants.ComponentType.LOCAL);
+        component.setName(local.name);
+        final String localUniqueName = CompilerSupport.uniqueNameForMember(owner.uniqueName, local.name);
+        component.setComponentName(CompilerSupport.componentNameFromUniqueName(packageName, localUniqueName));
+        component.setSourceFilePath(sourcePath);
+        if (local.rawType != null && !local.rawType.isEmpty()) {
+            component.setCodeFragment(local.name + " : " + local.rawType);
+        }
+        applyCodeHash(component, local.implementationHash, component.codeFragment());
+        final PythonTypeRefModel typeRef = new PythonTypeRefModel();
+        typeRef.raw = local.rawType;
+        typeRef.targetUniqueName = local.targetUniqueName;
+        typeRef.externalLabel = local.externalLabel;
+        typeRef.alternates = local.alternates;
+        insertReferences(component, typeRef, false);
+        return component;
     }
 
     private static boolean isConstructor(final PythonMethodModel method) {

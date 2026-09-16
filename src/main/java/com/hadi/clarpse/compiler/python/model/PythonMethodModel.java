@@ -22,6 +22,13 @@ public class PythonMethodModel {
     public List<String> decorators = new ArrayList<>();
     public List<PythonParamModel> params = new ArrayList<>();
 
+    /**
+     * The local variables this method or function binds in its own body, one per distinct name.
+     * Shares the field payload shape: a name, the declared type where there is one, and the
+     * reference that type resolves to.
+     */
+    public List<PythonFieldModel> locals = new ArrayList<>();
+
     @JsonProperty("return")
     public PythonTypeRefModel returnType;
 

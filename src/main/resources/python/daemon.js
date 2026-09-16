@@ -2196,6 +2196,125 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
   return refs;
 }
 
+/**
+ * The local variables a function binds in its own body.
+ *
+ * Python rebinds freely -- `x = 1` then `x = "a"` is one variable, not two -- and a component is
+ * identified by its name, so this yields one local per distinct name bound, taking the first
+ * binding for the declared type and the hash. What counts as binding a variable: an assignment, an
+ * annotated assignment, a `for` target, a `with ... as`, an `except ... as`, a walrus, a `match`
+ * capture, and the elements of a tuple or list unpacking.
+ *
+ * Deliberately excluded. Parameters, which are components of their own. `self` and `cls`. Attribute
+ * and subscript targets -- `self.x = 1` and `a[0] = 1` bind no name, and the first is already
+ * modelled as a field. Anything a nested function or class binds, and the nested definition's own
+ * name. Comprehension iteration variables, which have a scope of their own in Python 3. Imports,
+ * which bind a module rather than a variable. And names declared `global` or `nonlocal`, which name
+ * a binding in another scope entirely.
+ */
+function collectLocalVariables(functionNode, ctx, parseNodeType) {
+  const types = parseNodeType || {};
+  const found = new Map();
+  const declaredElsewhere = new Set();
+  const parameterNames = new Set();
+
+  const rawParams = (functionNode && functionNode.d
+    && (functionNode.d.parameters || functionNode.d.params)) || [];
+  for (const param of rawParams) {
+    const paramName = nameFromNode(getNodeProp(param, ['name', 'paramName', 'target']));
+    if (paramName) {
+      parameterNames.add(paramName);
+    }
+  }
+
+  function record(expr, statement, annotationNode) {
+    if (!expr || !expr.d) {
+      return;
+    }
+    if (expr.nodeType === types.Name) {
+      const localName = nameFromNode(expr);
+      if (!localName || localName === 'self' || localName === 'cls') {
+        return;
+      }
+      if (parameterNames.has(localName) || found.has(localName)) {
+        return;
+      }
+      found.set(localName, { name: localName, statement, annotationNode });
+      return;
+    }
+    if (expr.nodeType === types.Tuple || expr.nodeType === types.List) {
+      (expr.d.items || []).forEach(item => record(item, statement, null));
+      return;
+    }
+    if (expr.nodeType === types.TypeAnnotation) {
+      record(expr.d.valueExpr, statement, getNodeProp(expr, ANNOTATION_KEYS));
+      return;
+    }
+    if (expr.nodeType === types.Unpack) {
+      record(expr.d.expr, statement, null);
+    }
+    // An attribute or subscript target binds no name.
+  }
+
+  function visit(node, isRoot) {
+    if (!node || typeof node !== 'object' || !node.d) {
+      return;
+    }
+    if (!isRoot && (isFunctionNode(node, parseNodeType) || isClassNode(node, parseNodeType))) {
+      return;
+    }
+    const type = node.nodeType;
+    if (type === types.Import || type === types.ImportFrom || type === types.ComprehensionFor) {
+      return;
+    }
+    if (type === types.Global || type === types.Nonlocal) {
+      (node.d.targets || []).forEach(target => declaredElsewhere.add(nameFromNode(target)));
+      return;
+    }
+    if (type === types.Assignment) {
+      record(node.d.leftExpr, node, null);
+    } else if (type === types.TypeAnnotation) {
+      record(node.d.valueExpr, node, getNodeProp(node, ANNOTATION_KEYS));
+    } else if (type === types.For) {
+      record(node.d.targetExpr, node, null);
+    } else if (type === types.WithItem) {
+      record(node.d.target, node, null);
+    } else if (type === types.Except || type === types.AssignmentExpression) {
+      record(node.d.name, node, null);
+    } else if (type === types.PatternCapture || type === types.PatternAs) {
+      record(node.d.target, node, null);
+    }
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      if (Array.isArray(child)) {
+        child.forEach(item => visit(item, false));
+      } else if (child && typeof child === 'object' && child.d) {
+        visit(child, false);
+      }
+    }
+  }
+
+  visit(functionNode, true);
+  declaredElsewhere.forEach(name => found.delete(name));
+
+  const locals = [];
+  for (const entry of found.values()) {
+    // An unannotated binding displays as `Any`, the way an unannotated parameter does, and is not a
+    // dependency on anything.
+    const rawType = entry.annotationNode ? textForNode(entry.annotationNode, ctx.fileText) : 'Any';
+    const ref = entry.annotationNode ? resolveTypeRef(entry.annotationNode, rawType, ctx) : null;
+    locals.push({
+      name: entry.name,
+      rawType: ref ? ref.raw : rawType,
+      implementationHash: stableImplementationHash(textForNode(entry.statement, ctx.fileText)),
+      targetUniqueName: ref ? ref.targetUniqueName : null,
+      externalLabel: ref ? ref.externalLabel : null,
+      alternates: ref ? ref.alternates : []
+    });
+  }
+  return locals;
+}
+
 function extractMethod(methodNode, ctx, parseNodeType) {
   const name = nameFromNode(methodNode.d && methodNode.d.name ? methodNode.d.name : null);
   if (!name) {
@@ -2228,6 +2347,7 @@ function extractMethod(methodNode, ctx, parseNodeType) {
     staticMethod: isStaticMethod,
     decorators,
     params,
+    locals: collectLocalVariables(methodNode, ctx, parseNodeType),
     return: returnRef,
     bodyReferences
   };
@@ -2266,6 +2386,7 @@ function extractFunction(functionNode, ctx, parseNodeType) {
     staticMethod: false,
     decorators,
     params,
+    locals: collectLocalVariables(functionNode, ctx, parseNodeType),
     return: returnRef,
     bodyReferences
   };
