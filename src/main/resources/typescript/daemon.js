@@ -764,6 +764,17 @@ function mergeReferences(...lists) {
   return merged;
 }
 
+// TypeScript's own names for symbols it synthesises: the anonymous object type a mixin factory
+// returns, a call or index signature, an anonymous class. None of them names a type a consumer can
+// look up, so recording one as a dependency invents an edge to something that does not exist.
+const TS_INTERNAL_SYMBOL_NAMES = new Set([
+  "__object", "__type", "__function", "__class", "__call", "__new", "__index", "__constructor", "__global"
+]);
+
+function isInternalSymbolName(name) {
+  return !!name && TS_INTERNAL_SYMBOL_NAMES.has(name);
+}
+
 function buildReferenceModelsFromType(type, checker, kind) {
   const references = [];
   const seen = new Set();
@@ -780,6 +791,9 @@ function buildReferenceModelsFromType(type, checker, kind) {
   }
   for (const entry of entries) {
     const name = resolveSymbolName(entry.symbol, checker);
+    if (isInternalSymbolName(name)) {
+      continue;
+    }
     const decls = (entry.symbol.flags & state.ts.SymbolFlags.Alias)
       ? checker.getAliasedSymbol(entry.symbol).declarations
       : entry.symbol.declarations;
@@ -1128,7 +1142,128 @@ function buildInterfaceModel(node, checker) {
   };
 }
 
-function buildClassModel(node, checker) {
+/**
+ * The `extends` clause whose expression is a call, or null.
+ *
+ * `class User extends Schema.Class<User>("User")({...})` declares its members in the argument to a
+ * call rather than in its own body, which is the shape the Effect `Schema.Class` and `Context.Tag`
+ * patterns take. The class body is then empty and the members look absent.
+ */
+function classProducingBaseExpression(node) {
+  if (!node.heritageClauses) {
+    return null;
+  }
+  for (const clause of node.heritageClauses) {
+    if (clause.token !== state.ts.SyntaxKind.ExtendsKeyword) {
+      continue;
+    }
+    for (const typeNode of clause.types) {
+      if (typeNode.expression && state.ts.isCallExpression(typeNode.expression)) {
+        return typeNode;
+      }
+    }
+  }
+  return null;
+}
+
+function signatureParameterTypes(signature, checker, location) {
+  const parameters = signature.getParameters ? signature.getParameters() : [];
+  return parameters.map((parameter) => {
+    try {
+      return checker.typeToString(checker.getTypeOfSymbolAtLocation(parameter, location));
+    } catch (err) {
+      return "any";
+    }
+  });
+}
+
+/**
+ * The members a class gets from a class-producing base expression, as the type checker sees them.
+ *
+ * Only the members the class does not declare itself are built, and only for a class whose base is
+ * a call expression -- an ordinary `extends Base` is left alone, so a subclass does not absorb a
+ * copy of everything its superclass declares.
+ */
+function buildBaseExpressionMembers(node, checker, declaredNames) {
+  const models = [];
+  const symbol = node.name ? checker.getSymbolAtLocation(node.name) : null;
+  if (!symbol) {
+    return models;
+  }
+  let instanceType;
+  try {
+    instanceType = checker.getDeclaredTypeOfSymbol(symbol);
+  } catch (err) {
+    return models;
+  }
+  if (!instanceType) {
+    return models;
+  }
+  let properties;
+  try {
+    properties = checker.getPropertiesOfType(instanceType) || [];
+  } catch (err) {
+    return models;
+  }
+  for (const property of properties) {
+    const name = property.getName ? property.getName() : null;
+    if (!name || declaredNames.has(name) || isInternalSymbolName(name)) {
+      continue;
+    }
+    let propertyType;
+    try {
+      propertyType = checker.getTypeOfSymbolAtLocation(property, node);
+    } catch (err) {
+      continue;
+    }
+    if (!propertyType) {
+      continue;
+    }
+    let callSignatures = [];
+    try {
+      callSignatures = checker.getSignaturesOfType(propertyType, state.ts.SignatureKind.Call) || [];
+    } catch (err) {
+      callSignatures = [];
+    }
+    const references = buildReferenceModelsFromType(propertyType, checker, "type");
+    if (callSignatures.length > 0) {
+      const signature = callSignatures[0];
+      const paramTypes = signatureParameterTypes(signature, checker, node);
+      let returnType = "";
+      try {
+        returnType = normalizeReturnType(checker.getReturnTypeOfSignature(signature), checker);
+      } catch (err) {
+        returnType = "";
+      }
+      models.push({
+        kind: "method",
+        name,
+        signature: `${name}(${paramTypes.join(", ")})`,
+        implementationHash: stableImplementationHash(`${name}(${paramTypes.join(", ")}):${returnType}`),
+        returnType,
+        modifiers: [],
+        jsDoc: "",
+        cyclo: 0,
+        members: [],
+        references
+      });
+      continue;
+    }
+    const typeText = checker.typeToString(propertyType);
+    models.push({
+      kind: "field",
+      name,
+      type: typeText,
+      implementationHash: stableImplementationHash(`${name}:${typeText}`),
+      modifiers: [],
+      jsDoc: "",
+      references
+    });
+  }
+  return models;
+}
+
+function buildClassModel(node, checker, unresolvedBases) {
   const members = [];
   for (const member of node.members) {
     if (state.ts.isConstructorDeclaration(member)) {
@@ -1156,6 +1291,23 @@ function buildClassModel(node, checker) {
     }
     if (state.ts.isSetAccessorDeclaration(member)) {
       members.push(buildAccessorModel(member, checker, "set"));
+    }
+  }
+  const baseExpression = classProducingBaseExpression(node);
+  if (baseExpression) {
+    const declaredNames = new Set();
+    for (const member of members) {
+      if (member && member.name) {
+        declaredNames.add(member.name);
+      }
+    }
+    const inherited = buildBaseExpressionMembers(node, checker, declaredNames);
+    if (inherited.length > 0) {
+      members.push(...inherited);
+    } else if (Array.isArray(unresolvedBases)) {
+      // The base is a call and the checker could see no members through it. Saying nothing here
+      // would leave the class looking like one that genuinely declares none.
+      unresolvedBases.push(`${node.name.text} extends ${baseExpression.getText()}`);
     }
   }
   const typeParams = node.typeParameters && node.typeParameters.length
@@ -1186,11 +1338,11 @@ function buildFunctionModel(node, checker) {
   return buildMethodModel(node, checker, "function");
 }
 
-function collectTopLevelDeclarations(ts, sourceFile, checker) {
+function collectTopLevelDeclarations(ts, sourceFile, checker, unresolvedBases) {
   const declarations = [];
   sourceFile.forEachChild((node) => {
     if (ts.isClassDeclaration(node) && node.name) {
-      declarations.push(buildClassModel(node, checker));
+      declarations.push(buildClassModel(node, checker, unresolvedBases));
       return;
     }
     if (ts.isInterfaceDeclaration(node)) {
@@ -1313,9 +1465,10 @@ async function handleGetFileModel(params) {
     throw err;
   }
   const checker = entryInfo.entry.checker || entryInfo.entry.program.getTypeChecker();
+  const unresolvedBases = [];
   let declarations;
   try {
-    declarations = collectTopLevelDeclarations(ts, entryInfo.source, checker);
+    declarations = collectTopLevelDeclarations(ts, entryInfo.source, checker, unresolvedBases);
   } catch (err) {
     if (err instanceof RangeError || (err.message && err.message.includes("Maximum call stack size exceeded"))) {
       console.warn(`[clarpse] Stack overflow during type resolution for ${filePath}.`);
@@ -1334,7 +1487,8 @@ async function handleGetFileModel(params) {
   return {
     filePath: normalized,
     declarations,
-    imports
+    imports,
+    unresolvedBases
   };
 }
 
