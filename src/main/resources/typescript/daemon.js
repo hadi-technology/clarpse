@@ -885,6 +885,67 @@ function buildDecoratorReferences(node) {
   return references;
 }
 
+/**
+ * The module-level function a call names, when it names one in this repository.
+ *
+ * A call's own type is the type it evaluates to -- `number`, for a function returning one -- so
+ * building references from that alone recorded what a call produced and never what it called. One
+ * module-level function calling another therefore yielded no edge at all, which is the ordinary
+ * shape of TypeScript written as functions rather than classes: such a codebase came back with no
+ * relations between its files.
+ *
+ * Deliberately limited to a function declared at the top level of its file. That is the one callee
+ * whose component name is derivable from its declaration -- `<package>.<module>.<name>`, which is
+ * how a top-level function is named here. A method's name would have to carry its signature and its
+ * declaring type, and guessing at it would point the edge at a component that does not exist.
+ */
+function buildCalleeReference(node, checker) {
+  const expr = node.expression;
+  if (!expr) {
+    return null;
+  }
+  let symbol;
+  try {
+    symbol = checker.getSymbolAtLocation(expr);
+  } catch (err) {
+    return null;
+  }
+  if (!symbol) {
+    return null;
+  }
+  let actual = symbol;
+  if (symbol.flags & state.ts.SymbolFlags.Alias) {
+    try {
+      actual = checker.getAliasedSymbol(symbol);
+    } catch (err) {
+      actual = symbol;
+    }
+  }
+  const name = actual.getName ? actual.getName() : null;
+  if (!name || isInternalSymbolName(name)) {
+    return null;
+  }
+  const declarations = actual.declarations || [];
+  const declaration = declarations.length ? declarations[0] : null;
+  if (!declaration || !declaration.getSourceFile) {
+    return null;
+  }
+  if (!state.ts.isFunctionDeclaration(declaration)
+    || !declaration.parent
+    || !state.ts.isSourceFile(declaration.parent)) {
+    return null;
+  }
+  const fileName = declaration.getSourceFile().fileName;
+  if (!fileName || !isInternalFile(fileName)) {
+    return null;
+  }
+  return {
+    kind: "type",
+    external: false,
+    target: { filePath: path.resolve(fileName), symbolName: name }
+  };
+}
+
 function buildCallReferences(node, checker) {
   const references = [];
   if (!node) {
@@ -892,6 +953,10 @@ function buildCallReferences(node, checker) {
   }
   const callType = checker.getTypeAtLocation(node);
   references.push(...buildReferenceModelsFromType(callType, checker, "type"));
+  const callee = buildCalleeReference(node, checker);
+  if (callee) {
+    references.push(callee);
+  }
   const expr = node.expression;
   if (state.ts.isPropertyAccessExpression(expr) || state.ts.isElementAccessExpression(expr)) {
     const receiverType = checker.getTypeAtLocation(expr.expression);
