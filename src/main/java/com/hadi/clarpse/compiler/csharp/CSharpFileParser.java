@@ -54,6 +54,23 @@ final class CSharpFileParser {
             "cs:enum-member-declaration"
     );
 
+    /**
+     * Statement-shaped productions the parser wraps around top-level declarations it could not
+     * place, such as those following an unrecognised directive. They declare nothing themselves.
+     */
+    private static final Set<String> TOP_LEVEL_WRAPPERS = Set.of("cs:kops-statement");
+
+    private static final String BYTE_ORDER_MARK = "\uFEFF";
+
+    /**
+     * A using directive written after a preprocessor directive is produced as a using statement.
+     * Only the directive shapes match: a namespace, a static type, or an alias, never a
+     * declaration such as {@code using var x = ...;}.
+     */
+    private static final Pattern USING_DIRECTIVE_PATTERN = Pattern.compile(
+            "(?:global\\s+)?using\\s+(?:static\\s+)?(?:@?[A-Za-z_]\\w*\\s*=\\s*)?"
+                    + "@?[A-Za-z_][\\w.@:<>,\\s]*;");
+
     private static final Pattern TYPE_TOKEN_PATTERN = Pattern.compile("[A-Za-z_][A-Za-z0-9_\\.]*");
     private static final Pattern THIS_MEMBER_ASSIGN_PATTERN =
             Pattern.compile("\\bthis\\.(\\w+)\\s*=\\s*(\\w+)\\b");
@@ -65,10 +82,7 @@ final class CSharpFileParser {
 
     static CSharpModel.ParseOutcome parseFile(final ProjectFile file, final int index) {
         try {
-            String sourceText = file.content();
-            if (sourceText == null) {
-                sourceText = "";
-            }
+            final String sourceText = withoutByteOrderMark(file.content());
             validateBalancedDelimiters(sourceText);
             final CSharpModel.CSharpFileModel fileModel = new CSharpModel.CSharpFileModel(
                     file,
@@ -87,6 +101,18 @@ final class CSharpFileParser {
                     new CompileFailure(file, e.getMessage(), FailureCode.PARSE_FAILED)
             );
         }
+    }
+
+    /**
+     * The lexer does not treat a leading byte-order mark as whitespace, so a directive on the first
+     * line stops starting a line and the parser folds everything after it into one statement node.
+     * All offsets are taken on the returned text.
+     */
+    private static String withoutByteOrderMark(final String content) {
+        if (content == null) {
+            return "";
+        }
+        return content.startsWith(BYTE_ORDER_MARK) ? content.substring(BYTE_ORDER_MARK.length()) : content;
     }
 
     private static SyntaxNode parseSyntaxTree(final String sourceText) {
@@ -156,7 +182,7 @@ final class CSharpFileParser {
             }
             return;
         }
-        if ("cs:block-list".equals(type)) {
+        if ("cs:block-list".equals(type) || TOP_LEVEL_WRAPPERS.contains(type)) {
             for (final SyntaxNode child : node.children) {
                 parseTopLevelNode(child, fileModel, currentNamespace);
             }
@@ -168,6 +194,11 @@ final class CSharpFileParser {
                     fileModel.usings.add(parseUsing(child));
                 }
             }
+            return;
+        }
+        if ("cs:using-scoped-statement".equals(type)
+                && USING_DIRECTIVE_PATTERN.matcher(normalizeWhitespace(node.text)).matches()) {
+            fileModel.usings.add(parseUsing(node));
             return;
         }
         if (TYPE_DECLARATIONS.contains(type)) {
