@@ -71,6 +71,17 @@ public class TypeNamesTest {
         assertEquals("", TypeNames.erasure(""));
     }
 
+    /** The brackets in a callable's parameter list are not type arguments of the callable. */
+    @Test
+    public void aSignatureIsLeftWhole() {
+        assertEquals("pkg.mod.join(items: List[str]) : str",
+                TypeNames.erasure("pkg.mod.join(items: List[str]) : str"));
+        assertEquals("pkg.Foo.map(f: Function<A, B>) : void",
+                TypeNames.erasure("pkg.Foo.map(f: Function<A, B>) : void"));
+        assertEquals("Foo", TypeNames.erasure("Foo<Callable[[int], str]>"));
+        assertEquals("Callable", TypeNames.erasure("Callable[(int), str]"));
+    }
+
     @Test
     public void nullIsNotAName() {
         assertNull(TypeNames.erasure(null));
