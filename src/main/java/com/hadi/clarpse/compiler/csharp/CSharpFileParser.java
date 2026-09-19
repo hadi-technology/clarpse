@@ -16,6 +16,7 @@ import fleet.com.jetbrains.lang.parsing.builder.MarkerPsiBuilder;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -84,9 +85,9 @@ final class CSharpFileParser {
                     sourceText,
                     CompilerSupport.moduleNameForFile(file.path())
             );
-            final SyntaxNode root = parseSyntaxTree(sourceText);
-            for (final SyntaxNode child : root.children) {
-                parseTopLevelNode(child, fileModel, "");
+            final SyntaxTree tree = parseSyntaxTree(sourceText);
+            for (final SyntaxNode child : tree.root().children) {
+                parseTopLevelNode(child, fileModel, "", tree.laterAlternatives(), false);
             }
             return new CSharpModel.ParseOutcome(index, fileModel, null);
         } catch (final Exception e) {
@@ -98,7 +99,7 @@ final class CSharpFileParser {
         }
     }
 
-    private static SyntaxNode parseSyntaxTree(final String sourceText) {
+    private static SyntaxTree parseSyntaxTree(final String sourceText) {
         final FleetPsiParser parser = new CSharpFleetParser();
         final Lexer lexer = parser.getLexer();
         final ArrayTokenSequence tokens = new ArrayTokenSequence.Builder(sourceText, lexer).performLexing();
@@ -133,7 +134,45 @@ final class CSharpFileParser {
             throw new IllegalStateException("No syntax nodes produced for source.");
         }
         attachText(root, new SourceTokens(sourceText, tokens, parser.getWhitespaces(), parser.getComments()));
-        return root;
+        return new SyntaxTree(root, laterConditionalAlternatives(tokens));
+    }
+
+    /**
+     * Marks the source text that lies in any alternative of an {@code #if} group other than the
+     * first: the text after an {@code #elif} or {@code #else} directive, up to the group's
+     * {@code #endif}. Directives are not evaluated, so every alternative is parsed as code; the
+     * first alternative stands in for the configuration the file is read under.
+     */
+    private static BitSet laterConditionalAlternatives(final ArrayTokenSequence tokens) {
+        final BitSet later = new BitSet();
+        final Deque<Boolean> groups = new ArrayDeque<>();
+        int laterGroups = 0;
+        int laterStart = 0;
+        for (int i = 0; i < tokens.getLexemeCount(); i += 1) {
+            final String tokenType = String.valueOf(tokens.lexType(i));
+            if ("PP_IF_SECTION".equals(tokenType)) {
+                groups.push(Boolean.FALSE);
+            } else if (("PP_ELIF_SECTION".equals(tokenType) || "PP_ELSE_SECTION".equals(tokenType))
+                    && !groups.isEmpty() && !groups.peek()) {
+                groups.pop();
+                groups.push(Boolean.TRUE);
+                if (laterGroups == 0) {
+                    laterStart = tokens.lexStart(i);
+                }
+                laterGroups += 1;
+            } else if ("PP_ENDIF".equals(tokenType) && !groups.isEmpty()) {
+                if (groups.pop()) {
+                    laterGroups -= 1;
+                    if (laterGroups == 0) {
+                        later.set(laterStart, tokens.lexStart(i));
+                    }
+                }
+            }
+        }
+        if (laterGroups > 0) {
+            later.set(laterStart, tokens.getTextLength());
+        }
+        return later;
     }
 
     /**
@@ -153,31 +192,52 @@ final class CSharpFileParser {
         }
     }
 
+    /**
+     * Collects the usings and type declarations under {@code node}.
+     *
+     * <p>A namespace declaration names the declarations it encloses unless it lies in a later
+     * alternative of an {@code #if} group, or is a block namespace inside a file-scoped namespace.
+     * Alternatives that each name a namespace parse as one declaration nested in another, and a block
+     * namespace cannot follow a file-scoped one in valid C#; joining either to the enclosing name
+     * would produce a namespace that exists under no build configuration. The enclosed declarations
+     * keep the enclosing namespace instead, which is the one the first alternative names.
+     */
     private static void parseTopLevelNode(final SyntaxNode node,
                                           final CSharpModel.CSharpFileModel fileModel,
-                                          final String currentNamespace) {
+                                          final String currentNamespace,
+                                          final BitSet laterAlternatives,
+                                          final boolean insideFileScopedNamespace) {
         if (node == null) {
             return;
         }
         final String type = node.type;
-        if ("cs:namespace-file-scope-declaration".equals(type)
-                || "cs:namespace-block-declaration".equals(type)) {
-            final String namespaceName = combineNamespace(currentNamespace, namespaceName(node));
+        final boolean fileScoped = "cs:namespace-file-scope-declaration".equals(type);
+        if (fileScoped || "cs:namespace-block-declaration".equals(type)) {
+            final boolean namesDeclarations = !laterAlternatives.get(node.startOffset)
+                    && (fileScoped || !insideFileScopedNamespace);
+            String namespaceName = currentNamespace;
+            if (namesDeclarations) {
+                namespaceName = combineNamespace(currentNamespace, namespaceName(node));
+            }
+            final boolean nestedInsideFileScoped = insideFileScopedNamespace || fileScoped;
             for (final SyntaxNode child : node.children) {
                 if ("cs:block-list".equals(child.type)) {
                     for (final SyntaxNode nested : child.children) {
-                        parseTopLevelNode(nested, fileModel, namespaceName);
+                        parseTopLevelNode(nested, fileModel, namespaceName, laterAlternatives,
+                                nestedInsideFileScoped);
                     }
                 } else if (!"cs:namespace-header-node-statement".equals(child.type)
                         && !"cs:id-role".equals(child.type)) {
-                    parseTopLevelNode(child, fileModel, namespaceName);
+                    parseTopLevelNode(child, fileModel, namespaceName, laterAlternatives,
+                            nestedInsideFileScoped);
                 }
             }
             return;
         }
         if ("cs:block-list".equals(type)) {
             for (final SyntaxNode child : node.children) {
-                parseTopLevelNode(child, fileModel, currentNamespace);
+                parseTopLevelNode(child, fileModel, currentNamespace, laterAlternatives,
+                        insideFileScopedNamespace);
             }
             return;
         }
@@ -1098,6 +1158,9 @@ final class CSharpFileParser {
         int safeStart = Math.max(0, Math.min(start, text.length()));
         int safeEnd = Math.max(safeStart, Math.min(end, text.length()));
         return text.substring(safeStart, safeEnd);
+    }
+
+    private record SyntaxTree(SyntaxNode root, BitSet laterAlternatives) {
     }
 
     /**
