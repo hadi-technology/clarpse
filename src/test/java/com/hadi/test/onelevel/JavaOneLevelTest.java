@@ -167,4 +167,54 @@ public class JavaOneLevelTest {
         assertFalse(json(plain).contains("notLoaded"));
         assertTrue(withFull.levelOne().levelOneFiles().isEmpty());
     }
+
+    /**
+     * A boundary file's method calls are attributed from the names the source writes: a type named
+     * as the receiver, qualified or imported. A call on a variable ({@code c.go()}) is not attributed
+     * to the variable's type, which only resolving the receiver would give; the field {@code c}
+     * itself still references it. The targets lie past level one, so they are kept by name and not
+     * loaded.
+     */
+    @Test
+    public void boundaryMethodCallsAreAttributedFromWrittenNames() throws Exception {
+        final Map<String, String> repository = files(
+                A, "package app;\nimport lib.B;\npublic class A { B b; }\n",
+                B, "package lib;\nimport deep.C;\nimport deep.D;\n"
+                        + "public class B {\n"
+                        + "  C c;\n"
+                        + "  void run() { c.go(); deep.D.make(); D.make(); local(); }\n"
+                        + "  void local() { }\n"
+                        + "}\n",
+                C, "package deep;\npublic class C { public void go() { } }\n",
+                "/core/src/main/java/deep/D.java", "package deep;\npublic class D { public static D make() { return null; } }\n");
+        final CompileResult result = oneLevel(project(repository), AnalysisOptions.oneLevel());
+        final Component run = component(result.model(), "lib.B.run()");
+        assertEquals(Set.of("deep.D"), targets(run.notLoadedDependencies()));
+        assertEquals(Set.of("deep.C"), targets(component(result.model(), "lib.B.c").notLoadedDependencies()));
+        assertTrue(Set.of(C, "/core/src/main/java/deep/D.java")
+                .containsAll(result.levelOne().loadedBeyondLevelOne()));
+        assertFalse(result.model().containsComponent("deep.C"));
+        assertFalse(result.model().containsComponent("deep.D"));
+    }
+
+    @Test
+    public void theLoadTrackerAdmitsRepeatsButNothingPastItsCap() {
+        final com.hadi.clarpse.compiler.java.JavaLoadTracker tracker =
+                new com.hadi.clarpse.compiler.java.JavaLoadTracker(1);
+        assertTrue(tracker.admit("/a.java"));
+        assertTrue(tracker.admit("/a.java"));
+        assertFalse(tracker.admit("/b.java"));
+        assertEquals(Set.of("/a.java"), tracker.loaded());
+    }
+
+    @Test
+    public void aCompilerWithoutOneLevelSupportSaysSo() throws Exception {
+        final com.hadi.clarpse.compiler.ClarpseCompiler plain = (files, paths) ->
+                new CompileResult(new OOPSourceCodeModel());
+        assertTrue(plain.compile(project(repository()), List.of(A), null).model().size() == 0);
+        org.junit.Assert.assertThrows(UnsupportedOperationException.class,
+                () -> plain.compile(project(repository()), List.of(A), AnalysisOptions.oneLevel()));
+        org.junit.Assert.assertThrows(UnsupportedOperationException.class,
+                () -> plain.levelOneFiles(project(repository()), List.of(A), AnalysisOptions.oneLevel()));
+    }
 }
