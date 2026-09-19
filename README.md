@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>11.5.0</version>
+  <version>11.6.0</version>
 </dependency>
 ```
 
@@ -288,6 +288,30 @@ try (PreparedAnalysis base = new ClarpseProject(baseFiles, lang, analysed, optio
     union.addAll(head.levelOneFiles());
     final CompileResult baseResult = base.compile(union);
     final CompileResult headResult = head.compile(union);
+}
+```
+
+A caller that learns from the first result which other files it needs in full can add them to
+the same analyses with `extendFocus`, then compile again. Only the added files are resolved: the
+declaration index, the files already parsed and the analysed files' model are reused, and nothing is
+written to disk again. A file that was level one and is added becomes analysed: modelled in full,
+no longer boundary. The result equals a fresh preparation of all the analysed files.
+
+```java
+try (PreparedAnalysis base = new ClarpseProject(baseFiles, lang, analysed, options).prepare();
+     PreparedAnalysis head = new ClarpseProject(headFiles, lang, analysed, options).prepare()) {
+    final Set<String> union = new TreeSet<>(base.levelOneFiles());
+    union.addAll(head.levelOneFiles());
+    final CompileResult first = head.compile(union);
+    base.compile(union);
+
+    final List<String> more = filesToModelInFull(first.model());   // the caller's choice
+    base.extendFocus(more);
+    head.extendFocus(more);
+    final Set<String> union2 = new TreeSet<>(base.levelOneFiles());
+    union2.addAll(head.levelOneFiles());
+    final CompileResult baseResult = base.compile(union2);
+    final CompileResult headResult = head.compile(union2);
 }
 ```
 

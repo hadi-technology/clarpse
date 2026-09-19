@@ -58,6 +58,8 @@ A one-level compile (see `docs/one-level-analysis.md`) builds programs from the 
 level-one files only. It runs in two phases, each in a daemon session of its own that is stopped,
 and waited for, when the phase ends: `ClarpseProject.prepare()` discovers level one, and
 `PreparedAnalysis.compile` plans and models it. Between the phases only the discovered set is held.
+`PreparedAnalysis.extendFocus` adds analysed files in a third kind of session, which discovers level
+one again over every analysed file; since no program outlives its session, nothing held is rebuilt.
 1) `discoverLevelOne` finds level one without building a program. It reads each analysed file's
    module specifiers with `ts.preProcessFile`, resolves them with `ts.resolveModuleName` using the
    options of the config owning the file, and follows the re-exports of the files it reaches.

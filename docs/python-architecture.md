@@ -101,7 +101,9 @@ A one-level compile (see `docs/one-level-analysis.md`) models the analysed files
 their references resolve into, in two phases, each in a daemon session of its own that is stopped,
 and waited for, when the phase ends: `ClarpseProject.prepare()` models the analysed files and
 discovers level one, and `PreparedAnalysis.compile` models the level-one files. The analysed files'
-model is kept between the phases, so no analysed file is resolved twice.
+model is kept between the phases, so no analysed file is resolved twice. `PreparedAnalysis.extendFocus`
+models only the added files, in a session of its own over the same project directory, and
+rediscovers level one from the whole analysed model.
 - Every repository name the resolver writes is the declaring module's dotted path followed by the
   symbol's name, so `PythonModuleIndex` recovers the declaring file from a resolved name. The same
   index tells a repository name that was not loaded from a library label.
