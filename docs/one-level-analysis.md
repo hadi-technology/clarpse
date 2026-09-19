@@ -20,8 +20,8 @@ options, and neither suits a large repository.
   five django files.
 - **Hand over the whole repository and analyse a subset.** The references resolve, but the cost
   follows the repository. TypeScript builds a program from every file a `tsconfig.json` includes.
-  Java's type solver parses a whole directory whenever a lookup misses. On microsoft/vscode that is
-  about 35 s and 4 GB for one file.
+  Java's type solver parses a whole directory whenever a lookup misses. On microsoft/vscode that was
+  about 37 s and 4 GB for one file.
 
 A one-level compile costs what the analysed and level-one files cost, whatever the size of the
 repository.
@@ -77,7 +77,7 @@ Level one is always found without compiling the repository.
 |---|---|---|---|
 | Java | the files declaring the types the analysed components' references name | `JavaDeclarationIndex`: every file's package plus its file name and the types declared at the start of a line, read without parsing. A reference's fully qualified name is looked up by its longest indexed prefix, so a nested type leads to its top-level type's file. | Types resolve only through `IndexedTypeSolver`, which reads the files the index names and never scans a directory. Level-one files are parsed with method calls attributed from the names the source writes, without resolving the call or its receiver. |
 | TypeScript | the files the analysed files' module specifiers resolve to, closed over the re-exports of those files | `ts.preProcessFile` and `ts.resolveModuleName` with the options of the config owning each file, so `paths` and `baseUrl` apply. Re-exports (`export * from`, `export {…} from`) are followed with a syntax-only parse, since a name imported through a barrel is declared in the file the barrel re-exports. | Programs are built from the planned files only, with `noResolve` and without project references. Level-one files are modelled without reading their bodies. |
-| Python | the modules declaring the names the analysed components' references resolve to | The resolver names a repository symbol by its declaring module's dotted path, so `PythonModuleIndex` recovers the module from the name. | The resolver already reads a referenced module only for the names of its classes. |
+| Python | the modules declaring the names the analysed components' references resolve to, including names re-exported through a package's `__init__.py`, module-level functions, and names imported inside function bodies | The resolver names a repository symbol by its declaring module's dotted path, so `PythonModuleIndex` recovers the module from the name. | The resolver already reads a referenced module only for what it declares, and caches it. |
 | C# | the files declaring the types the analysed components' references name, with every part of their partial types | `CSharpDeclarationScanner` reads each file's namespaces and type declarations lexically. From it `CSharpDeclarationIndex` builds declaration-only stub file models, through which the assembler resolves names against the whole repository with its usual rules. | Only the analysed, level-one and `global using` files are parsed; the rest are stubs. |
 
 Some files are always handled with the analysed files:
@@ -195,11 +195,6 @@ These rules hold of the implementation. A change that breaks one changes what th
   declaring the extension. An extension declared in a file that is not modelled links nothing.
 - **C# preprocessor conditionals** are not evaluated by the declaration scanner, which, like the
   parser, sees every branch.
-- **Python re-exports** (#195). A name imported from a package that re-exports it in its
-  `__init__.py` resolves to the package module. Level one then reaches the `__init__.py`, not the
-  module declaring the name, and the reference stays not loaded.
-- **Python module-level function calls** (#196) and **function-local imports** (#197) behave as
-  they do in an ordinary compile. The first appear as not-loaded references to the called function.
 - **Disk.** TypeScript and Python resolve against the files on disk, so a one-level compile in those
   languages writes the whole `ProjectFiles` to a temporary directory, as an ordinary compile does.
   Java and C# read the files from memory and write nothing.

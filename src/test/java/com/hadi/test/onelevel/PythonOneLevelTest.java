@@ -38,6 +38,7 @@ public class PythonOneLevelTest {
     private static final String REMOTE = "/other/remote.py";
     private static final String PKG_INIT = "/pkg/__init__.py";
     private static final String RESPONSES = "/pkg/responses.py";
+    private static final String TEXT = "/util/text.py";
 
     private static CompileResult oneLevel;
     private static OOPSourceCodeModel whole;
@@ -55,7 +56,11 @@ public class PythonOneLevelTest {
                         + "\n"
                         + "    def go(self) -> Redirect:\n"
                         + "        remote = other.remote.Remote()\n"
-                        + "        return Redirect()\n",
+                        + "        return Redirect()\n"
+                        + "\n"
+                        + "    def title(self, s):\n"
+                        + "        from util.text import capfirst\n"
+                        + "        return capfirst(s)\n",
                 "/lib/__init__.py", "",
                 B, "from deep.c import C\n\nclass B:\n    c: C\n",
                 SHAPE, "class Shape:\n    pass\n",
@@ -65,6 +70,8 @@ public class PythonOneLevelTest {
                 REMOTE, "class Remote:\n    pass\n",
                 PKG_INIT, "from .responses import Redirect\n",
                 RESPONSES, "class Redirect:\n    pass\n",
+                "/util/__init__.py", "",
+                TEXT, "def capfirst(x):\n    return x\n",
                 "/app/unrelated.py", "class Unrelated:\n    pass\n");
     }
 
@@ -77,7 +84,7 @@ public class PythonOneLevelTest {
 
     @Test
     public void levelOneIsTheModulesTheAnalysedFileResolvesInto() {
-        assertEquals(new TreeSet<>(Set.of(B, SHAPE, REMOTE, PKG_INIT)),
+        assertEquals(new TreeSet<>(Set.of(B, SHAPE, REMOTE, RESPONSES, TEXT)),
                 new TreeSet<>(oneLevel.levelOne().levelOneFiles()));
     }
 
@@ -107,18 +114,30 @@ public class PythonOneLevelTest {
     }
 
     /**
-     * A name re-exported by a package's {@code __init__.py} resolves to the package module rather
-     * than to the module declaring it (issue #195), so level one reaches {@code pkg/__init__.py} and
-     * not {@code pkg/responses.py}, and the reference stays not loaded. When that resolution is
-     * fixed, level one reaches the declaring module and this reference becomes internal.
+     * A name re-exported by a package's {@code __init__.py} resolves to the module declaring it, so
+     * level one reaches {@code pkg/responses.py}, not the package module, and the reference is
+     * internal.
      */
     @Test
-    public void reexportedNamesReachThePackageModulePendingReexportResolution() {
-        assertTrue(oneLevel.levelOne().levelOneFiles().contains(PKG_INIT));
-        assertFalse(oneLevel.levelOne().levelOneFiles().contains(RESPONSES));
-        final Component a = component(oneLevel.model(), "app.a.A");
-        assertTrue(targets(a.notLoadedDependencies()).toString(),
-                targets(a.notLoadedDependencies()).contains("pkg.__init__.Redirect"));
+    public void reexportedNamesReachTheDeclaringModule() {
+        assertTrue(oneLevel.levelOne().levelOneFiles().contains(RESPONSES));
+        assertFalse(oneLevel.levelOne().levelOneFiles().contains(PKG_INIT));
+        final Set<String> internal = new TreeSet<>();
+        oneLevel.model().components()
+                .filter(c -> c.uniqueName().startsWith("app.a.A"))
+                .forEach(c -> internal.addAll(targets(c.internalDependencies())));
+        assertTrue(internal.toString(), internal.contains("pkg.responses.Redirect"));
+    }
+
+    /** A module-level function imported inside a function body is level one and its call is an edge. */
+    @Test
+    public void functionsImportedInsideBodiesAreLevelOne() {
+        assertTrue(oneLevel.levelOne().levelOneFiles().contains(TEXT));
+        final Set<String> internal = new TreeSet<>();
+        oneLevel.model().components()
+                .filter(c -> c.uniqueName().startsWith("app.a.A.title"))
+                .forEach(c -> internal.addAll(targets(c.internalDependencies())));
+        assertTrue(internal.toString(), internal.stream().anyMatch(name -> name.startsWith("util.text.capfirst")));
     }
 
     @Test
@@ -126,12 +145,12 @@ public class PythonOneLevelTest {
         final CompileResult held = new ClarpseProject(project(repository()), Lang.PYTHON, List.of(A),
                 AnalysisOptions.oneLevel().withLevelOneBudget(1)).result();
         assertEquals(1, held.levelOne().levelOneFiles().size());
-        assertEquals(3, held.levelOne().heldByBudget().size());
+        assertEquals(4, held.levelOne().heldByBudget().size());
     }
 
     @Test
     public void levelOneFilesCanBeDiscoveredWithoutModelling() throws Exception {
-        assertEquals(new TreeSet<>(Set.of(B, SHAPE, REMOTE, PKG_INIT)),
+        assertEquals(new TreeSet<>(Set.of(B, SHAPE, REMOTE, RESPONSES, TEXT)),
                 new ClarpseProject(project(repository()), Lang.PYTHON, List.of(A), AnalysisOptions.oneLevel())
                         .levelOneFiles());
     }

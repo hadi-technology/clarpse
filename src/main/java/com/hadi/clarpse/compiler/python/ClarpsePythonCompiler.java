@@ -128,6 +128,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         } catch (final PythonDaemonException e) {
             throw new CompileException("Python resolver failed: " + e.getMessage(), e);
         }
+        PythonModelAssembler.resolveFunctionReferences(srcModel);
         CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(OOPSourceModelConstants.ComponentType.CLASS));
         CompilerSupport.classifyReferences(srcModel,
                 reference -> index.fileDeclaring(reference.invokedComponent()) != null);
