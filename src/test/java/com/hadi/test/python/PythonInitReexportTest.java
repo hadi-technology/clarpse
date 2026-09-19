@@ -72,9 +72,13 @@ public class PythonInitReexportTest {
     }
 
     @Test
-    public void reexportedFunctionIsRecordedAgainstItsModule() {
-        Assert.assertTrue(containsInvokedName(method("call").references(),
-                PythonTestUtil.uniqueName(PKG, "responses", "redirect")));
+    public void reexportedFunctionResolvesToItsComponentInTheDeclaringModule() {
+        final String declared = PythonTestUtil.uniqueName(PKG, "responses", "redirect") + "(";
+        boolean found = false;
+        for (ComponentReference ref : method("call").internalDependencies()) {
+            found |= ref.invokedComponent().startsWith(declared);
+        }
+        Assert.assertTrue(found);
     }
 
     @Test
