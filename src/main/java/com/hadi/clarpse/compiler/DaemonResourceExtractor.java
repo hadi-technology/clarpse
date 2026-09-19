@@ -28,7 +28,11 @@ public final class DaemonResourceExtractor {
         if (ownerClass == null) {
             throw new IllegalArgumentException("ownerClass cannot be null.");
         }
-        final Path tempDir = ClarpseTempDirs.create(tempDirPrefix);
+        String kind = tempDirPrefix;
+        if (kind.startsWith(ClarpseTempDirs.PREFIX)) {
+            kind = kind.substring(ClarpseTempDirs.PREFIX.length());
+        }
+        final Path tempDir = ClarpseTempDirs.create(kind);
         try {
             final Path scriptPath = tempDir.resolve("daemon.js");
             copyResource(ownerClass, scriptResource, scriptPath);

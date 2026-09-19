@@ -46,8 +46,12 @@ public class OneLevelCleanupTest {
     }
 
     private static Set<Path> clarpseDirs() throws IOException {
+        return dirs("clarpse-src-*");
+    }
+
+    private static Set<Path> dirs(final String glob) throws IOException {
         final Set<Path> dirs = new TreeSet<>();
-        try (DirectoryStream<Path> entries = Files.newDirectoryStream(TMP, "clarpse-src-*")) {
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(TMP, glob)) {
             entries.forEach(dirs::add);
         }
         return dirs;
@@ -83,6 +87,8 @@ public class OneLevelCleanupTest {
         assertFalse(files.isTempProjectDir());
         assertEquals(before, clarpseDirs());
         assertTrue(liveDaemons().toString(), liveDaemons().isEmpty());
+        assertTrue("a TypeScript daemon's extraction ends with its session", dirs("clarpse-ts-daemon-*").isEmpty());
+        assertTrue(dirs("clarpse-clarpse-*").isEmpty());
     }
 
     @Test
