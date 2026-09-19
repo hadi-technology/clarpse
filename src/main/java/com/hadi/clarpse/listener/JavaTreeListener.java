@@ -100,9 +100,31 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      */
     public JavaTreeListener(final OOPSourceCodeModel srcModel, final ProjectFile file,
             final TypeSolver typeSolver) {
+        this(srcModel, file, typeSolver, false);
+    }
+
+    /**
+     * Whether method calls are attributed from the names the source writes alone, without resolving
+     * the call or the type of its receiver. Resolving them reaches into the declaring types'
+     * ancestors and the call results' types, which a boundary file of a one-level analysis must not
+     * pull in.
+     */
+    private final boolean shallow;
+
+    /**
+     * A listener that may attribute method calls without resolving them.
+     *
+     * @param srcModel   Source model to populate.
+     * @param file       The source file being parsed.
+     * @param typeSolver Resolves type names.
+     * @param shallow    Whether to attribute method calls from written names only.
+     */
+    public JavaTreeListener(final OOPSourceCodeModel srcModel, final ProjectFile file,
+            final TypeSolver typeSolver, final boolean shallow) {
         this.srcModel = srcModel;
         this.file = file;
         this.typeSolver = typeSolver;
+        this.shallow = shallow;
     }
 
     private void completeComponent() {
@@ -661,6 +683,9 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     }
 
     private String resolveMethodCallType(final MethodCallExpr ctx) {
+        if (shallow) {
+            return resolveMethodCallTypeShallow(ctx);
+        }
         try {
             final ResolvedMethodDeclaration resolvedMethod = ctx.resolve();
             final String declaringType = resolvedMethod.declaringType().getQualifiedName();
@@ -688,6 +713,28 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 // names -- never a top-level type of the current package, which is all the
                 // current-package assumption could supply. `a.b.C.m()` with `a.b.C` outside the
                 // parse path would otherwise become a call on `<current package>.C`.
+                return resolveType(scope.asFieldAccessExpr().getNameAsString(), false);
+            }
+        }
+        return resolveType(ctx.getNameAsString());
+    }
+
+    /**
+     * The type a method call is attributed to, read from the receiver as written: a named variable
+     * or type, or a qualified name. An unqualified call is attributed by its own name, as the
+     * resolving path does when resolution fails.
+     */
+    private String resolveMethodCallTypeShallow(final MethodCallExpr ctx) {
+        if (ctx.getScope().isPresent()) {
+            final Expression scope = ctx.getScope().get();
+            if (scope.isNameExpr()) {
+                return resolveType(scope.asNameExpr().getNameAsString());
+            }
+            if (scope.isFieldAccessExpr()) {
+                final String qualifiedType = typeNamedByQualifiedName(scope.asFieldAccessExpr());
+                if (qualifiedType != null) {
+                    return qualifiedType;
+                }
                 return resolveType(scope.asFieldAccessExpr().getNameAsString(), false);
             }
         }

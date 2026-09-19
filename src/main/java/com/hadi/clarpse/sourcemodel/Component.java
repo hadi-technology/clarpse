@@ -50,6 +50,10 @@ public final class Component implements Serializable {
     private Set<ComponentReference> internalReferences = new LinkedHashSet<>();
     @JsonIgnore
     private Set<ComponentReference> externalReferences = new LinkedHashSet<>();
+    @JsonIgnore
+    private Set<ComponentReference> notLoadedReferences = new LinkedHashSet<>();
+    @JsonInclude(Include.NON_DEFAULT)
+    private boolean boundary;
     private String componentName;
     private int codeHash;
     private String codeFragment;
@@ -102,6 +106,7 @@ public final class Component implements Serializable {
         this.type = component.type;
         this.codeHash = component.codeHash;
         this.cyclo = component.cyclo;
+        this.boundary = component.boundary;
         component.references().forEach(this::insertCmpRefCopy);
     }
 
@@ -164,6 +169,7 @@ public final class Component implements Serializable {
     public Set<ComponentReference> references() {
         final Set<ComponentReference> combined = new LinkedHashSet<>(internalReferences);
         combined.addAll(externalReferences);
+        combined.addAll(notLoadedReferences);
         return combined;
     }
 
@@ -171,6 +177,7 @@ public final class Component implements Serializable {
     private void setReferences(final Set<ComponentReference> refs) {
         internalReferences = new LinkedHashSet<>();
         externalReferences = new LinkedHashSet<>();
+        notLoadedReferences = new LinkedHashSet<>();
         if (refs != null) {
             refs.forEach(this::insertCmpRef);
         }
@@ -200,8 +207,40 @@ public final class Component implements Serializable {
         return Collections.unmodifiableSet(externalReferences);
     }
 
+    /**
+     * The references this component makes to types declared in the repository but not loaded into
+     * the model. Always empty outside a one-level analysis.
+     *
+     * @return Unmodifiable view of the references in the {@link ComponentReference#isNotLoaded()}
+     *         state.
+     */
+    public Set<ComponentReference> notLoadedDependencies() {
+        return Collections.unmodifiableSet(notLoadedReferences);
+    }
+
+    /**
+     * Whether this component was loaded only because a focus file of a one-level analysis
+     * references its file.
+     *
+     * <p>A boundary component's declarations are complete, but its outgoing references are not: a
+     * dependency it has on something past the boundary can be missing from the model or appear as
+     * a {@link ComponentReference#isNotLoaded()} reference. A consumer must not conclude from a
+     * missing edge that a boundary component has no such dependency.
+     *
+     * @return {@code true} for a component of a level-one file of a one-level analysis.
+     */
+    public boolean isBoundary() {
+        return boundary;
+    }
+
+    public void setBoundary(final boolean boundary) {
+        this.boundary = boundary;
+    }
+
     public void insertCmpRef(final ComponentReference ref) {
-        if (ref.isExternal()) {
+        if (ref.isNotLoaded()) {
+            notLoadedReferences.add(ref);
+        } else if (ref.isExternal()) {
             externalReferences.add(ref);
         } else {
             internalReferences.add(ref);
@@ -237,6 +276,7 @@ public final class Component implements Serializable {
     public void setExternalTypeReferences(final Set<ComponentReference> externalReferences) {
         internalReferences = new LinkedHashSet<>();
         this.externalReferences = new LinkedHashSet<>();
+        this.notLoadedReferences = new LinkedHashSet<>();
         if (externalReferences != null) {
             externalReferences.forEach(ref -> {
                 final ComponentReference copiedRef = cloneReference(ref);
@@ -248,12 +288,35 @@ public final class Component implements Serializable {
 
     public void setReferenceClassification(final Set<ComponentReference> internalReferences,
                                            final Set<ComponentReference> externalReferences) {
+        setReferenceClassification(internalReferences, externalReferences, null);
+    }
+
+    /**
+     * Replaces this component's references with copies sorted into the three states.
+     *
+     * @param internalReferences  references whose target component is in the model
+     * @param externalReferences  references to types outside the codebase
+     * @param notLoadedReferences references to types declared in the repository but not loaded;
+     *                            may be {@code null}
+     */
+    public void setReferenceClassification(final Set<ComponentReference> internalReferences,
+                                           final Set<ComponentReference> externalReferences,
+                                           final Set<ComponentReference> notLoadedReferences) {
         this.internalReferences = new LinkedHashSet<>();
         this.externalReferences = new LinkedHashSet<>();
+        this.notLoadedReferences = new LinkedHashSet<>();
+        if (notLoadedReferences != null) {
+            notLoadedReferences.forEach(ref -> {
+                final ComponentReference copiedRef = cloneReference(ref);
+                copiedRef.setNotLoaded(true);
+                this.notLoadedReferences.add(copiedRef);
+            });
+        }
         if (internalReferences != null) {
             internalReferences.forEach(ref -> {
                 final ComponentReference copiedRef = cloneReference(ref);
                 copiedRef.setExternal(false);
+                copiedRef.setNotLoaded(false);
                 this.internalReferences.add(copiedRef);
             });
         }
@@ -429,6 +492,7 @@ public final class Component implements Serializable {
         }
         final ComponentReference clonedRef = cloneReference(reference);
         clonedRef.setExternal(reference.isExternal());
+        clonedRef.setNotLoaded(reference.isNotLoaded());
         this.insertCmpRef(clonedRef);
     }
 

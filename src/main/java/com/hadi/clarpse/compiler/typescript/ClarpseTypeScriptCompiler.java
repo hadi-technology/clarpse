@@ -1,5 +1,7 @@
 package com.hadi.clarpse.compiler.typescript;
 
+import com.hadi.clarpse.compiler.AbstractPreparedAnalysis;
+import com.hadi.clarpse.compiler.AnalysisOptions;
 import com.hadi.clarpse.compiler.ClarpseCompiler;
 import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
@@ -8,9 +10,12 @@ import com.hadi.clarpse.compiler.CompilerSupport;
 import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.Lang;
+import com.hadi.clarpse.compiler.LevelOneSelection;
+import com.hadi.clarpse.compiler.PreparedAnalysis;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptFileModel;
+import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.Package;
@@ -18,10 +23,13 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -68,27 +76,7 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             final TypeScriptDaemon.InitResult initResult = daemon.initRepo(persistDir);
             addInvalidConfigFailures(initResult, compileFailures, persistDir);
             for (final ProjectFile file : tsFiles) {
-                if (Thread.currentThread().isInterrupted()) {
-                    throw new CompileException("Interrupted while parsing TypeScript files.",
-                            new InterruptedException());
-                }
-                final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
-                final TypeScriptFileModel fileModel;
-                try {
-                    fileModel = daemon.getFileModel(diskPath);
-                } catch (final TypeScriptDaemonException e) {
-                    if (isFileLevelFailure(e)) {
-                        compileFailures.add(new CompileFailure(file, e.getMessage(), e.code()));
-                        LOGGER.warn("TypeScript resolver failed for file {} (code={}).",
-                                file.path(), e.code(), e);
-                        continue;
-                    }
-                    throw new CompileException("TypeScript resolver failed: " + e.getMessage(), e);
-                }
-                final Package pkg = TypeScriptModelAssembler.resolvePackage(persistDir, diskPath);
-                final String moduleName = CompilerSupport.moduleNameForFile(diskPath);
-                TypeScriptModelAssembler.insertFileModel(pkg, moduleName, file.path(), persistDir, fileModel, srcModel);
-                addUnresolvedBaseFailures(file, fileModel, compileFailures);
+                modelFile(daemon, file, persistDir, false, srcModel, compileFailures, null);
             }
             CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(
                     OOPSourceModelConstants.ComponentType.CLASS,
@@ -111,6 +99,215 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             }
         }
         return new CompileResult(srcModel, compileFailures);
+    }
+
+    /**
+     * Models one file through the daemon into the given model. A failure confined to the file is
+     * recorded and the file skipped; any other daemon failure aborts the compile.
+     *
+     * @param boundary          Whether the file is a level-one file of a one-level analysis, whose
+     *                          bodies are not read.
+     * @param inRepositoryNames Collects the names references resolved to inside the repository; may
+     *                          be {@code null}.
+     */
+    private static void modelFile(final TypeScriptDaemon daemon, final ProjectFile file,
+                                  final String persistDir, final boolean boundary,
+                                  final OOPSourceCodeModel srcModel,
+                                  final Set<CompileFailure> compileFailures,
+                                  final Set<String> inRepositoryNames) throws CompileException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new CompileException("Interrupted while parsing TypeScript files.",
+                    new InterruptedException());
+        }
+        final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
+        final TypeScriptFileModel fileModel;
+        try {
+            fileModel = daemon.getFileModel(diskPath, boundary);
+        } catch (final TypeScriptDaemonException e) {
+            if (isFileLevelFailure(e)) {
+                compileFailures.add(new CompileFailure(file, e.getMessage(), e.code()));
+                LOGGER.warn("TypeScript resolver failed for file {} (code={}).",
+                        file.path(), e.code(), e);
+                return;
+            }
+            throw new CompileException("TypeScript resolver failed: " + e.getMessage(), e);
+        }
+        final Package pkg = TypeScriptModelAssembler.resolvePackage(persistDir, diskPath);
+        final String moduleName = CompilerSupport.moduleNameForFile(diskPath);
+        TypeScriptModelAssembler.insertFileModel(pkg, moduleName, file.path(), persistDir, fileModel, srcModel,
+                inRepositoryNames);
+        addUnresolvedBaseFailures(file, fileModel, compileFailures);
+    }
+
+    /**
+     * Discovers the level-one files of a one-level compile.
+     *
+     * <p>Level one is found by module resolution alone (see {@code discoverLevelOne} in the daemon).
+     * Completing the compile plans the analysed and chosen level-one files into programs built with
+     * {@code noResolve}, models the analysed files in full and the level-one files without reading
+     * their bodies, and marks the level-one components boundary. A reference is left not loaded
+     * when it resolved into the repository but its component was not modelled, or when its type was
+     * lost. Each phase runs in a daemon session of its own that ends with the phase, so a prepared
+     * analysis holds no daemon slot and several may be open at once.
+     */
+    @Override
+    public PreparedAnalysis prepare(final ProjectFiles projectFiles,
+                                    final Collection<String> analyzedFilePaths,
+                                    final AnalysisOptions options) throws CompileException {
+        return AbstractPreparedAnalysis.prepareCleanly(projectFiles,
+                () -> prepareAnalysis(projectFiles, analyzedFilePaths, options));
+    }
+
+    private AbstractPreparedAnalysis prepareAnalysis(final ProjectFiles projectFiles,
+                                                     final Collection<String> analyzedFilePaths,
+                                                     final AnalysisOptions options) throws CompileException {
+        final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.TYPESCRIPT,
+                analyzedFilePaths);
+        final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.TYPESCRIPT));
+        final Set<CompileFailure> failures = new HashSet<>();
+        if (focusFiles.isEmpty()) {
+            return new TypeScriptPreparedAnalysis(options, focusFiles, allFiles, List.of(), null, null, failures);
+        }
+        if (!NodeRuntime.isNodeAvailable()) {
+            for (final ProjectFile file : focusFiles) {
+                failures.add(new CompileFailure(file,
+                        "Node.js not found. TypeScript parsing requires Node.js.",
+                        TypeScriptDaemonException.CODE_NODE_NOT_FOUND));
+            }
+            return new TypeScriptPreparedAnalysis(options, focusFiles, allFiles, List.of(), null, null, failures);
+        }
+        final String persistDir = projectFiles.projectDir();
+        final DiskPaths diskPaths = new DiskPaths(persistDir, allFiles);
+        try (TypeScriptDaemon daemon = new TypeScriptDaemon();
+                InterruptWatchdog watchdog =
+                        new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
+            daemon.start();
+            daemon.initRepo(persistDir);
+            final List<String> discovered =
+                    diskPaths.toProjectPaths(daemon.discoverLevelOne(diskPaths.toDisk(focusFiles)));
+            return new TypeScriptPreparedAnalysis(options, focusFiles, allFiles, discovered, diskPaths,
+                    persistDir, failures);
+        } catch (final TypeScriptDaemonException e) {
+            for (final ProjectFile file : focusFiles) {
+                failures.add(new CompileFailure(file, e.getMessage(), daemonFailureCode(e)));
+            }
+            LOGGER.warn("TypeScript one-level analysis failed (code={}).", daemonFailureCode(e), e);
+            return new TypeScriptPreparedAnalysis(options, focusFiles, allFiles, List.of(), null, null, failures);
+        }
+    }
+
+    /** A TypeScript one-level compile between discovering level one and modelling it. */
+    private static final class TypeScriptPreparedAnalysis extends AbstractPreparedAnalysis {
+
+        private final DiskPaths diskPaths;
+        private final String persistDir;
+        private final Set<CompileFailure> prepareFailures;
+
+        TypeScriptPreparedAnalysis(final AnalysisOptions options, final List<ProjectFile> focusFiles,
+                                   final List<ProjectFile> allFiles, final List<String> discovered,
+                                   final DiskPaths diskPaths, final String persistDir,
+                                   final Set<CompileFailure> prepareFailures) {
+            super(options, focusFiles, allFiles, discovered);
+            this.diskPaths = diskPaths;
+            this.persistDir = persistDir;
+            this.prepareFailures = prepareFailures;
+        }
+
+        @Override
+        protected CompileResult complete(final LevelOneSelection selection) throws CompileException {
+            final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
+            final Set<CompileFailure> compileFailures = new HashSet<>(prepareFailures);
+            if (diskPaths == null) {
+                return new CompileResult(srcModel, compileFailures);
+            }
+            final Set<String> inRepositoryNames = new HashSet<>();
+            try (TypeScriptDaemon daemon = new TypeScriptDaemon();
+                    InterruptWatchdog watchdog =
+                            new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
+                daemon.start();
+                addInvalidConfigFailures(daemon.initRepo(persistDir), compileFailures, persistDir);
+                daemon.planOneLevel(diskPaths.toDisk(analysed()), diskPaths.toDisk(selection.modelled()));
+                for (final ProjectFile file : analysed()) {
+                    modelFile(daemon, file, persistDir, false, srcModel, compileFailures, inRepositoryNames);
+                }
+                for (final ProjectFile file : selection.modelled()) {
+                    modelFile(daemon, file, persistDir, true, srcModel, compileFailures, inRepositoryNames);
+                }
+            } catch (final TypeScriptDaemonException e) {
+                for (final ProjectFile file : analysed()) {
+                    compileFailures.add(new CompileFailure(file, e.getMessage(), daemonFailureCode(e)));
+                }
+                LOGGER.warn("TypeScript one-level analysis failed (code={}).", daemonFailureCode(e), e);
+                return new CompileResult(new OOPSourceCodeModel(), compileFailures);
+            }
+            CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(
+                    OOPSourceModelConstants.ComponentType.CLASS,
+                    OOPSourceModelConstants.ComponentType.ENUM));
+            CompilerSupport.classifyReferences(srcModel,
+                    reference -> reference.resolutionKind() == ResolutionKind.UNRESOLVED
+                            || inRepositoryNames.contains(reference.invokedComponent()));
+            CompilerSupport.markBoundary(srcModel, selection.modelledPaths());
+            return new CompileResult(srcModel, compileFailures).withLevelOne(
+                    CompilerSupport.levelOneReport(srcModel, selection, List.of()));
+        }
+
+        /** Holds no process. */
+        @Override
+        protected void release() {
+        }
+    }
+
+    private static int daemonFailureCode(final TypeScriptDaemonException e) {
+        if (e.code() == 0) {
+            return TypeScriptDaemonException.CODE_DAEMON_ERROR;
+        }
+        return e.code();
+    }
+
+    /**
+     * Translates between project file paths and the canonical on-disk paths the daemon reports,
+     * which may differ from a naive join where the temporary directory is reached through a
+     * symbolic link.
+     */
+    private static final class DiskPaths {
+
+        private final String persistDir;
+        private final Map<String, String> projectPathByDisk = new HashMap<>();
+
+        DiskPaths(final String persistDir, final List<ProjectFile> files) {
+            this.persistDir = persistDir;
+            for (final ProjectFile file : files) {
+                projectPathByDisk.put(canonical(CompilerSupport.resolveFileOnDisk(persistDir, file.path())),
+                        file.path());
+            }
+        }
+
+        List<String> toDisk(final List<ProjectFile> files) {
+            final List<String> disk = new ArrayList<>();
+            for (final ProjectFile file : files) {
+                disk.add(CompilerSupport.resolveFileOnDisk(persistDir, file.path()));
+            }
+            return disk;
+        }
+
+        List<String> toProjectPaths(final List<String> diskPaths) {
+            final List<String> paths = new ArrayList<>();
+            for (final String diskPath : diskPaths) {
+                final String path = projectPathByDisk.get(canonical(diskPath));
+                if (path != null) {
+                    paths.add(path);
+                }
+            }
+            return paths;
+        }
+
+        private static String canonical(final String path) {
+            try {
+                return new java.io.File(path).getCanonicalPath();
+            } catch (final java.io.IOException e) {
+                return Paths.get(path).toAbsolutePath().normalize().toString();
+            }
+        }
     }
 
     /**

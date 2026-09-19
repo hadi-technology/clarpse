@@ -70,6 +70,31 @@ final class CSharpModelAssembler {
     private CSharpModelAssembler() {
     }
 
+    /**
+     * Builds the model of the parsed files, resolving their names against the parsed files and the
+     * declaration-only stubs of every other file, and emits only the components declared in
+     * {@code emittedPaths}. A stub is never emitted: it exists so a name declared elsewhere in the
+     * repository resolves to the unique name it has there.
+     *
+     * @param parsed       File models of the parsed files; listed first, so a partial type merged
+     *                     with a stub part keeps a parsed part's identity.
+     * @param stubs        Declaration-only file models of the files not parsed.
+     * @param emittedPaths Paths of the files whose components the model holds.
+     * @return The model.
+     */
+    static OOPSourceCodeModel buildModel(final Collection<CSharpModel.CSharpFileModel> parsed,
+                                         final Collection<CSharpModel.CSharpFileModel> stubs,
+                                         final Set<String> emittedPaths) {
+        final List<CSharpModel.CSharpFileModel> fileModels = new ArrayList<>(parsed);
+        fileModels.addAll(stubs);
+        final OOPSourceCodeModel resolved = buildModel(fileModels);
+        final OOPSourceCodeModel model = new OOPSourceCodeModel();
+        resolved.components()
+                .filter(component -> emittedPaths.contains(component.sourceFile()))
+                .forEach(model::insertComponent);
+        return model;
+    }
+
     static OOPSourceCodeModel buildModel(final Collection<CSharpModel.CSharpFileModel> fileModels) {
         applyGlobalUsings(fileModels);
         final List<CSharpModel.CSharpTypeModel> mergedTypes = mergePartials(fileModels);
