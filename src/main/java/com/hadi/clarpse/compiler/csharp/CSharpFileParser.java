@@ -112,7 +112,10 @@ final class CSharpFileParser {
         if (content == null) {
             return "";
         }
-        return content.startsWith(BYTE_ORDER_MARK) ? content.substring(BYTE_ORDER_MARK.length()) : content;
+        if (content.startsWith(BYTE_ORDER_MARK)) {
+            return content.substring(BYTE_ORDER_MARK.length());
+        }
+        return content;
     }
 
     private static SyntaxNode parseSyntaxTree(final String sourceText) {
