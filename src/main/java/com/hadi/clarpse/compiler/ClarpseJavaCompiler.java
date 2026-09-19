@@ -1,6 +1,10 @@
 package com.hadi.clarpse.compiler;
 
 import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
+import com.hadi.clarpse.compiler.java.IndexedTypeSolver;
+import com.hadi.clarpse.compiler.java.JavaDeclarationIndex;
+import com.hadi.clarpse.compiler.java.JavaLoadTracker;
+import com.hadi.clarpse.compiler.java.JavaParserFactory;
 import com.hadi.clarpse.compiler.java.ParseOutcome;
 import com.hadi.clarpse.compiler.java.ParseResults;
 import com.hadi.clarpse.compiler.java.ParseTask;
@@ -11,13 +15,17 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -42,7 +50,10 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             String persistDir = null;
             try {
                 persistDir = projectFiles.projectDir();
-                final ParseResults parseResults = parseJavaFiles(javaFiles, persistDir);
+                final String projectDir = persistDir;
+                final Set<String> sourceRoots = sourceRoots(javaFiles, projectDir);
+                final ParseResults parseResults = parseJavaFiles(javaFiles,
+                        () -> new ParserContext(projectDir, sourceRoots), false);
                 srcModel.merge(parseResults.model());
                 compileFailures.addAll(parseResults.failures());
             } catch (Exception e) {
@@ -90,8 +101,138 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
         return roots;
     }
 
+    /**
+     * Compiles the analysed files and, for a one-level compile, the files they reference.
+     *
+     * <p>A one-level compile resolves repository types only through an {@link IndexedTypeSolver}
+     * over a {@link JavaDeclarationIndex} of every Java file, so it never scans a directory and
+     * needs no project directory on disk. The analysed files are resolved in full; the level-one
+     * files their references lead to are then parsed with method calls attributed from written names
+     * only, and their components marked boundary.
+     */
+    @Override
+    public CompileResult compile(final ProjectFiles projectFiles,
+                                 final Collection<String> analyzedFilePaths,
+                                 final AnalysisOptions options) throws CompileException {
+        if (options == null || !options.isOneLevel(analyzedFilePaths)) {
+            return compile(projectFiles, analyzedFilePaths);
+        }
+        final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.JAVA));
+        final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.JAVA, analyzedFilePaths);
+        final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
+        final Set<CompileFailure> compileFailures = new HashSet<>();
+        if (focusFiles.isEmpty()) {
+            return new CompileResult(srcModel, compileFailures).withLevelOne(
+                    new LevelOneReport(List.of(), List.of(), List.of(), 0));
+        }
+        final OneLevelResolution resolution = new OneLevelResolution(allFiles, options);
+        try {
+            final ParseResults focusResults = parseJavaFiles(focusFiles, resolution::newContext, false);
+            final LevelOneSelection selection = LevelOneSelection.select(
+                    discoverLevelOne(focusResults.model(), focusFiles, resolution.index()), options,
+                    focusFiles, allFiles);
+            final ParseResults levelOneResults =
+                    parseJavaFiles(selection.modelled(), resolution::newContext, true);
+            srcModel.merge(focusResults.model());
+            srcModel.merge(levelOneResults.model());
+            compileFailures.addAll(focusResults.failures());
+            compileFailures.addAll(levelOneResults.failures());
+            CompilerSupport.classifyReferences(srcModel,
+                    reference -> resolution.index().declares(reference.invokedComponent()));
+            CompilerSupport.markBoundary(srcModel, selection.modelledPaths());
+            final Set<String> beyond = resolution.tracker().loaded();
+            focusFiles.forEach(file -> beyond.remove(file.path()));
+            beyond.removeAll(selection.modelledPaths());
+            return new CompileResult(srcModel, compileFailures).withLevelOne(
+                    CompilerSupport.levelOneReport(srcModel, selection, beyond));
+        } catch (final IllegalStateException e) {
+            throw new CompileException("An error occurred while parsing!", e);
+        }
+    }
+
+    @Override
+    public Set<String> levelOneFiles(final ProjectFiles projectFiles,
+                                     final Collection<String> analyzedFilePaths,
+                                     final AnalysisOptions options) throws CompileException {
+        final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.JAVA));
+        final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.JAVA, analyzedFilePaths);
+        if (focusFiles.isEmpty()) {
+            return Set.of();
+        }
+        final OneLevelResolution resolution = new OneLevelResolution(allFiles, options);
+        try {
+            final ParseResults focusResults = parseJavaFiles(focusFiles, resolution::newContext, false);
+            return discoverLevelOne(focusResults.model(), focusFiles, resolution.index());
+        } catch (final IllegalStateException e) {
+            throw new CompileException("An error occurred while parsing!", e);
+        }
+    }
+
+    /**
+     * The files declaring what the analysed files' components reference, less the analysed files.
+     * Every reference the listener records is a fully qualified name, so the index maps it to its
+     * declaring file directly; a name the repository does not declare is a library type and leads
+     * nowhere.
+     */
+    private static Set<String> discoverLevelOne(final OOPSourceCodeModel focusModel,
+                                                final List<ProjectFile> focusFiles,
+                                                final JavaDeclarationIndex index) {
+        final Set<String> focusPaths = new HashSet<>();
+        focusFiles.forEach(file -> focusPaths.add(file.path()));
+        final Set<String> levelOne = new TreeSet<>();
+        focusModel.components()
+                .filter(component -> focusPaths.contains(component.sourceFile()))
+                .forEach(component -> component.references().forEach(
+                        reference -> levelOne.addAll(index.filesDeclaring(reference.invokedComponent()))));
+        levelOne.removeAll(focusPaths);
+        return levelOne;
+    }
+
+    /**
+     * What every parser thread of one one-level compile shares: the declaration index, the source
+     * text the solvers read, and the tracker capping how many files they load.
+     */
+    private static final class OneLevelResolution {
+
+        /** Solvers may load at most this many files per level-one file the budget allows. */
+        private static final int LOADS_PER_BUDGETED_FILE = 4;
+
+        /** The fewest files solvers may load, so a small budget still lets analysed files resolve. */
+        private static final int MIN_LOAD_CAP = 1000;
+
+        private final JavaDeclarationIndex index;
+        private final Map<String, String> contentByPath = new HashMap<>();
+        private final JavaLoadTracker tracker;
+
+        OneLevelResolution(final List<ProjectFile> allFiles, final AnalysisOptions options) {
+            this.index = JavaDeclarationIndex.of(allFiles);
+            for (final ProjectFile file : allFiles) {
+                if (file.path() != null && file.content() != null) {
+                    contentByPath.put(file.path(), file.content());
+                }
+            }
+            this.tracker = new JavaLoadTracker(
+                    Math.max(MIN_LOAD_CAP, LOADS_PER_BUDGETED_FILE * options.levelOneBudget()));
+        }
+
+        ParserContext newContext() {
+            return new ParserContext(JavaParserFactory.setupIndexedTypeSolver(
+                    new IndexedTypeSolver(index, contentByPath, tracker)));
+        }
+
+        JavaDeclarationIndex index() {
+            return index;
+        }
+
+        JavaLoadTracker tracker() {
+            return tracker;
+        }
+    }
+
     @SuppressWarnings("PMD.CloseResource")
-    private ParseResults parseJavaFiles(final List<ProjectFile> files, final String persistDir) {
+    private ParseResults parseJavaFiles(final List<ProjectFile> files,
+                                        final Supplier<ParserContext> contextFactory,
+                                        final boolean shallow) {
         final int parallelism = CompilerParallelismSupport.resolveParallelism(files.size());
         if (parallelism > 1) {
             LOGGER.info("Parsing Java files in parallel using " + parallelism + " threads.");
@@ -99,9 +240,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
         final ExecutorService executor = Executors.newFixedThreadPool(parallelism);
         try {
-            final Set<String> sourceRoots = sourceRoots(files, persistDir);
-            final ThreadLocal<ParserContext> parserContext = ThreadLocal.withInitial(
-                    () -> new ParserContext(persistDir, sourceRoots));
+            final ThreadLocal<ParserContext> parserContext = ThreadLocal.withInitial(contextFactory);
             final List<Future<ParseOutcome>> futures = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
                 // Stop dispatching once cancelled: on a large repository the submission loop itself
@@ -112,7 +251,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                     throw new IllegalStateException("Interrupted while dispatching Java parse tasks.");
                 }
                 final ProjectFile file = files.get(i);
-                futures.add(executor.submit(new ParseTask(parserContext, file, i)));
+                futures.add(executor.submit(new ParseTask(parserContext, file, i, shallow)));
             }
             final List<ParseOutcome> outcomes = new ArrayList<>();
             for (final Future<ParseOutcome> future : futures) {

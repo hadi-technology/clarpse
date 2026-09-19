@@ -14,6 +14,16 @@ public class ParserContext {
         this(persistDir, java.util.List.of());
     }
 
+    /**
+     * A context resolving through the given solver.
+     *
+     * @param typeSolver The solver to resolve types with.
+     */
+    public ParserContext(final CombinedTypeSolver typeSolver) {
+        this.typeSolver = typeSolver;
+        this.parser = new JavaParser(JavaParserFactory.setupParserConfig(this.typeSolver));
+    }
+
     public ParserContext(final String persistDir, final java.util.Collection<String> sourceRoots) {
         this.typeSolver = JavaParserFactory.setupTypeSolver(persistDir, sourceRoots);
         this.parser = new JavaParser(JavaParserFactory.setupParserConfig(this.typeSolver));

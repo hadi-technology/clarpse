@@ -39,6 +39,25 @@ public final class FileParser {
             final CombinedTypeSolver typeSolver,
             final ProjectFile file,
             final int index) {
+        return parseFile(parser, typeSolver, file, index, false);
+    }
+
+    /**
+     * Parse a single Java file, optionally attributing method calls from written names only.
+     *
+     * @param parser     the JavaParser instance
+     * @param typeSolver the type solver for symbol resolution
+     * @param file       the file to parse
+     * @param index      the index of the file (for ordering in parallel processing)
+     * @param shallow    whether to attribute method calls without resolving them
+     * @return the parse outcome
+     */
+    public static ParseOutcome parseFile(
+            final JavaParser parser,
+            final CombinedTypeSolver typeSolver,
+            final ProjectFile file,
+            final int index,
+            final boolean shallow) {
         final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
         CompileFailure failure = null;
         try {
@@ -53,7 +72,7 @@ public final class FileParser {
                     LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
                     failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
                 } else {
-                    new JavaTreeListener(localModel, file, typeSolver).visit(cu, null);
+                    new JavaTreeListener(localModel, file, typeSolver, shallow).visit(cu, null);
                 }
             }
         } catch (final Throwable e) {
