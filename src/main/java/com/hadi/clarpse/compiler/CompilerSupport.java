@@ -8,8 +8,11 @@ import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import java.io.File;
 import java.nio.file.Paths;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * Shared compiler utilities used across language implementations.
@@ -20,20 +23,83 @@ public final class CompilerSupport {
     }
 
     public static void classifyReferences(final OOPSourceCodeModel srcModel) {
+        classifyReferences(srcModel, null);
+    }
+
+    /**
+     * Sorts every reference in the model into internal, external or not loaded.
+     *
+     * <p>A reference is internal when the model has a component by its name. Otherwise it is not
+     * loaded when {@code declaredInRepository} says its target is declared in the repository, and
+     * external when it is not. This is the only place a reference is put in the not-loaded state.
+     *
+     * @param srcModel             The model whose references to classify.
+     * @param declaredInRepository Whether a reference's target is declared in the repository, or
+     *                             {@code null} outside a one-level compile, when no reference is left
+     *                             not loaded.
+     */
+    public static void classifyReferences(final OOPSourceCodeModel srcModel,
+                                          final Predicate<ComponentReference> declaredInRepository) {
         srcModel.components().forEach(component -> {
             final Set<ComponentReference> internalReferences = new LinkedHashSet<>();
             final Set<ComponentReference> externalReferences = new LinkedHashSet<>();
+            final Set<ComponentReference> notLoadedReferences = new LinkedHashSet<>();
             component.references().forEach(componentReference -> {
-                final boolean isInternal = srcModel.containsComponent(componentReference.invokedComponent());
-                componentReference.setExternal(!isInternal);
-                if (isInternal) {
+                final String target = componentReference.invokedComponent();
+                if (srcModel.containsComponent(target)) {
                     internalReferences.add(componentReference);
+                } else if (declaredInRepository != null && declaredInRepository.test(componentReference)) {
+                    notLoadedReferences.add(componentReference);
                 } else {
                     externalReferences.add(componentReference);
                 }
             });
-            component.setReferenceClassification(internalReferences, externalReferences);
+            component.setReferenceClassification(internalReferences, externalReferences,
+                    notLoadedReferences);
         });
+    }
+
+    /**
+     * Marks as boundary every component declared in one of the given files. This is the only place
+     * a component is marked boundary.
+     *
+     * @param srcModel      The model of a one-level compile.
+     * @param levelOneFiles The level-one files the compile modelled.
+     */
+    public static void markBoundary(final OOPSourceCodeModel srcModel,
+                                    final Collection<String> levelOneFiles) {
+        final Set<String> boundaryFiles = new HashSet<>();
+        for (final String path : levelOneFiles) {
+            boundaryFiles.add(ClarpseCompiler.normalizeForComparison(path));
+        }
+        srcModel.components().forEach(component -> {
+            final String sourceFile = component.sourceFile();
+            if (sourceFile != null
+                    && boundaryFiles.contains(ClarpseCompiler.normalizeForComparison(sourceFile))) {
+                component.setBoundary(true);
+            }
+        });
+    }
+
+    /**
+     * The report of a one-level compile whose model is final.
+     *
+     * @param srcModel             The classified model.
+     * @param selection            The level-one selection the compile modelled.
+     * @param loadedBeyondLevelOne Files read beyond level one to resolve the analysed files.
+     * @return The report.
+     */
+    public static LevelOneReport levelOneReport(final OOPSourceCodeModel srcModel,
+                                                final LevelOneSelection selection,
+                                                final Collection<String> loadedBeyondLevelOne) {
+        final int notLoaded = srcModel.components()
+                .mapToInt(component -> component.notLoadedDependencies().size())
+                .sum();
+        List<String> beyond = List.of();
+        if (loadedBeyondLevelOne != null) {
+            beyond = List.copyOf(loadedBeyondLevelOne);
+        }
+        return new LevelOneReport(selection.modelledPaths(), selection.heldByBudget(), beyond, notLoaded);
     }
 
     public static void classifyClassCyclo(final OOPSourceCodeModel srcModel,

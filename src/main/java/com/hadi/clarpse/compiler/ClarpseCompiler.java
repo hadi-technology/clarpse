@@ -35,6 +35,41 @@ public interface ClarpseCompiler {
     CompileResult compile(ProjectFiles projectFiles, Collection<String> analyzedFilePaths) throws CompileException;
 
     /**
+     * Compiles source code with an optional file scope and the given options.
+     *
+     * <p>A compile that is not one-level (see {@link AnalysisOptions#isOneLevel(Collection)}) is
+     * exactly {@link #compile(ProjectFiles, Collection)}.
+     *
+     * @param projectFiles      Files to compile.
+     * @param analyzedFilePaths File paths to analyse, {@code null} for all files.
+     * @param options           Analysis options; {@code null} is read as {@link AnalysisOptions#full()}.
+     * @return See {@link CompileResult}
+     */
+    default CompileResult compile(final ProjectFiles projectFiles,
+                                  final Collection<String> analyzedFilePaths,
+                                  final AnalysisOptions options) throws CompileException {
+        if (options == null || !options.isOneLevel(analyzedFilePaths)) {
+            return compile(projectFiles, analyzedFilePaths);
+        }
+        throw new UnsupportedOperationException("One-level analysis is not supported by " + getClass().getSimpleName());
+    }
+
+    /**
+     * The level-one files of the given analysed files, without modelling them.
+     *
+     * @param projectFiles      Files to compile.
+     * @param analyzedFilePaths File paths to analyse; must not be {@code null}.
+     * @param options           Analysis options; only the budget-independent discovery is used.
+     * @return The discovered level-one paths, sorted, in the form of {@link ProjectFile#path()},
+     *         excluding the analysed files.
+     */
+    default Set<String> levelOneFiles(final ProjectFiles projectFiles,
+                                      final Collection<String> analyzedFilePaths,
+                                      final AnalysisOptions options) throws CompileException {
+        throw new UnsupportedOperationException("One-level analysis is not supported by " + getClass().getSimpleName());
+    }
+
+    /**
      * Filters project files based on the provided file paths.
      *
      * @param projectFiles The project files to filter.

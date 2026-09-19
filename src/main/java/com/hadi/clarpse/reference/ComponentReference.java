@@ -3,6 +3,7 @@ package com.hadi.clarpse.reference;
 import com.hadi.clarpse.TypeNames;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonSubTypes.Type;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
@@ -26,6 +27,8 @@ public abstract class ComponentReference implements Serializable, Cloneable {
     private static final long serialVersionUID = -242718695900611890L;
     private String invokedComponent = "";
     private boolean external = false;
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    private boolean notLoaded = false;
     private ResolutionKind resolutionKind = ResolutionKind.UNSPECIFIED;
 
     public ComponentReference(final String invocationComponentName) {
@@ -108,8 +111,47 @@ public abstract class ComponentReference implements Serializable, Cloneable {
         return external;
     }
 
+    /**
+     * Marks this reference as naming a type outside the codebase, or clears that mark.
+     *
+     * <p>Marking a reference external clears {@link #isNotLoaded()}: a reference is in at most one
+     * of the two states.
+     *
+     * @param external Whether the referenced type lies outside the codebase.
+     */
     public void setExternal(final boolean external) {
         this.external = external;
+        if (external) {
+            this.notLoaded = false;
+        }
+    }
+
+    /**
+     * Whether this reference names a type that is declared in the repository but was not loaded
+     * into the model.
+     *
+     * <p>Only a one-level analysis produces this state (see {@code docs/one-level-analysis.md}). A
+     * reference in it is neither internal, since the model has no component by its name, nor
+     * external, since the type is not a library type. A consumer must not read the absence of the
+     * target component as the absence of the type.
+     *
+     * @return {@code true} when the target is declared in the repository and absent from the model.
+     */
+    public boolean isNotLoaded() {
+        return notLoaded;
+    }
+
+    /**
+     * Marks this reference as naming a type declared in the repository but not loaded, or clears
+     * that mark. Marking it clears {@link #isExternal()}.
+     *
+     * @param notLoaded Whether the target is declared in the repository but absent from the model.
+     */
+    public void setNotLoaded(final boolean notLoaded) {
+        this.notLoaded = notLoaded;
+        if (notLoaded) {
+            this.external = false;
+        }
     }
 
     /**
