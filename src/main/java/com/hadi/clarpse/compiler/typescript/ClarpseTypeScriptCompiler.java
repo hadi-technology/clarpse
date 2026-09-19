@@ -164,53 +164,87 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.TYPESCRIPT,
                 analyzedFilePaths);
         final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.TYPESCRIPT));
-        final Set<CompileFailure> failures = new HashSet<>();
-        if (focusFiles.isEmpty()) {
-            return new TypeScriptPreparedAnalysis(options, focusFiles, allFiles, List.of(), null, null, failures);
-        }
-        if (!NodeRuntime.isNodeAvailable()) {
-            for (final ProjectFile file : focusFiles) {
-                failures.add(new CompileFailure(file,
-                        "Node.js not found. TypeScript parsing requires Node.js.",
-                        TypeScriptDaemonException.CODE_NODE_NOT_FOUND));
+        return new TypeScriptPreparedAnalysis(options, focusFiles, allFiles,
+                Discovery.of(projectFiles, focusFiles, allFiles));
+    }
+
+    /**
+     * What discovering the level-one files of a set of analysed files yields. With no project
+     * directory, discovery could not run and the failures say why.
+     *
+     * @param discovered The level-one paths.
+     * @param diskPaths  Translation between project and on-disk paths, or {@code null}.
+     * @param persistDir The project directory the daemon reads, or {@code null}.
+     * @param failures   The failures discovering.
+     */
+    private record Discovery(List<String> discovered, DiskPaths diskPaths, String persistDir,
+                             Set<CompileFailure> failures) {
+
+        /** Discovers the level-one files of the given analysed files in a daemon session of its own. */
+        static Discovery of(final ProjectFiles projectFiles, final List<ProjectFile> focusFiles,
+                            final List<ProjectFile> allFiles) throws CompileException {
+            final Set<CompileFailure> failures = new HashSet<>();
+            if (focusFiles.isEmpty()) {
+                return new Discovery(List.of(), null, null, failures);
             }
-            return new TypeScriptPreparedAnalysis(options, focusFiles, allFiles, List.of(), null, null, failures);
-        }
-        final String persistDir = projectFiles.projectDir();
-        final DiskPaths diskPaths = new DiskPaths(persistDir, allFiles);
-        try (TypeScriptDaemon daemon = new TypeScriptDaemon();
-                InterruptWatchdog watchdog =
-                        new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
-            daemon.start();
-            daemon.initRepo(persistDir);
-            final List<String> discovered =
-                    diskPaths.toProjectPaths(daemon.discoverLevelOne(diskPaths.toDisk(focusFiles)));
-            return new TypeScriptPreparedAnalysis(options, focusFiles, allFiles, discovered, diskPaths,
-                    persistDir, failures);
-        } catch (final TypeScriptDaemonException e) {
-            for (final ProjectFile file : focusFiles) {
-                failures.add(new CompileFailure(file, e.getMessage(), daemonFailureCode(e)));
+            if (!NodeRuntime.isNodeAvailable()) {
+                for (final ProjectFile file : focusFiles) {
+                    failures.add(new CompileFailure(file,
+                            "Node.js not found. TypeScript parsing requires Node.js.",
+                            TypeScriptDaemonException.CODE_NODE_NOT_FOUND));
+                }
+                return new Discovery(List.of(), null, null, failures);
             }
-            LOGGER.warn("TypeScript one-level analysis failed (code={}).", daemonFailureCode(e), e);
-            return new TypeScriptPreparedAnalysis(options, focusFiles, allFiles, List.of(), null, null, failures);
+            final String persistDir = projectFiles.projectDir();
+            final DiskPaths diskPaths = new DiskPaths(persistDir, allFiles);
+            try (TypeScriptDaemon daemon = new TypeScriptDaemon();
+                    InterruptWatchdog watchdog =
+                            new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
+                daemon.start();
+                daemon.initRepo(persistDir);
+                final List<String> discovered =
+                        diskPaths.toProjectPaths(daemon.discoverLevelOne(diskPaths.toDisk(focusFiles)));
+                return new Discovery(discovered, diskPaths, persistDir, failures);
+            } catch (final TypeScriptDaemonException e) {
+                for (final ProjectFile file : focusFiles) {
+                    failures.add(new CompileFailure(file, e.getMessage(), daemonFailureCode(e)));
+                }
+                LOGGER.warn("TypeScript one-level analysis failed (code={}).", daemonFailureCode(e), e);
+                return new Discovery(List.of(), null, null, failures);
+            }
         }
     }
 
     /** A TypeScript one-level compile between discovering level one and modelling it. */
     private static final class TypeScriptPreparedAnalysis extends AbstractPreparedAnalysis {
 
-        private final DiskPaths diskPaths;
-        private final String persistDir;
-        private final Set<CompileFailure> prepareFailures;
+        private final List<ProjectFile> allFiles;
+        private DiskPaths diskPaths;
+        private String persistDir;
+        private Set<CompileFailure> prepareFailures;
 
         TypeScriptPreparedAnalysis(final AnalysisOptions options, final List<ProjectFile> focusFiles,
-                                   final List<ProjectFile> allFiles, final List<String> discovered,
-                                   final DiskPaths diskPaths, final String persistDir,
-                                   final Set<CompileFailure> prepareFailures) {
-            super(options, focusFiles, allFiles, discovered);
-            this.diskPaths = diskPaths;
-            this.persistDir = persistDir;
-            this.prepareFailures = prepareFailures;
+                                   final List<ProjectFile> allFiles, final Discovery discovery) {
+            super(options, focusFiles, allFiles, discovery.discovered());
+            this.allFiles = allFiles;
+            this.diskPaths = discovery.diskPaths();
+            this.persistDir = discovery.persistDir();
+            this.prepareFailures = discovery.failures();
+        }
+
+        /**
+         * Discovers level one again over every analysed file, in a daemon session of its own. Discovery
+         * resolves module specifiers without building a program, and the programs are built by each
+         * compile for the configs that own its planned files, so nothing held needs rebuilding.
+         */
+        @Override
+        protected Extension extend(final List<ProjectFile> added, final List<ProjectFile> focus)
+                throws CompileException {
+            final Discovery discovery = Discovery.of(projectFiles(), focus, allFiles);
+            this.diskPaths = discovery.diskPaths();
+            this.persistDir = discovery.persistDir();
+            this.prepareFailures = discovery.failures();
+            return new Extension(focus, discovery.discovered());
         }
 
         @Override
