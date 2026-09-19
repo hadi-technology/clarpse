@@ -182,6 +182,29 @@ public class CSharpConditionalNamespaceTest {
     }
 
     @Test
+    public void usingInLaterAlternativeResolvesTheTypeItImports() throws Exception {
+        final OOPSourceCodeModel model = CSharpTestUtil.compileInline(
+                new ProjectFile("/src/Other/Helper.cs", "namespace Other.Lib { public class Helper { } }"),
+                new ProjectFile("/src/Third/Helper.cs", "namespace Third.Lib { public class Helper { } }"),
+                new ProjectFile("/src/App/Svc.cs", """
+                        #if A
+                        namespace Demo.App
+                        #elif B
+                        using Other.Lib;
+                        namespace Demo.App
+                        #endif
+                        {
+                            public class Svc { private Helper h; }
+                        }
+                        """)).model();
+        final Component field = model.component("Demo.App.Svc.h").orElseThrow();
+        assertEquals(List.of("Other.Lib.Helper"), field.references().stream()
+                .filter(reference -> !reference.isExternal())
+                .map(reference -> reference.invokedComponent())
+                .collect(Collectors.toList()));
+    }
+
+    @Test
     public void fileScopedNamespaceStillNamesItsTypes() throws Exception {
         assertEquals(List.of("Demo.Feature.Queries"), classNames("""
                 using Demo.Shared;

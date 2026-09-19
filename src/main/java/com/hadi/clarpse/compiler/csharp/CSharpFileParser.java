@@ -82,6 +82,20 @@ final class CSharpFileParser {
             "(?:global\\s+)?using\\s+(?:static\\s+)?(?:@?[A-Za-z_]\\w*\\s*=\\s*)?"
                     + "@?[A-Za-z_][\\w.@:<>,\\s]*;");
 
+    /**
+     * A using directive that ends a namespace header. When {@code #if} alternatives each open a block
+     * namespace, the parser ends the first header at the next {@code ;}, which can be that of a using
+     * directive in a later alternative.
+     */
+    private static final Pattern HEADER_TRAILING_USING_PATTERN = Pattern.compile(
+            "(?:^|\\s)(" + USING_DIRECTIVE_PATTERN.pattern() + ")\\s*$");
+
+    /** A preprocessor directive line. */
+    private static final Pattern DIRECTIVE_LINE_PATTERN = Pattern.compile("(?m)^[ \\t]*#.*$");
+
+    /** A line or block comment; namespace headers hold no string literals that could contain one. */
+    private static final Pattern COMMENT_PATTERN = Pattern.compile("//[^\\n]*|/\\*(?s:.*?)\\*/");
+
     /** Nodes whose text is read as a name: declared identifiers, type usages and member usages. */
     private static final Set<String> NAME_NODES = Set.of(
             "cs:id-role",
@@ -263,8 +277,9 @@ final class CSharpFileParser {
                         parseTopLevelNode(nested, fileModel, namespaceName, laterAlternatives,
                                 nestedInsideFileScoped);
                     }
-                } else if (!"cs:namespace-header-node-statement".equals(child.type)
-                        && !"cs:id-role".equals(child.type)) {
+                } else if ("cs:namespace-header-node-statement".equals(child.type)) {
+                    addUsingEndingHeader(child, fileModel);
+                } else if (!"cs:id-role".equals(child.type)) {
                     parseTopLevelNode(child, fileModel, namespaceName, laterAlternatives,
                             nestedInsideFileScoped);
                 }
@@ -281,14 +296,14 @@ final class CSharpFileParser {
         if ("cs:using-list-role".equals(type)) {
             for (final SyntaxNode child : node.children) {
                 if ("cs:using-directive-statement".equals(child.type)) {
-                    fileModel.usings.add(parseUsing(child));
+                    fileModel.usings.add(parseUsing(child.text));
                 }
             }
             return;
         }
         if (MISPLACED_USING_STATEMENTS.contains(type)
                 && USING_DIRECTIVE_PATTERN.matcher(normalizeWhitespace(node.text)).matches()) {
-            fileModel.usings.add(parseUsing(node));
+            fileModel.usings.add(parseUsing(node.text));
             return;
         }
         if (TYPE_DECLARATIONS.contains(type)) {
@@ -411,13 +426,31 @@ final class CSharpFileParser {
                 && sourceText.charAt(index + 2) == '"';
     }
 
-    private static CSharpModel.CSharpUsingModel parseUsing(final SyntaxNode node) {
-        final String normalized = normalizeWhitespace(node.text).toLowerCase(Locale.ROOT);
+    /**
+     * Records the using directive a namespace header ends with, if any. Only a header that spans a
+     * preprocessor directive can hold one: in valid C# a using never follows a namespace name
+     * otherwise. Directives are not evaluated, so the using is recorded whichever alternative it is in.
+     */
+    private static void addUsingEndingHeader(final SyntaxNode header,
+                                             final CSharpModel.CSharpFileModel fileModel) {
+        if (!DIRECTIVE_LINE_PATTERN.matcher(header.text).find()) {
+            return;
+        }
+        final String code = DIRECTIVE_LINE_PATTERN.matcher(
+                COMMENT_PATTERN.matcher(header.text).replaceAll(" ")).replaceAll(" ");
+        final Matcher using = HEADER_TRAILING_USING_PATTERN.matcher(code);
+        if (using.find()) {
+            fileModel.usings.add(parseUsing(using.group(1)));
+        }
+    }
+
+    private static CSharpModel.CSharpUsingModel parseUsing(final String text) {
+        final String normalized = normalizeWhitespace(text).toLowerCase(Locale.ROOT);
         final boolean globalImport = normalized.startsWith("global using ");
         final boolean staticImport = normalized.contains(" using static ")
                 || normalized.startsWith("using static ")
                 || normalized.startsWith("global using static ");
-        String raw = normalizeWhitespace(node.text);
+        String raw = normalizeWhitespace(text);
         if (raw.startsWith("global ")) {
             raw = raw.substring("global ".length()).trim();
         }
