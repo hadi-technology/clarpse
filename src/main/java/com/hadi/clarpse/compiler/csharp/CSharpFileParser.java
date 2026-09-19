@@ -63,9 +63,17 @@ final class CSharpFileParser {
     private static final String BYTE_ORDER_MARK = "\uFEFF";
 
     /**
-     * A using directive written after a preprocessor directive is produced as a using statement.
-     * Only the directive shapes match: a namespace, a static type, or an alias, never a
-     * declaration such as {@code using var x = ...;}.
+     * Statement productions the parser emits for a using directive written after a preprocessor
+     * directive: a using statement, or, for {@code global using}, a line statement around one.
+     */
+    private static final Set<String> MISPLACED_USING_STATEMENTS = Set.of(
+            "cs:using-scoped-statement",
+            "cs:line-statement"
+    );
+
+    /**
+     * The using directive shapes: a namespace, a static type, or an alias, optionally global. A
+     * declaration such as {@code using var x = ...;} does not match.
      */
     private static final Pattern USING_DIRECTIVE_PATTERN = Pattern.compile(
             "(?:global\\s+)?using\\s+(?:static\\s+)?(?:@?[A-Za-z_]\\w*\\s*=\\s*)?"
@@ -199,7 +207,7 @@ final class CSharpFileParser {
             }
             return;
         }
-        if ("cs:using-scoped-statement".equals(type)
+        if (MISPLACED_USING_STATEMENTS.contains(type)
                 && USING_DIRECTIVE_PATTERN.matcher(normalizeWhitespace(node.text)).matches()) {
             fileModel.usings.add(parseUsing(node));
             return;

@@ -1,5 +1,6 @@
 package com.hadi.test.csharp;
 
+import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.sourcemodel.Component;
@@ -143,6 +144,18 @@ public class CSharpByteOrderMarkAndDirectivesTest {
         final Component widget = model.copyOfComponent("Demo.Widget").orElseThrow();
         assertTrue(widget.imports().contains("System.Text"));
         assertTrue(widget.imports().contains("System.Math"));
+    }
+
+    @Test
+    public void fileWithoutContentYieldsNoTypesAndNoFailure() throws Exception {
+        final ProjectFile empty = new ProjectFile("/Empty.cs", "");
+        empty.content(null);
+        final CompileResult result = CSharpTestUtil.compileInline(
+                empty,
+                new ProjectFile("/Widget.cs", BOM + WIDGET_BODY)
+        );
+        assertTrue(result.model().containsComponent("Demo.Widget"));
+        assertTrue(result.failures().isEmpty());
     }
 
     /** Offsets are taken on the text the parser saw, so a member's code fragment carries no BOM. */
