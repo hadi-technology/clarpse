@@ -13,4 +13,6 @@ public class TypeScriptImportModel {
     public String module;
     public String filePath;
     public String symbolName;
+    /** The import binds the whole module ({@code import * as ns}); {@code symbolName} is then null. */
+    public boolean namespace;
 }

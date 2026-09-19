@@ -90,6 +90,8 @@ final class TypeScriptModelAssembler {
             if (imported.filePath != null && imported.symbolName != null) {
                 value = CompilerSupport.resolveUniqueNameFromTarget(
                         repoRoot, imported.filePath, imported.symbolName);
+            } else if (imported.filePath != null && imported.namespace) {
+                value = CompilerSupport.resolveModuleUniqueName(repoRoot, imported.filePath);
             }
             if (value == null || value.isEmpty()) {
                 value = imported.module;
@@ -332,8 +334,11 @@ final class TypeScriptModelAssembler {
     }
 
     private static String resolveUniqueName(final String repoRoot, final TypeScriptTargetModel target) {
-        if (target == null || target.filePath == null || target.symbolName == null) {
+        if (target == null || target.filePath == null) {
             return null;
+        }
+        if (target.symbolName == null) {
+            return CompilerSupport.resolveModuleUniqueName(repoRoot, target.filePath);
         }
         return CompilerSupport.resolveUniqueNameFromTarget(repoRoot, target.filePath, target.symbolName);
     }

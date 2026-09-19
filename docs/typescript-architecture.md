@@ -94,6 +94,15 @@ Examples:
 
 Package names are derived from the repo-relative directory path, consistent with Java.
 
+No name depends on where the sources were put on disk for a compile, so compiling the same sources
+twice gives the same model:
+- A whole module referenced as a value (`whole = dom` after `import * as dom from "./dom"`, or
+  `typeof import("./dom")`) is referenced by its module name, `src.app.dom`, which has no component
+  of its own. `import * as dom` records the same module name among the file's imports.
+- Type text is written with paths relative to the repository root. The checker prints a type it
+  cannot name from where it is printed as `import("<path>")`; the path is written as
+  `node_modules/extlib/index`, not as an absolute path.
+
 # Failure Contract
 TypeScript follows the same failure model as Python:
 - Recoverable language/runtime/config/file errors are recorded in `CompileResult.failures()` with an error code.
