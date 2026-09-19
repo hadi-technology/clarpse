@@ -101,12 +101,10 @@ public class PythonModuleQualifiedBodyRefsTest {
         Assert.assertTrue(method.internalDependencies().isEmpty());
     }
 
-    /** The same classification {@code make_user()} after {@code from pkg.models import make_user} gets. */
+    /** A call of a repo function through a module is a reference to that function's component. */
     @Test
-    public void aModuleFunctionIsNotAnInternalTypeReference() {
-        final Component method = method(CLIENT, "module_function");
-        Assert.assertTrue(method.internalDependencies().isEmpty());
-        Assert.assertTrue(invoked(method.externalDependencies()).contains("pkg.models.make_user"));
+    public void aModuleFunctionResolvesToItsComponent() {
+        assertInternal(method(CLIENT, "module_function"), "pkg.models.make_user() : Any");
     }
 
     @Test

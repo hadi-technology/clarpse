@@ -67,6 +67,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         final ParseResults parseResults = parsePythonFiles(pyFiles, persistDir, pythonVersionOverride);
         srcModel.merge(parseResults.model);
         compileFailures.addAll(parseResults.failures);
+        PythonModelAssembler.resolveFunctionReferences(srcModel);
         CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(OOPSourceModelConstants.ComponentType.CLASS));
         CompilerSupport.classifyReferences(srcModel);
         return new CompileResult(srcModel, compileFailures);

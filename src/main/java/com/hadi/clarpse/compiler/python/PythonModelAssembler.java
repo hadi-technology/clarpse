@@ -17,7 +17,11 @@ import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.Package;
 
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
 
@@ -503,6 +507,63 @@ final class PythonModelAssembler {
         if (ref != null && !ref.invokedComponent().equals(component.uniqueName())) {
             component.insertCmpRef(ref);
         }
+    }
+
+    /**
+     * Points each reference that names a module-level function by its dotted name --
+     * {@code util.text.capfirst}, as a call records it -- at that function's component, whose unique
+     * name carries the signature: {@code util.text.capfirst(x: Any) : Any}.
+     *
+     * <p>A call site knows the name it calls, not the signature, which only the declaring file's
+     * parse produces; so the join is made here, over the whole model. A name is rewritten only when
+     * no component already has it and exactly one function in the model answers to it. A name two
+     * functions answer to, or none, is left as recorded. A call that resolves to the component
+     * making it is recursion, not a dependency, and is dropped.
+     *
+     * @param srcModel The model, with every file's components inserted and references not yet classified.
+     */
+    static void resolveFunctionReferences(final OOPSourceCodeModel srcModel) {
+        final Map<String, String> functionsByName = new HashMap<>();
+        final Set<String> ambiguous = new HashSet<>();
+        srcModel.components()
+                .filter(cmp -> cmp.componentType() == OOPSourceModelConstants.ComponentType.FUNCTION)
+                .forEach(cmp -> {
+                    final String uniqueName = cmp.uniqueName();
+                    final int parameters = uniqueName.indexOf('(');
+                    if (parameters <= 0) {
+                        return;
+                    }
+                    final String name = uniqueName.substring(0, parameters);
+                    if (functionsByName.putIfAbsent(name, uniqueName) != null) {
+                        ambiguous.add(name);
+                    }
+                });
+        ambiguous.forEach(functionsByName::remove);
+        if (functionsByName.isEmpty()) {
+            return;
+        }
+        srcModel.components().forEach(component -> {
+            final Set<ComponentReference> references = component.references();
+            final Set<ComponentReference> resolved = new LinkedHashSet<>();
+            boolean changed = false;
+            for (final ComponentReference ref : references) {
+                final String function = functionsByName.get(ref.invokedComponent());
+                if (function == null || !(ref instanceof SimpleTypeReference)
+                        || srcModel.containsComponent(ref.invokedComponent())) {
+                    resolved.add(ref);
+                    continue;
+                }
+                changed = true;
+                if (!function.equals(component.uniqueName())) {
+                    final SimpleTypeReference call = new SimpleTypeReference(function);
+                    call.setResolutionKind(ref.resolutionKind());
+                    resolved.add(call);
+                }
+            }
+            if (changed) {
+                component.setReferenceClassification(resolved, new LinkedHashSet<>());
+            }
+        });
     }
 
     /**
