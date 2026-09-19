@@ -53,6 +53,27 @@ Layer 3: TypeScript daemon (Node)
    programs lazily, on the first file that needs one.
 5) Each file is resolved via `getFileModel(file)` and mapped into Clarpse components.
 
+# One-Level Analysis
+A one-level compile (see `docs/one-level-analysis.md`) builds programs from the analysed and
+level-one files only.
+1) `discoverLevelOne` finds level one without building a program. It reads each analysed file's
+   module specifiers with `ts.preProcessFile`, resolves them with `ts.resolveModuleName` using the
+   options of the config owning the file, and follows the re-exports of the files it reaches.
+2) The Java side applies the level-one budget.
+3) `planOneLevel` assigns every planned file to the config owning it. The program of each config
+   owning an analysed file holds all planned files; a config owning only level-one files holds
+   those. Every planned program also holds its config's `.d.ts` root files. Programs are built with
+   `noResolve` and without project references, so the compiler does not follow imports past the
+   planned files, and does not redirect a referenced project's sources to build output that a
+   checkout does not have.
+4) Analysed files are modelled in full; level-one files are modelled without reading function
+   bodies.
+
+In this mode, a type the program cannot see is flagged `unresolved` rather than reported as
+external: `any`, alone or nested (`any[]`), or a symbol with no declaration. `collectImports`
+resolves a module the program does not hold by module resolution alone, so a boundary file's
+imports still name the file they refer to.
+
 # Identity and Naming
 Clarpse relies on stable, unique names:
 

@@ -196,6 +196,7 @@ Note: TypeScript and Python parsing require Node.js.
 Architecture docs:
 - `docs/typescript-architecture.md`
 - `docs/python-architecture.md`
+- `docs/one-level-analysis.md`
 
 ## Using The API
 Clarpse abstracts source code into a higher level model in a **language-agnostic** way.  
@@ -261,6 +262,21 @@ Component methodComponent = codeModel.copyOfComponent(childUniqueName).orElseThr
 System.out.println(methodComponent.name());
 System.out.println(methodComponent.codeFragment());
 ```
+
+## One-Level Analysis
+To model a few files of a large repository together with the files they reference, without
+compiling the rest of it, pass the files to analyse and one-level options:
+
+```java
+final CompileResult result = new ClarpseProject(projectFiles, Lang.JAVA,
+        List.of("/src/main/java/app/OrderController.java"), AnalysisOptions.oneLevel()).result();
+result.levelOne().levelOneFiles();   // the referenced files that were modelled
+```
+
+Components of the referenced files are marked `isBoundary()`, and a reference whose target is
+declared in the repository but was not loaded reports `isNotLoaded()` rather than `isExternal()`.
+See `docs/one-level-analysis.md` for how each language finds the referenced files, what the model
+promises, and how to compare two revisions.
 
 ## Failure Contract
 - Java/C#/TypeScript/Python all report recoverable issues in `CompileResult.failures()` using

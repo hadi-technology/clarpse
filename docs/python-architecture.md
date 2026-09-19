@@ -96,6 +96,18 @@ and can be mapped through imports or local class declarations.
 - Visibility is inferred from naming: `__` is private, `_` is protected, everything else is public.
 - `@staticmethod` and `@classmethod` are reported as `static`.
 
+# One-Level Analysis
+A one-level compile (see `docs/one-level-analysis.md`) models the analysed files and the modules
+their references resolve into, in one daemon session: the analysed files first, then the level-one
+files.
+- Every repository name the resolver writes is the declaring module's dotted path followed by the
+  symbol's name, so `PythonModuleIndex` recovers the declaring file from a resolved name. The same
+  index tells a repository name that was not loaded from a library label.
+- Resolution already stops at one level. A referenced module is read only for the names of its
+  classes, and cached, so modelling level one reads level-two modules no further than that.
+- The daemon script and the bundled Pyright runtime are extracted once per JVM and shared by every
+  daemon, then removed when the JVM exits.
+
 # JSON Protocol
 Requests use line delimited JSON.
 
@@ -185,3 +197,4 @@ Python supports nested class definitions, and these are fully modeled:
 - Daemon bridge: src/main/java/com/hadi/clarpse/compiler/python/PythonDaemon.java
 - Daemon runtime: src/main/resources/python/daemon.js
 - Python models: src/main/java/com/hadi/clarpse/compiler/python/model
+- Module index for one-level analysis: src/main/java/com/hadi/clarpse/compiler/python/PythonModuleIndex.java
