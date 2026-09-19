@@ -37,7 +37,18 @@ public abstract class AbstractPreparedAnalysis implements PreparedAnalysis {
      * @param analysed   The analysed files, the added ones included.
      * @param discovered The level-one paths discovered from every analysed file.
      */
-    public record Extension(List<ProjectFile> analysed, Collection<String> discovered) {
+    protected record Extension(List<ProjectFile> analysed, Collection<String> discovered) {
+
+        /**
+         * Copies both collections, so the extension holds what the language returned at the time.
+         *
+         * @param analysed   The analysed files, the added ones included.
+         * @param discovered The level-one paths discovered from every analysed file.
+         */
+        public Extension {
+            analysed = List.copyOf(analysed);
+            discovered = List.copyOf(discovered);
+        }
     }
 
     /** Builds a language's prepared analysis. */
