@@ -34,6 +34,10 @@ public final class TypeNames {
      * parameterised type at all -- truncating there would leave nothing, and a reference to
      * nothing is worse than a reference to a name that matches nothing.
      *
+     * <p>A callable's unique name is not a type expression. Where a parenthesis opens before any
+     * bracket -- {@code pkg.mod.join(items: List[str]) : str} -- the brackets belong to its
+     * parameter list, and the name comes back unchanged.
+     *
      * <p>The type arguments are dropped rather than recorded, because a name is a name. Where they
      * carry a dependency of their own -- {@code HttpRequest} in {@code DTO<HttpRequest>} is a real
      * one -- it is for the caller to record as a reference in its own right; that is a different
@@ -46,8 +50,12 @@ public final class TypeNames {
         if (typeName == null) {
             return null;
         }
+        final int arguments = firstBracket(typeName);
+        final int parameters = typeName.indexOf('(');
+        if (parameters >= 0 && (arguments < 0 || parameters < arguments)) {
+            return typeName;
+        }
         String result = typeName;
-        final int arguments = firstBracket(result);
         if (arguments > 0) {
             result = result.substring(0, arguments);
         }
