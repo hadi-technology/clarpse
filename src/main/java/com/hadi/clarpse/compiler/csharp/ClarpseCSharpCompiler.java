@@ -191,7 +191,7 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
     private final class CSharpPreparedAnalysis extends AbstractPreparedAnalysis {
 
         private final ParsedFiles files;
-        private final Set<String> focus;
+        private Set<String> focus;
 
         CSharpPreparedAnalysis(final AnalysisOptions options, final List<ProjectFile> focusFiles,
                                final List<ProjectFile> allFiles, final Set<String> discovered,
@@ -222,6 +222,27 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
             CompilerSupport.markBoundary(model, selection.modelledPaths());
             return new CompileResult(model, files.failuresOf(parsedPaths)).withLevelOne(
                     CompilerSupport.levelOneReport(model, selection, List.of()));
+        }
+
+        /**
+         * Parses the added files and every part of a partial type they declare, reusing the file
+         * models already parsed, and rediscovers level one by assembling every analysed file again.
+         * Assembly works on copies, so the parsed models stay reusable.
+         */
+        @Override
+        protected Extension extend(final List<ProjectFile> added, final List<ProjectFile> focusFiles)
+                throws CompileException {
+            final Set<String> extended = new TreeSet<>(focus);
+            for (final ProjectFile file : added) {
+                extended.add(file.path());
+                extended.addAll(files.index.partialParts(file.path()));
+            }
+            final Set<String> parsedPaths = files.withGlobalUsings(extended);
+            files.parse(parsedPaths);
+            final Set<String> discovered = discoverLevelOne(files.assemble(parsedPaths, extended), extended,
+                    files.index);
+            this.focus = extended;
+            return new Extension(files.filesAt(extended), discovered);
         }
 
         @Override

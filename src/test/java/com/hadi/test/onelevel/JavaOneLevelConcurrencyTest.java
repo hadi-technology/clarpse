@@ -115,6 +115,40 @@ public class JavaOneLevelConcurrencyTest {
         }
     }
 
+    /**
+     * Two passes, the second extending the first with files that were level one, give on every run
+     * the model a single preparation of all of them gives.
+     */
+    @Test
+    public void repeatedParallelTwoPassCompilesProduceTheSameModel() throws Exception {
+        Assume.assumeTrue("needs more than one parser thread", Runtime.getRuntime().availableProcessors() > 1);
+        final Map<String, String> repository = repository();
+        final List<String> first = new ArrayList<>();
+        final List<String> more = new ArrayList<>();
+        for (int pkg = 0; pkg < PACKAGES; pkg++) {
+            first.add(path(pkg, 0));
+            more.add(path(pkg, 1));
+            more.add(path(pkg, 4));
+        }
+        final List<String> all = new ArrayList<>(first);
+        all.addAll(more);
+        final String expected;
+        try (PreparedAnalysis prepared = new ClarpseProject(project(repository), Lang.JAVA, all,
+                AnalysisOptions.oneLevel()).prepare()) {
+            expected = json(prepared.compile(null).model());
+        }
+        for (int run = 0; run < RUNS; run++) {
+            try (PreparedAnalysis prepared = new ClarpseProject(project(repository), Lang.JAVA, first,
+                    AnalysisOptions.oneLevel()).prepare()) {
+                prepared.compile(null);
+                prepared.extendFocus(more);
+                final CompileResult result = prepared.compile(null);
+                assertTrue(result.failures().toString(), result.failures().isEmpty());
+                assertEquals("run " + run + " differs from a single preparation", expected, json(result.model()));
+            }
+        }
+    }
+
     /** The analysed files' references, resolved in parallel, equal whole-repository analysis's. */
     @Test
     public void parallelOneLevelReferencesEqualWholeRepositoryAnalysis() throws Exception {

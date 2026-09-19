@@ -232,13 +232,39 @@ public final class CompilerSupport {
         }
         String pkgPath;
         try {
-            java.nio.file.Path root = Paths.get(repoRoot).toAbsolutePath().normalize();
+            final java.nio.file.Path root = Paths.get(repoRoot).toAbsolutePath().normalize();
             pkgPath = root.relativize(parent).toString();
+            if (pkgPath.startsWith("..")) {
+                // A resolver may report the file under the root's real path, where the root is
+                // reached through a symbolic link; relative to that, the file is inside the root.
+                pkgPath = root.toRealPath().relativize(parent.toRealPath()).toString();
+            }
         } catch (final Exception e) {
             pkgPath = parent.toString();
         }
         pkgPath = normalizeSlashes(pkgPath);
         return stripLeadingSlashes(pkgPath);
+    }
+
+    /**
+     * The unique name of a whole module, a source file referenced as a namespace rather than
+     * through one of its declarations: its package path and module name, as the unique names of the
+     * declarations in it start.
+     *
+     * @param repoRoot       The repository root the file is read under.
+     * @param targetFilePath The module's file.
+     * @return The name, or {@code null} when there is no file.
+     */
+    public static String resolveModuleUniqueName(final String repoRoot, final String targetFilePath) {
+        if (targetFilePath == null) {
+            return null;
+        }
+        final String pkgPath = resolvePackagePath(repoRoot, targetFilePath);
+        final String moduleName = moduleNameForFile(targetFilePath);
+        if (pkgPath.isEmpty()) {
+            return moduleName;
+        }
+        return pkgPath.replace('/', '.') + "." + moduleName;
     }
 
     public static String resolveUniqueNameFromTarget(final String repoRoot,

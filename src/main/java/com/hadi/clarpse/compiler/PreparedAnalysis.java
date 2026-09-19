@@ -17,7 +17,9 @@ import java.util.Set;
  * <p>Lifetime: obtain it from {@link ClarpseProject#prepare()} in a try-with-resources block, call
  * {@link #levelOneFiles()} and then {@link #compile(Collection)}, and let the block close it. It is
  * not thread-safe. {@link #compile(Collection)} may be called more than once, each call modelling
- * level one afresh from the given paths. After {@link #close()} every method throws
+ * level one afresh from the given paths. Between compiles, {@link #extendFocus(Collection)} adds
+ * analysed files, reusing everything already resolved; what the analysis holds grows with its
+ * analysed files and stays until it is closed. After {@link #close()} every method throws
  * {@link IllegalStateException}. The {@link CompileResult} it returns holds nothing of the prepared
  * state and outlives it.
  */
@@ -41,6 +43,26 @@ public interface PreparedAnalysis extends AutoCloseable {
      * @return The compile result.
      */
     CompileResult compile(Collection<String> additionalLevelOnePaths) throws CompileException;
+
+    /**
+     * Adds analysed files, resolving only the added ones and reusing the declaration index, the
+     * files already parsed and the analysed files' model. Afterwards the analysis is the one
+     * {@link ClarpseProject#prepare()} would give for the analysed files so far plus these:
+     * {@link #levelOneFiles()} is rediscovered over all of them, and a level-one file that becomes
+     * analysed is modelled in full from then on and is no longer boundary. The level-one budget
+     * applies to the whole level-one set. Paths already analysed, and paths that are not files of the
+     * analysis's language, are ignored.
+     *
+     * <p>If it throws, the analysis is unchanged and may still be compiled or closed.
+     *
+     * @param additionalFocusPaths The files to add, in the form accepted for the analysed paths.
+     * @throws CompileException When the added files cannot be resolved; an interrupted extend may
+     *                          instead throw {@link java.util.concurrent.CancellationException}, as an
+     *                          interrupted compile does.
+     */
+    default void extendFocus(Collection<String> additionalFocusPaths) throws CompileException {
+        throw new UnsupportedOperationException("Extending is not supported by " + getClass().getSimpleName());
+    }
 
     /** Releases everything this analysis holds. Idempotent. */
     @Override

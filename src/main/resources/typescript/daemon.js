@@ -407,7 +407,7 @@ function programFor(index) {
     configPath: config.configPath,
     program,
     options: config.options,
-    checker: program.getTypeChecker()
+    checker: withPortableTypeText(program.getTypeChecker())
   };
   state.programCache.set(index, entry);
   state.programOrder.push(index);
@@ -557,6 +557,63 @@ function getJsDoc(node) {
     return "";
   }
   return node.jsDoc.map((doc) => doc.getText()).join("\n");
+}
+
+/**
+ * The repository root as the checker writes paths: resolved, with its real path too when it is
+ * reached through a symbolic link, each with a trailing separator and forward slashes.
+ */
+function repositoryRootPrefixes() {
+  if (!state.repoRoot) {
+    return [];
+  }
+  const roots = new Set([path.resolve(state.repoRoot)]);
+  try {
+    roots.add(fs.realpathSync(state.repoRoot));
+  } catch (err) {
+    // the resolved root alone
+  }
+  return Array.from(roots)
+    .map((root) => root.replace(/\\/g, "/").replace(/\/+$/, "") + "/")
+    .sort((left, right) => right.length - left.length);
+}
+
+/**
+ * Type text with every path inside the repository written relative to its root. The checker writes
+ * a type it cannot name from where it is printed as `import("<absolute path>")`, and the absolute
+ * path is wherever the sources were put on disk for this run; relative to the root, the text is the
+ * same however and wherever the repository is read.
+ */
+function portableTypeText(text) {
+  if (!text || text.indexOf("/") < 0) {
+    return text;
+  }
+  let portable = text;
+  for (const prefix of repositoryRootPrefixes()) {
+    portable = portable.split(prefix).join("");
+  }
+  return portable;
+}
+
+/** The checker, with `typeToString` answering portable type text. */
+function withPortableTypeText(checker) {
+  if (!checker || checker.portableTypeText) {
+    return checker;
+  }
+  const typeToStringAt = checker.typeToString.bind(checker);
+  checker.typeToString = (...args) => portableTypeText(typeToStringAt(...args));
+  checker.portableTypeText = true;
+  return checker;
+}
+
+/**
+ * Whether a symbol is a module that is a whole source file, as a namespace import (`import * as
+ * dom from "./dom"`) or `typeof import("./dom")` names it. Its name is the file's absolute path,
+ * never a declared name.
+ */
+function isSourceFileModule(symbol) {
+  const declarations = symbol && symbol.declarations;
+  return !!(declarations && declarations.length && state.ts.isSourceFile(declarations[0]));
 }
 
 function typeToString(checker, node) {
@@ -816,15 +873,29 @@ function buildReferenceModelsFromType(type, checker, kind) {
     return references;
   }
   for (const entry of entries) {
+    const actual = (entry.symbol.flags & state.ts.SymbolFlags.Alias)
+      ? checker.getAliasedSymbol(entry.symbol)
+      : entry.symbol;
+    const decls = actual.declarations;
+    const decl = decls && decls.length ? decls[0] : null;
+    const fileName = decl && decl.getSourceFile ? decl.getSourceFile().fileName : null;
+    if (isSourceFileModule(actual)) {
+      // A whole module is referenced by its file: the target has no symbol name, and the module's
+      // own name is derived from the file's place in the repository.
+      if (fileName && isInternalFile(fileName)) {
+        const normalized = path.resolve(fileName);
+        const key = `${kind}|module|${normalized}`;
+        if (!seen.has(key)) {
+          references.push({ kind, external: false, target: { filePath: normalized, symbolName: null } });
+          seen.add(key);
+        }
+        continue;
+      }
+    }
     const name = resolveSymbolName(entry.symbol, checker);
     if (isInternalSymbolName(name)) {
       continue;
     }
-    const decls = (entry.symbol.flags & state.ts.SymbolFlags.Alias)
-      ? checker.getAliasedSymbol(entry.symbol).declarations
-      : entry.symbol.declarations;
-    const decl = decls && decls.length ? decls[0] : null;
-    const fileName = decl && decl.getSourceFile ? decl.getSourceFile().fileName : null;
     if (fileName && name && isInternalFile(fileName)) {
       const normalized = path.resolve(fileName);
       const key = `${kind}|internal|${normalized}|${name}`;
@@ -1589,7 +1660,7 @@ async function handleGetFileModel(params) {
     err.code = ERROR_CODES.FILE_NOT_IN_PROGRAM;
     throw err;
   }
-  const checker = entryInfo.entry.checker || entryInfo.entry.program.getTypeChecker();
+  const checker = entryInfo.entry.checker || withPortableTypeText(entryInfo.entry.program.getTypeChecker());
   const unresolvedBases = [];
   let declarations;
   state.shallowBody = !!(state.oneLevel && params.boundary);
@@ -1659,9 +1730,13 @@ function collectImports(ts, source, checker) {
         if (ts.isNamedImports(bindings)) {
           for (const element of bindings.elements) names.push(element.name.text);
         } else if (bindings.name) {
-          names.push(bindings.name.text);
+          // `import * as ns` binds the whole module, not a declaration named `ns` in it.
+          results.push({ module: specifier, filePath: resolvedFile, symbolName: null, namespace: true });
         }
       }
+    }
+    if (names.length === 0 && clause && clause.namedBindings && !ts.isNamedImports(clause.namedBindings)) {
+      continue;
     }
     if (names.length === 0) {
       results.push({ module: specifier, filePath: resolvedFile, symbolName: null });

@@ -150,9 +150,9 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
     private final class PythonPreparedAnalysis extends AbstractPreparedAnalysis {
 
         private final PythonModuleIndex index;
-        private final String persistDir;
-        private final OOPSourceCodeModel focusModel;
-        private final Set<CompileFailure> focusFailures;
+        private String persistDir;
+        private OOPSourceCodeModel focusModel;
+        private Set<CompileFailure> focusFailures;
 
         PythonPreparedAnalysis(final AnalysisOptions options, final List<ProjectFile> focusFiles,
                                final List<ProjectFile> allFiles, final Set<String> discovered,
@@ -183,6 +183,39 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             CompilerSupport.markBoundary(srcModel, selection.modelledPaths());
             return new CompileResult(srcModel, compileFailures).withLevelOne(
                     CompilerSupport.levelOneReport(srcModel, selection, List.of()));
+        }
+
+        /**
+         * Models the added files in a daemon session of their own, over the project directory the
+         * analysis already uses, and rediscovers level one from the whole analysed model. A session
+         * is not held between calls, so extending needs no resolver process while the analysis is
+         * idle.
+         */
+        @Override
+        protected Extension extend(final List<ProjectFile> added, final List<ProjectFile> focus)
+                throws CompileException {
+            final boolean nodeAvailable = NodeRuntime.isNodeAvailable();
+            String directory = persistDir;
+            if (nodeAvailable && directory == null) {
+                directory = projectFiles().projectDir();
+            }
+            final Set<CompileFailure> failures = new HashSet<>(focusFailures);
+            final OOPSourceCodeModel model = new OOPSourceCodeModel();
+            model.merge(focusModel);
+            if (nodeAvailable) {
+                model.merge(modelInSession(added, directory, failures));
+            } else {
+                for (final ProjectFile file : added) {
+                    failures.add(new CompileFailure(file,
+                            "Node.js not found. Python parsing requires Node.js.",
+                            PythonDaemonException.CODE_NODE_NOT_FOUND));
+                }
+            }
+            final Set<String> discovered = discoverLevelOne(model, focus, index);
+            this.persistDir = directory;
+            this.focusModel = model;
+            this.focusFailures = failures;
+            return new Extension(focus, discovered);
         }
 
         /** Holds no process; the analysed files' model is released with this analysis. */

@@ -58,6 +58,8 @@ A one-level compile (see `docs/one-level-analysis.md`) builds programs from the 
 level-one files only. It runs in two phases, each in a daemon session of its own that is stopped,
 and waited for, when the phase ends: `ClarpseProject.prepare()` discovers level one, and
 `PreparedAnalysis.compile` plans and models it. Between the phases only the discovered set is held.
+`PreparedAnalysis.extendFocus` adds analysed files in a third kind of session, which discovers level
+one again over every analysed file; since no program outlives its session, nothing held is rebuilt.
 1) `discoverLevelOne` finds level one without building a program. It reads each analysed file's
    module specifiers with `ts.preProcessFile`, resolves them with `ts.resolveModuleName` using the
    options of the config owning the file, and follows the re-exports of the files it reaches.
@@ -91,6 +93,15 @@ Examples:
 - Function: `src.utils.date.format`
 
 Package names are derived from the repo-relative directory path, consistent with Java.
+
+No name depends on where the sources were put on disk for a compile, so compiling the same sources
+twice gives the same model:
+- A whole module referenced as a value (`whole = dom` after `import * as dom from "./dom"`, or
+  `typeof import("./dom")`) is referenced by its module name, `src.app.dom`, which has no component
+  of its own. `import * as dom` records the same module name among the file's imports.
+- Type text is written with paths relative to the repository root. The checker prints a type it
+  cannot name from where it is printed as `import("<path>")`; the path is written as
+  `node_modules/extlib/index`, not as an absolute path.
 
 # Failure Contract
 TypeScript follows the same failure model as Python:

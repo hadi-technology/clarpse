@@ -143,9 +143,9 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
     /** A Java one-level compile between discovering level one and modelling it. */
     private final class JavaPreparedAnalysis extends AbstractPreparedAnalysis {
 
-        private final List<ProjectFile> focusFiles;
         private final OneLevelResolution resolution;
-        private final ParseResults focusResults;
+        private List<ProjectFile> focusFiles;
+        private ParseResults focusResults;
 
         JavaPreparedAnalysis(final AnalysisOptions options, final List<ProjectFile> focusFiles,
                              final List<ProjectFile> allFiles, final OneLevelResolution resolution,
@@ -177,6 +177,31 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             beyond.removeAll(selection.modelledPaths());
             return new CompileResult(srcModel, compileFailures).withLevelOne(
                     CompilerSupport.levelOneReport(srcModel, selection, beyond));
+        }
+
+        /**
+         * Resolves the added files with the same resolution as the first ones, so their models are
+         * those a preparation of every analysed file would give, and rediscovers level one from the
+         * whole analysed model.
+         */
+        @Override
+        protected Extension extend(final List<ProjectFile> added, final List<ProjectFile> focus)
+                throws CompileException {
+            final ParseResults addedResults;
+            try {
+                addedResults = parseJavaFiles(added, resolution::newContext, false);
+            } catch (final IllegalStateException e) {
+                throw new CompileException("An error occurred while parsing!", e);
+            }
+            final OOPSourceCodeModel model = new OOPSourceCodeModel();
+            model.merge(focusResults.model());
+            model.merge(addedResults.model());
+            final Set<CompileFailure> failures = new HashSet<>(focusResults.failures());
+            failures.addAll(addedResults.failures());
+            final Set<String> discovered = discoverLevelOne(model, focus, resolution.index());
+            this.focusResults = new ParseResults(model, failures);
+            this.focusFiles = focus;
+            return new Extension(focus, discovered);
         }
 
         @Override
