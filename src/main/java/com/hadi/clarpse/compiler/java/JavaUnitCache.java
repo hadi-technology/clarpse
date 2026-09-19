@@ -10,14 +10,15 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * The parsed compilation units of one one-level compile, shared by every parser thread and by both
- * of its phases, so a file is parsed at most once per compile.
+ * The compilation units the type solvers of one one-level compile read to resolve names, shared by
+ * every parser thread and by both of its phases, so a file is parsed for name resolution at most
+ * once per compile.
  *
- * <p>Units are parsed without a symbol resolver, with the configuration the listener's parser uses
- * otherwise, and a thread about to walk a unit attaches its own resolver first. A file the listener
- * walks, analysed or level one, is always parsed; a file a solver asks for only to resolve a name
- * is parsed only while the {@link JavaLoadTracker} admits it, so the cap bounds what the cache holds
- * beyond the modelled files. {@link #clear()} drops every unit at the end of the compile.
+ * <p>Units are parsed without a symbol resolver and are never modified once cached: they are read
+ * concurrently by the solvers of several threads, so nothing may attach to them. A file the listener
+ * walks is not taken from this cache; the walking thread parses it privately with its own resolver.
+ * A file is parsed here only while the {@link JavaLoadTracker} admits it, so the cap bounds what the
+ * cache holds. {@link #clear()} drops every unit at the end of the compile.
  */
 public final class JavaUnitCache {
 
@@ -34,16 +35,6 @@ public final class JavaUnitCache {
     public JavaUnitCache(final Map<String, String> contentByPath, final JavaLoadTracker tracker) {
         this.contentByPath = contentByPath;
         this.tracker = tracker;
-    }
-
-    /**
-     * The unit of a file the listener walks, parsing it on first use.
-     *
-     * @param path The file's path.
-     * @return The unit, or empty when the file is unknown or unparseable.
-     */
-    public Optional<CompilationUnit> walked(final String path) {
-        return units.computeIfAbsent(path, this::parse);
     }
 
     /**

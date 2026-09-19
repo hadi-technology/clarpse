@@ -59,12 +59,11 @@ public final class FileParser {
             final int index,
             final boolean shallow) {
         return walk(file, index, () -> parser.parse(ParseStart.COMPILATION_UNIT,
-                new StringProvider(file.content())).getResult(), typeSolver, shallow, null);
+                new StringProvider(file.content())).getResult(), typeSolver, shallow);
     }
 
     /**
-     * Walk a single Java file in the given context: taking its unit from the context's shared cache
-     * when it has one, and parsing it otherwise.
+     * Parse and walk a single Java file with the given thread's parser and solver.
      *
      * @param context the calling thread's parser context
      * @param file    the file to walk
@@ -74,17 +73,12 @@ public final class FileParser {
      */
     public static ParseOutcome parseFile(final ParserContext context, final ProjectFile file, final int index,
                                          final boolean shallow) {
-        if (context.units() == null) {
-            return parseFile(context.parser(), context.typeSolver(), file, index, shallow);
-        }
-        return walk(file, index, () -> context.units().walked(file.path()), context.typeSolver(), shallow,
-                context);
+        return parseFile(context.parser(), context.typeSolver(), file, index, shallow);
     }
 
     private static ParseOutcome walk(final ProjectFile file, final int index,
                                      final java.util.function.Supplier<java.util.Optional<CompilationUnit>> unit,
-                                     final CombinedTypeSolver typeSolver, final boolean shallow,
-                                     final ParserContext context) {
+                                     final CombinedTypeSolver typeSolver, final boolean shallow) {
         final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
         CompileFailure failure = null;
         try {
@@ -98,9 +92,6 @@ public final class FileParser {
                     LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
                     failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
                 } else {
-                    if (context != null) {
-                        context.attach(cu);
-                    }
                     new JavaTreeListener(localModel, file, typeSolver, shallow).visit(cu, null);
                 }
             }

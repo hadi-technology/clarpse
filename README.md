@@ -307,11 +307,13 @@ Nothing an analysis creates outlives it:
   C# one-level compiles write nothing to disk.
 - **Resolver processes** (the Node daemons for TypeScript and Python) are stopped and waited for
   when their session ends, including when the calling thread is interrupted.
-- **Temporary directories** are all named `clarpse-<kind>-<random>` under `java.io.tmpdir` and are
-  deleted by a JVM shutdown hook if still open at exit. A process killed without running its hooks
-  can leave some behind: `ProjectFiles.deleteStaleTempDirs(Duration.ofHours(6))` deletes the
-  `clarpse-` directories older than the given age that this JVM does not have open, and returns
-  them. Run it at startup, with an age longer than the longest analysis on the host.
+- **Temporary directories** are all named `clarpse-<kind>-<pid>-<start>-<random>` under
+  `java.io.tmpdir`, naming the process that owns them, and are deleted by a JVM shutdown hook if
+  still open at exit. A process killed without running its hooks can leave some behind:
+  `ProjectFiles.deleteStaleTempDirs(Duration.ofHours(6))` deletes the `clarpse-` directories older
+  than the given age whose owning process is no longer running, and returns them. A directory of
+  another running JVM is never deleted, however old; a directory of an earlier process that had the
+  same id, such as a restarted container's JVM, is. Run it at startup.
 
 ## Failure Contract
 - Java/C#/TypeScript/Python all report recoverable issues in `CompileResult.failures()` using

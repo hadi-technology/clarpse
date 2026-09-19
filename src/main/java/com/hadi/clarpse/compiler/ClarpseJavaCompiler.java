@@ -237,7 +237,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
         ParserContext newContext() {
             return new ParserContext(JavaParserFactory.setupIndexedTypeSolver(
-                    new IndexedTypeSolver(index, units)), units);
+                    new IndexedTypeSolver(index, units)));
         }
 
         JavaDeclarationIndex index() {

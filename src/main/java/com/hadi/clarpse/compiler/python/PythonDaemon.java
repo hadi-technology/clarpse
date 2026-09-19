@@ -200,12 +200,16 @@ public final class PythonDaemon implements AutoCloseable {
      * The daemon script, extracted with the pyright bundle once per JVM and shared by every daemon.
      * The bundle is large and identical for every daemon, so extracting it per daemon cost each
      * compile an unzip per worker. The directory stays registered with Clarpse's temporary
-     * directories and is removed when the JVM exits, or re-extracted if something removed it in the
-     * meantime.
+     * directories and is removed when the JVM exits. If the script or the runtime is gone when a
+     * daemon starts, whatever is left is deleted and both are extracted afresh.
      */
     private static synchronized Path sharedDaemonScript() throws IOException {
-        if (sharedScript != null && Files.isRegularFile(sharedScript)) {
+        if (sharedScript != null && Files.isRegularFile(sharedScript)
+                && Files.isDirectory(sharedScript.resolveSibling("node_modules").resolve("pyright"))) {
             return sharedScript;
+        }
+        if (sharedScript != null) {
+            DaemonResourceExtractor.delete(sharedScript.getParent());
         }
         final DaemonResourceExtractor.Extraction extraction = DaemonResourceExtractor.extract(
                 PythonDaemon.class,

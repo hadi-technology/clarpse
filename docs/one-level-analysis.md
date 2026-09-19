@@ -96,7 +96,7 @@ A `PreparedAnalysis` holds what completing the compile reuses:
 
 | language | held between `prepare()` and `compile()` |
 |---|---|
-| Java | the declaration index, the parsed compilation units, and the analysed files' model |
+| Java | the declaration index, the units read to resolve names, and the analysed files' model |
 | TypeScript | the discovered level-one set |
 | Python | the analysed files' model and the module index |
 | C# | the declaration index and the parsed file models |
@@ -126,15 +126,20 @@ Nothing an analysis creates outlives it.
   left to the `ProjectFiles`, whose `close()` deletes it. Java and C# one-level compiles work from
   the files in memory and write nothing to disk.
 - **Temporary directories.** Every temporary directory Clarpse creates is named
-  `clarpse-<kind>-<random>` under `java.io.tmpdir` (`clarpse-src-` for copies of sources,
-  `clarpse-ts-daemon-` and `clarpse-py-daemon-` for extracted runtimes) and stays registered until it
-  is deleted. A JVM shutdown hook deletes whatever is still registered. The Python runtime is
-  extracted once per JVM and shared by every Python daemon, so it lives until the JVM exits.
+  `clarpse-<kind>-<pid>-<start>-<random>` under `java.io.tmpdir`, where `pid` and `start` are the
+  owning process's id and start time in epoch milliseconds. The kinds are `src` for copies of
+  sources, and `ts-daemon` and `py-daemon` for extracted runtimes. Each stays registered until it is
+  deleted, and a JVM shutdown hook deletes whatever is still registered. The Python runtime is
+  extracted once per JVM and shared by every Python daemon, so it lives until the JVM exits; if it
+  is gone when a daemon starts, it is extracted again.
 - **After a crash.** A process killed by a signal it cannot handle, or by the kernel for memory,
   runs no shutdown hook. `ProjectFiles.deleteStaleTempDirs(Duration olderThan)` deletes the
-  `clarpse-` directories under `java.io.tmpdir` older than the given age that this JVM does not have
-  open, and returns them. Run it at startup, and choose an age longer than the longest analysis any
-  other JVM on the host runs, since their open directories are not known to this one.
+  `clarpse-` directories under `java.io.tmpdir` that this JVM does not have open, that are older
+  than the given age, and whose owner is no longer running, and returns them. The owner counts as
+  running only when a live process has both the id and the start time in the name, so a directory of
+  an earlier JVM that happened to get the same id, as a restarted container's JVM does, is still
+  removed, while a directory another running JVM holds, however old, is not. A `clarpse-` directory
+  whose name carries no owner is judged by its age alone.
 
 ## How level one is found
 
@@ -243,9 +248,12 @@ These rules hold of the implementation. A change that breaks one changes what th
 6. **`IndexedTypeSolver` never scans a directory.** It reads only files that `JavaDeclarationIndex`
    names for the type being resolved, through `JavaUnitCache.resolved`, which parses a file only
    once `JavaLoadTracker.admit` admits it.
-7. **A Java one-level compile parses each file at most once.** Every unit, analysed, level one or
-   read only to resolve a name, comes from the compile's one `JavaUnitCache`, shared by all parser
-   threads and both phases; releasing the prepared analysis clears it and calls
+7. **A unit shared between Java parser threads is never modified.** The compile's one
+   `JavaUnitCache` holds only units read to resolve names, parsed once, without a symbol resolver,
+   and shared read-only by every thread's solver across both phases. A file walked into the model is
+   parsed by the walking thread alone, with that thread's own resolver, and is never taken from or
+   put into the cache. A file both walked and read to resolve names is therefore parsed once for
+   each role. Releasing the prepared analysis clears the cache and calls
    `JavaParserFacade.clearInstances()`.
 8. **A one-level TypeScript program holds only planned files.** Once `planOneLevel` has run,
    `daemon.js` builds programs only from each config's `oneLevelRoots`, with `noResolve` and without
@@ -260,8 +268,9 @@ These rules hold of the implementation. A change that breaks one changes what th
 12. **A prepared analysis holds no resolver process between calls.** The TypeScript and Python
     prepared analyses open a daemon only inside `prepare` and `complete`, each in a
     try-with-resources block.
-13. **Only `ClarpseTempDirs` creates or deletes a Clarpse temporary directory**, always named with
-    the `clarpse-` prefix; `ProjectFiles` and `DaemonResourceExtractor` go through it.
+13. **Only `ClarpseTempDirs` creates or deletes a Clarpse temporary directory**, always named
+    `clarpse-<kind>-<pid>-<start>-<random>`; `ProjectFiles` and `DaemonResourceExtractor` go through
+    it, and its sweep never deletes a directory whose owner is running.
 14. **A prepared analysis deletes only the copy it caused.** `AbstractPreparedAnalysis.prepareCleanly`
     takes ownership of the `ProjectFiles` temporary directory only when it did not exist before
     preparing, and deletes it when preparing fails or the analysis is closed.

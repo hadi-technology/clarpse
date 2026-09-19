@@ -177,28 +177,101 @@ public class OneLevelCleanupTest {
         assertEquals(before, clarpseDirs());
     }
 
+    private static final FileTime TWO_DAYS_AGO = FileTime.from(Instant.now().minus(Duration.ofDays(2)));
+
+    private static long currentStart() {
+        return ProcessHandle.current().info().startInstant().map(Instant::toEpochMilli).orElse(-1L);
+    }
+
+    /** A directory named as one owned by the given process, last modified two days ago. */
+    private static Path ownedBy(final long pid, final long start, final String suffix) throws IOException {
+        final Path dir = Files.createDirectory(TMP.resolve("clarpse-test-" + pid + "-" + start + "-" + suffix));
+        Files.writeString(dir.resolve("left.txt"), "left behind");
+        Files.setLastModifiedTime(dir, TWO_DAYS_AGO);
+        return dir;
+    }
+
+    private static String suffix() {
+        return Long.toString(System.nanoTime());
+    }
+
     @Test
-    public void theSweepDeletesOnlyOldDirectoriesNotOpenInThisJvm() throws Exception {
+    public void theSweepNeverDeletesADirectoryThisProcessOwnsWhateverItsAge() throws Exception {
+        final Path mine = ownedBy(ProcessHandle.current().pid(), currentStart(), suffix());
+        try {
+            assertFalse(ProjectFiles.deleteStaleTempDirs(Duration.ZERO).contains(mine));
+            assertTrue(Files.isDirectory(mine));
+        } finally {
+            org.apache.commons.io.FileUtils.deleteQuietly(mine.toFile());
+        }
+    }
+
+    @Test
+    public void theSweepDeletesAnOldDirectoryWhoseOwnerIsNotRunning() throws Exception {
+        final Path orphan = ownedBy(Long.MAX_VALUE / 2, 1_000L, suffix());
+        final List<Path> deleted = ProjectFiles.deleteStaleTempDirs(Duration.ofDays(1));
+        assertTrue(deleted.toString(), deleted.contains(orphan.toAbsolutePath().normalize()));
+        assertFalse(Files.exists(orphan));
+    }
+
+    /** A process id reused by a later process, as a restarted container's JVM reuses it, is not the owner. */
+    @Test
+    public void theSweepDeletesADirectoryOfAnEarlierProcessWithTheSameId() throws Exception {
+        Assume.assumeTrue(currentStart() > 0);
+        final Path earlier = ownedBy(ProcessHandle.current().pid(), currentStart() - 60_000L, suffix());
+        final List<Path> deleted = ProjectFiles.deleteStaleTempDirs(Duration.ofDays(1));
+        assertTrue(deleted.toString(), deleted.contains(earlier.toAbsolutePath().normalize()));
+        assertFalse(Files.exists(earlier));
+    }
+
+    @Test
+    public void theSweepJudgesAnOwnerlessNameByAgeAlone() throws Exception {
         final Path old = Files.createTempDirectory("clarpse-test-old-");
-        Files.writeString(old.resolve("left.txt"), "left behind");
+        Files.setLastModifiedTime(old, TWO_DAYS_AGO);
         final Path fresh = Files.createTempDirectory("clarpse-test-fresh-");
+        final Path orphanButFresh = Files.createDirectory(
+                TMP.resolve("clarpse-test-" + (Long.MAX_VALUE / 2) + "-1000-" + suffix()));
         final Path unrelated = Files.createTempDirectory("unrelated-old-");
-        final FileTime twoDaysAgo = FileTime.from(Instant.now().minus(Duration.ofDays(2)));
-        Files.setLastModifiedTime(old, twoDaysAgo);
-        Files.setLastModifiedTime(unrelated, twoDaysAgo);
-        try (ProjectFiles open = project(OneLevelTestSupport.files("/A.java", "class A { }"))) {
-            final Path openDir = Paths.get(open.projectDir());
-            Files.setLastModifiedTime(openDir, twoDaysAgo);
+        Files.setLastModifiedTime(unrelated, TWO_DAYS_AGO);
+        try {
             final List<Path> deleted = ProjectFiles.deleteStaleTempDirs(Duration.ofDays(1));
             assertTrue(deleted.toString(), deleted.contains(old.toAbsolutePath().normalize()));
             assertFalse(Files.exists(old));
             assertTrue(Files.isDirectory(fresh));
+            assertTrue("an orphan younger than the age is kept", Files.isDirectory(orphanButFresh));
             assertTrue(Files.isDirectory(unrelated));
-            assertTrue(Files.isDirectory(openDir));
-            assertTrue(openDir.getFileName().toString().startsWith("clarpse-src-"));
         } finally {
             Files.deleteIfExists(fresh);
+            Files.deleteIfExists(orphanButFresh);
             Files.deleteIfExists(unrelated);
         }
+    }
+
+    @Test
+    public void theSweepLeavesDirectoriesOpenInThisJvm() throws Exception {
+        try (ProjectFiles open = project(OneLevelTestSupport.files("/A.java", "class A { }"))) {
+            final Path openDir = Paths.get(open.projectDir());
+            Files.setLastModifiedTime(openDir, TWO_DAYS_AGO);
+            assertFalse(ProjectFiles.deleteStaleTempDirs(Duration.ZERO).contains(openDir));
+            assertTrue(Files.isDirectory(openDir));
+            final String name = openDir.getFileName().toString();
+            assertTrue(name, name.startsWith("clarpse-src-" + ProcessHandle.current().pid() + "-"));
+        }
+    }
+
+    /** A runtime extraction removed from under a running JVM is extracted again on next use. */
+    @Test
+    public void aRemovedPythonRuntimeIsExtractedAgain() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        final ClarpseProject first = new ClarpseProject(project(PythonOneLevelTest.repository()), Lang.PYTHON,
+                List.of("/app/a.py"), AnalysisOptions.oneLevel());
+        assertFalse(first.result().model().size() == 0);
+        final Set<Path> runtimes = dirs("clarpse-py-daemon-" + ProcessHandle.current().pid() + "-*");
+        assertFalse(runtimes.isEmpty());
+        runtimes.forEach(dir -> org.apache.commons.io.FileUtils.deleteQuietly(dir.toFile()));
+        final CompileResult again = new ClarpseProject(project(PythonOneLevelTest.repository()), Lang.PYTHON,
+                List.of("/app/a.py"), AnalysisOptions.oneLevel()).result();
+        assertTrue(again.failures().toString(), again.failures().isEmpty());
+        assertFalse(again.model().size() == 0);
     }
 }
