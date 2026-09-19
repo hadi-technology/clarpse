@@ -40,7 +40,7 @@ public class JavaOneLevelTest {
     private static final String OTHER_MODULE = "/other/src/main/java/ext/Remote.java";
     private static final String UNRELATED = "/core/src/main/java/app/Unrelated.java";
 
-    private static Map<String, String> repository() {
+    static Map<String, String> repository() {
         return files(
                 A, "package app;\n"
                         + "import lib.B;\nimport lib.Outer;\nimport ext.Remote;\nimport java.util.List;\n"

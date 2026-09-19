@@ -177,6 +177,128 @@ public class OneLevelCleanupTest {
         assertEquals(before, clarpseDirs());
     }
 
+    private static ClarpseProject python(final ProjectFiles files, final String analysed) {
+        return new ClarpseProject(files, Lang.PYTHON, List.of(analysed), AnalysisOptions.oneLevel());
+    }
+
+    /** Extending reuses the one copy of the repository, and closing deletes it. */
+    @Test
+    public void extendingReusesTheOneCopyAndClosingDeletesIt() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        final Set<Path> before = clarpseDirs();
+        final ProjectFiles typeScript = typeScriptFiles();
+        final ProjectFiles python = project(PythonOneLevelTest.repository());
+        try (PreparedAnalysis ts = typeScript(typeScript).prepare();
+             PreparedAnalysis py = python(python, "/app/a.py").prepare()) {
+            ts.compile(null);
+            py.compile(null);
+            assertEquals(before.size() + 2, clarpseDirs().size());
+            ts.extendFocus(List.of("/src/b.ts"));
+            py.extendFocus(List.of("/lib/b.py"));
+            ts.compile(null);
+            py.compile(null);
+            assertEquals("extending writes no second copy", before.size() + 2, clarpseDirs().size());
+            assertTrue(liveDaemons().toString(), liveDaemons().isEmpty());
+        }
+        assertFalse(typeScript.isTempProjectDir());
+        assertFalse(python.isTempProjectDir());
+        assertEquals(before, clarpseDirs());
+        assertTrue(liveDaemons().toString(), liveDaemons().isEmpty());
+    }
+
+    /**
+     * An extend interrupted as a deadline interrupts it throws and leaves the analysis as it was; the
+     * analysis still compiles, and closing it leaves nothing behind.
+     */
+    @Test
+    public void anInterruptedExtendLeavesTheAnalysisUnchangedAndClosingCleansUp() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        final Set<Path> before = clarpseDirs();
+        final ProjectFiles files = project(PythonOneLevelTest.repository());
+        try (PreparedAnalysis prepared = python(files, "/app/a.py").prepare()) {
+            final Set<String> levelOne = prepared.levelOneFiles();
+            final String model = OneLevelTestSupport.json(prepared.compile(null).model());
+            Thread.currentThread().interrupt();
+            try {
+                prepared.extendFocus(List.of("/lib/b.py"));
+                fail("an interrupted extend must throw");
+            } catch (final CompileException expected) {
+                assertTrue(Thread.interrupted());
+            }
+            assertEquals(levelOne, prepared.levelOneFiles());
+            assertEquals(model, OneLevelTestSupport.json(prepared.compile(null).model()));
+            assertTrue(liveDaemons().toString(), liveDaemons().isEmpty());
+        }
+        assertFalse(files.isTempProjectDir());
+        assertEquals(before, clarpseDirs());
+    }
+
+    /** A copy first written by an extend that then fails belongs to the analysis and goes with it. */
+    @Test
+    public void aCopyFirstWrittenByAFailedExtendIsDeletedOnClose() throws Exception {
+        final Set<Path> before = clarpseDirs();
+        final ProjectFiles files = typeScriptFiles();
+        try (PreparedAnalysis prepared = AbstractPreparedAnalysis.prepareCleanly(files,
+                () -> new FailingExtend(files))) {
+            assertFalse("preparing wrote nothing", files.isTempProjectDir());
+            try {
+                prepared.extendFocus(List.of("/src/a.ts"));
+                fail("the failure must propagate");
+            } catch (final CompileException expected) {
+                assertEquals("failed while extending", expected.getMessage());
+            }
+            assertTrue(files.isTempProjectDir());
+            assertTrue("the failed extend changed nothing", prepared.levelOneFiles().isEmpty());
+        }
+        assertFalse(files.isTempProjectDir());
+        assertEquals(before, clarpseDirs());
+    }
+
+    /** An analysis whose extend writes the project files to disk and then fails. */
+    private static final class FailingExtend extends AbstractPreparedAnalysis {
+
+        FailingExtend(final ProjectFiles files) {
+            super(AnalysisOptions.oneLevel(), List.of(), new java.util.ArrayList<>(files.files(Lang.TYPESCRIPT)),
+                    List.of());
+        }
+
+        @Override
+        protected Extension extend(final List<com.hadi.clarpse.compiler.ProjectFile> added,
+                                   final List<com.hadi.clarpse.compiler.ProjectFile> focus)
+                throws CompileException {
+            projectFiles().projectDir();
+            throw new CompileException("failed while extending", new IllegalStateException());
+        }
+
+        @Override
+        protected CompileResult complete(final com.hadi.clarpse.compiler.LevelOneSelection selection) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        protected void release() {
+        }
+    }
+
+    @Test
+    public void extendingJavaAndCSharpAnalysesWritesNothingToDisk() throws Exception {
+        final Set<Path> before = clarpseDirs();
+        final ProjectFiles java = project(JavaOneLevelTest.repository());
+        final ProjectFiles cSharp = project(CSharpOneLevelTest.repository());
+        try (PreparedAnalysis javaAnalysis = new ClarpseProject(java, Lang.JAVA,
+                List.of("/core/src/main/java/app/A.java"), AnalysisOptions.oneLevel()).prepare();
+             PreparedAnalysis cSharpAnalysis = new ClarpseProject(cSharp, Lang.CSHARP, List.of("/Core/A.cs"),
+                     AnalysisOptions.oneLevel()).prepare()) {
+            javaAnalysis.extendFocus(List.of("/core/src/main/java/lib/B.java"));
+            cSharpAnalysis.extendFocus(List.of("/Lib/B.cs"));
+            javaAnalysis.compile(null);
+            cSharpAnalysis.compile(null);
+        }
+        assertFalse(java.isTempProjectDir());
+        assertFalse(cSharp.isTempProjectDir());
+        assertEquals(before, clarpseDirs());
+    }
+
     private static final FileTime TWO_DAYS_AGO = FileTime.from(Instant.now().minus(Duration.ofDays(2)));
 
     private static long currentStart() {
