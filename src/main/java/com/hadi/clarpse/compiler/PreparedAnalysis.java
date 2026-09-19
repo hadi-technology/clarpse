@@ -45,6 +45,28 @@ public interface PreparedAnalysis extends AutoCloseable {
     CompileResult compile(Collection<String> additionalLevelOnePaths) throws CompileException;
 
     /**
+     * Completes the compile as {@link #compile(Collection)} does, with this compile's own level-one
+     * budget in place of the one the analysis was prepared with. The budget applies to the
+     * discovered files, the options' files and the given ones together, cut in path order, as the
+     * prepared budget would.
+     *
+     * <p>A caller that adds files of its own to level one, beside the discovered ones, sets the
+     * budget per compile to bound each set exactly: prepare with the largest budget any compile
+     * will use, then pass the discovered set's budget plus the number of its own files it adds.
+     *
+     * @param additionalLevelOnePaths Level-one files required in addition to those discovered and to
+     *                                those in the options; may be {@code null}.
+     * @param levelOneBudget          The most level-one files this compile models; must not be
+     *                                negative.
+     * @return The compile result.
+     */
+    default CompileResult compile(Collection<String> additionalLevelOnePaths, int levelOneBudget)
+            throws CompileException {
+        throw new UnsupportedOperationException(
+                "A per-compile level-one budget is not supported by " + getClass().getSimpleName());
+    }
+
+    /**
      * Adds analysed files, resolving only the added ones and reusing the declaration index, the
      * files already parsed and the analysed files' model. Afterwards the analysis is the one
      * {@link ClarpseProject#prepare()} would give for the analysed files so far plus these:

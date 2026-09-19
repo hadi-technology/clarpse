@@ -124,10 +124,17 @@ public abstract class AbstractPreparedAnalysis implements PreparedAnalysis {
 
     @Override
     public final CompileResult compile(final Collection<String> additionalLevelOnePaths) throws CompileException {
+        return compile(additionalLevelOnePaths, options.levelOneBudget());
+    }
+
+    @Override
+    public final CompileResult compile(final Collection<String> additionalLevelOnePaths,
+                                       final int levelOneBudget) throws CompileException {
         requireOpen();
         final Set<String> required = new LinkedHashSet<>(options.levelOnePaths());
         required.addAll(AnalysisOptions.nonEmpty(additionalLevelOnePaths));
-        return complete(LevelOneSelection.select(discovered, options.withLevelOnePaths(required), analysed,
+        return complete(LevelOneSelection.select(discovered,
+                options.withLevelOnePaths(required).withLevelOneBudget(levelOneBudget), analysed,
                 languageFiles));
     }
 

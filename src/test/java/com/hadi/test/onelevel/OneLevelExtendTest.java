@@ -102,6 +102,36 @@ public class OneLevelExtendTest {
     }
 
     @Test
+    public void aPerCompileBudgetEqualsPreparingWithThatBudget() throws Exception {
+        for (final Fixture fixture : fixtures()) {
+            final CompileResult expected;
+            try (PreparedAnalysis narrow = prepare(fixture, AnalysisOptions.oneLevel().withLevelOneBudget(1),
+                    List.of(fixture.analysed()))) {
+                expected = narrow.compile(null);
+            }
+            assertTrue(fixture.lang() + ": the budget should hold files back", expected.levelOne().budgetHit());
+            try (PreparedAnalysis wide = prepare(fixture, AnalysisOptions.oneLevel(), List.of(fixture.analysed()))) {
+                final CompileResult actual = wide.compile(null, 1);
+                assertEquals(fixture.lang() + " model", json(expected.model()), json(actual.model()));
+                assertEquals(fixture.lang() + " level one", expected.levelOne().levelOneFiles(),
+                        actual.levelOne().levelOneFiles());
+                assertEquals(fixture.lang() + " held by budget", expected.levelOne().heldByBudget(),
+                        actual.levelOne().heldByBudget());
+                assertFalse(fixture.lang() + ": a plain compile keeps the prepared budget",
+                        wide.compile(null).levelOne().budgetHit());
+            }
+        }
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void aNegativePerCompileBudgetIsRejected() throws Exception {
+        final Fixture fixture = fixtures().get(0);
+        try (PreparedAnalysis prepared = prepare(fixture, AnalysisOptions.oneLevel(), List.of(fixture.analysed()))) {
+            prepared.compile(null, -1);
+        }
+    }
+
+    @Test
     public void extendingWithFilesAlreadyAnalysedOrOfAnotherLanguageChangesNothing() throws Exception {
         for (final Fixture fixture : fixtures()) {
             try (PreparedAnalysis prepared = prepare(fixture, AnalysisOptions.oneLevel(),
