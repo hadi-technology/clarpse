@@ -1,0 +1,2 @@
+class Starred:
+    pass
