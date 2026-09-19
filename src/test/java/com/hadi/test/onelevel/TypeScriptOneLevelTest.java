@@ -4,10 +4,12 @@ import com.hadi.clarpse.compiler.AnalysisOptions;
 import com.hadi.clarpse.compiler.ClarpseProject;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.Lang;
+import com.hadi.clarpse.compiler.typescript.NodeRuntime;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.sourcemodel.Component;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -79,6 +81,7 @@ public class TypeScriptOneLevelTest {
 
     @BeforeClass
     public static void compile() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
         oneLevel = new ClarpseProject(project(repository()), Lang.TYPESCRIPT, List.of(A),
                 AnalysisOptions.oneLevel()).result();
         whole = new ClarpseProject(project(repository()), Lang.TYPESCRIPT).result().model();
