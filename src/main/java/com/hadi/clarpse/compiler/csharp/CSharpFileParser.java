@@ -57,6 +57,31 @@ final class CSharpFileParser {
             "cs:enum-member-declaration"
     );
 
+    /**
+     * Statement-shaped productions the parser wraps around top-level declarations it could not
+     * place, such as those following an unrecognised directive. They declare nothing themselves.
+     */
+    private static final Set<String> TOP_LEVEL_WRAPPERS = Set.of("cs:kops-statement");
+
+    private static final String BYTE_ORDER_MARK = "\uFEFF";
+
+    /**
+     * Statement productions the parser emits for a using directive written after a preprocessor
+     * directive: a using statement, or, for {@code global using}, a line statement around one.
+     */
+    private static final Set<String> MISPLACED_USING_STATEMENTS = Set.of(
+            "cs:using-scoped-statement",
+            "cs:line-statement"
+    );
+
+    /**
+     * The using directive shapes: a namespace, a static type, or an alias, optionally global. A
+     * declaration such as {@code using var x = ...;} does not match.
+     */
+    private static final Pattern USING_DIRECTIVE_PATTERN = Pattern.compile(
+            "(?:global\\s+)?using\\s+(?:static\\s+)?(?:@?[A-Za-z_]\\w*\\s*=\\s*)?"
+                    + "@?[A-Za-z_][\\w.@:<>,\\s]*;");
+
     /** Nodes whose text is read as a name: declared identifiers, type usages and member usages. */
     private static final Set<String> NAME_NODES = Set.of(
             "cs:id-role",
@@ -75,10 +100,7 @@ final class CSharpFileParser {
 
     static CSharpModel.ParseOutcome parseFile(final ProjectFile file, final int index) {
         try {
-            String sourceText = file.content();
-            if (sourceText == null) {
-                sourceText = "";
-            }
+            final String sourceText = withoutByteOrderMark(file.content());
             validateBalancedDelimiters(sourceText);
             final CSharpModel.CSharpFileModel fileModel = new CSharpModel.CSharpFileModel(
                     file,
@@ -97,6 +119,21 @@ final class CSharpFileParser {
                     new CompileFailure(file, e.getMessage(), FailureCode.PARSE_FAILED)
             );
         }
+    }
+
+    /**
+     * The lexer does not treat a leading byte-order mark as whitespace, so a directive on the first
+     * line stops starting a line and the parser folds everything after it into one statement node.
+     * All offsets are taken on the returned text.
+     */
+    private static String withoutByteOrderMark(final String content) {
+        if (content == null) {
+            return "";
+        }
+        if (content.startsWith(BYTE_ORDER_MARK)) {
+            return content.substring(BYTE_ORDER_MARK.length());
+        }
+        return content;
     }
 
     private static SyntaxTree parseSyntaxTree(final String sourceText) {
@@ -234,7 +271,7 @@ final class CSharpFileParser {
             }
             return;
         }
-        if ("cs:block-list".equals(type)) {
+        if ("cs:block-list".equals(type) || TOP_LEVEL_WRAPPERS.contains(type)) {
             for (final SyntaxNode child : node.children) {
                 parseTopLevelNode(child, fileModel, currentNamespace, laterAlternatives,
                         insideFileScopedNamespace);
@@ -247,6 +284,11 @@ final class CSharpFileParser {
                     fileModel.usings.add(parseUsing(child));
                 }
             }
+            return;
+        }
+        if (MISPLACED_USING_STATEMENTS.contains(type)
+                && USING_DIRECTIVE_PATTERN.matcher(normalizeWhitespace(node.text)).matches()) {
+            fileModel.usings.add(parseUsing(node));
             return;
         }
         if (TYPE_DECLARATIONS.contains(type)) {
