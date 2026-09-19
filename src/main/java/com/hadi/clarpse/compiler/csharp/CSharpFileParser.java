@@ -9,11 +9,14 @@ import fleet.com.intellij.lang.SyntaxTreeBuilder.Production;
 import fleet.com.intellij.lexer.Lexer;
 import fleet.com.intellij.psi.ArrayTokenSequence;
 import fleet.com.intellij.psi.FleetPsiParser;
+import fleet.com.intellij.psi.tree.IElementType;
+import fleet.com.intellij.psi.tree.TokenSet;
 import fleet.com.jetbrains.csharp.CSharpFleetParser;
 import fleet.com.jetbrains.lang.parsing.builder.MarkerPsiBuilder;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -79,6 +82,13 @@ final class CSharpFileParser {
             "(?:global\\s+)?using\\s+(?:static\\s+)?(?:@?[A-Za-z_]\\w*\\s*=\\s*)?"
                     + "@?[A-Za-z_][\\w.@:<>,\\s]*;");
 
+    /** Nodes whose text is read as a name: declared identifiers, type usages and member usages. */
+    private static final Set<String> NAME_NODES = Set.of(
+            "cs:id-role",
+            "cs:type-usage-role",
+            "cs:field-usage-role"
+    );
+
     private static final Pattern TYPE_TOKEN_PATTERN = Pattern.compile("[A-Za-z_][A-Za-z0-9_\\.]*");
     private static final Pattern THIS_MEMBER_ASSIGN_PATTERN =
             Pattern.compile("\\bthis\\.(\\w+)\\s*=\\s*(\\w+)\\b");
@@ -97,9 +107,9 @@ final class CSharpFileParser {
                     sourceText,
                     CompilerSupport.moduleNameForFile(file.path())
             );
-            final SyntaxNode root = parseSyntaxTree(sourceText);
-            for (final SyntaxNode child : root.children) {
-                parseTopLevelNode(child, fileModel, "");
+            final SyntaxTree tree = parseSyntaxTree(sourceText);
+            for (final SyntaxNode child : tree.root().children) {
+                parseTopLevelNode(child, fileModel, "", tree.laterAlternatives(), false);
             }
             return new CSharpModel.ParseOutcome(index, fileModel, null);
         } catch (final Exception e) {
@@ -126,7 +136,7 @@ final class CSharpFileParser {
         return content;
     }
 
-    private static SyntaxNode parseSyntaxTree(final String sourceText) {
+    private static SyntaxTree parseSyntaxTree(final String sourceText) {
         final FleetPsiParser parser = new CSharpFleetParser();
         final Lexer lexer = parser.getLexer();
         final ArrayTokenSequence tokens = new ArrayTokenSequence.Builder(sourceText, lexer).performLexing();
@@ -160,42 +170,111 @@ final class CSharpFileParser {
         if (root == null) {
             throw new IllegalStateException("No syntax nodes produced for source.");
         }
-        attachText(root, sourceText);
-        return root;
+        attachText(root, new SourceTokens(sourceText, tokens, parser.getWhitespaces(), parser.getComments()));
+        return new SyntaxTree(root, laterConditionalAlternatives(tokens));
     }
 
-    private static void attachText(final SyntaxNode node, final String sourceText) {
-        node.text = safeSubstring(sourceText, node.startOffset, node.endOffset);
+    /**
+     * Marks the source text that lies in any alternative of an {@code #if} group other than the
+     * first: the text after an {@code #elif} or {@code #else} directive, up to the group's
+     * {@code #endif}. Directives are not evaluated, so every alternative is parsed as code; the
+     * first alternative stands in for the configuration the file is read under.
+     */
+    private static BitSet laterConditionalAlternatives(final ArrayTokenSequence tokens) {
+        final BitSet later = new BitSet();
+        final Deque<Boolean> groups = new ArrayDeque<>();
+        int laterGroups = 0;
+        int laterStart = 0;
+        for (int i = 0; i < tokens.getLexemeCount(); i += 1) {
+            final String tokenType = String.valueOf(tokens.lexType(i));
+            if ("PP_IF_SECTION".equals(tokenType)) {
+                groups.push(Boolean.FALSE);
+            } else if (("PP_ELIF_SECTION".equals(tokenType) || "PP_ELSE_SECTION".equals(tokenType))
+                    && !groups.isEmpty() && !groups.peek()) {
+                groups.pop();
+                groups.push(Boolean.TRUE);
+                if (laterGroups == 0) {
+                    laterStart = tokens.lexStart(i);
+                }
+                laterGroups += 1;
+            } else if ("PP_ENDIF".equals(tokenType) && !groups.isEmpty()) {
+                if (groups.pop()) {
+                    laterGroups -= 1;
+                    if (laterGroups == 0) {
+                        later.set(laterStart, tokens.lexStart(i));
+                    }
+                }
+            }
+        }
+        if (laterGroups > 0) {
+            later.set(laterStart, tokens.getTextLength());
+        }
+        return later;
+    }
+
+    /**
+     * A production's range runs up to the next significant token, so it also covers any
+     * whitespace and comments that follow its last token. Every node's text stops at its last
+     * significant token, and name-bearing nodes (identifiers, type and member usages) additionally drop
+     * the comments inside them, so a declared or referenced name is its tokens alone.
+     */
+    private static void attachText(final SyntaxNode node, final SourceTokens source) {
+        if (NAME_NODES.contains(node.type)) {
+            node.text = source.textWithoutComments(node.startOffset, node.endOffset);
+        } else {
+            node.text = source.text(node.startOffset, source.significantEnd(node.startOffset, node.endOffset));
+        }
         for (final SyntaxNode child : node.children) {
-            attachText(child, sourceText);
+            attachText(child, source);
         }
     }
 
+    /**
+     * Collects the usings and type declarations under {@code node}.
+     *
+     * <p>A namespace declaration names the declarations it encloses unless it lies in a later
+     * alternative of an {@code #if} group, or is a block namespace inside a file-scoped namespace.
+     * Alternatives that each name a namespace parse as one declaration nested in another, and a block
+     * namespace cannot follow a file-scoped one in valid C#; joining either to the enclosing name
+     * would produce a namespace that exists under no build configuration. The enclosed declarations
+     * keep the enclosing namespace instead, which is the one the first alternative names.
+     */
     private static void parseTopLevelNode(final SyntaxNode node,
                                           final CSharpModel.CSharpFileModel fileModel,
-                                          final String currentNamespace) {
+                                          final String currentNamespace,
+                                          final BitSet laterAlternatives,
+                                          final boolean insideFileScopedNamespace) {
         if (node == null) {
             return;
         }
         final String type = node.type;
-        if ("cs:namespace-file-scope-declaration".equals(type)
-                || "cs:namespace-block-declaration".equals(type)) {
-            final String namespaceName = combineNamespace(currentNamespace, namespaceName(node));
+        final boolean fileScoped = "cs:namespace-file-scope-declaration".equals(type);
+        if (fileScoped || "cs:namespace-block-declaration".equals(type)) {
+            final boolean namesDeclarations = !laterAlternatives.get(node.startOffset)
+                    && (fileScoped || !insideFileScopedNamespace);
+            String namespaceName = currentNamespace;
+            if (namesDeclarations) {
+                namespaceName = combineNamespace(currentNamespace, namespaceName(node));
+            }
+            final boolean nestedInsideFileScoped = insideFileScopedNamespace || fileScoped;
             for (final SyntaxNode child : node.children) {
                 if ("cs:block-list".equals(child.type)) {
                     for (final SyntaxNode nested : child.children) {
-                        parseTopLevelNode(nested, fileModel, namespaceName);
+                        parseTopLevelNode(nested, fileModel, namespaceName, laterAlternatives,
+                                nestedInsideFileScoped);
                     }
                 } else if (!"cs:namespace-header-node-statement".equals(child.type)
                         && !"cs:id-role".equals(child.type)) {
-                    parseTopLevelNode(child, fileModel, namespaceName);
+                    parseTopLevelNode(child, fileModel, namespaceName, laterAlternatives,
+                            nestedInsideFileScoped);
                 }
             }
             return;
         }
         if ("cs:block-list".equals(type) || TOP_LEVEL_WRAPPERS.contains(type)) {
             for (final SyntaxNode child : node.children) {
-                parseTopLevelNode(child, fileModel, currentNamespace);
+                parseTopLevelNode(child, fileModel, currentNamespace, laterAlternatives,
+                        insideFileScopedNamespace);
             }
             return;
         }
@@ -1121,6 +1200,94 @@ final class CSharpFileParser {
         int safeStart = Math.max(0, Math.min(start, text.length()));
         int safeEnd = Math.max(safeStart, Math.min(end, text.length()));
         return text.substring(safeStart, safeEnd);
+    }
+
+    private record SyntaxTree(SyntaxNode root, BitSet laterAlternatives) {
+    }
+
+    /**
+     * The lexed source of one file, answering which parts of a character range are trivia
+     * (whitespace or comments) rather than significant tokens.
+     */
+    private static final class SourceTokens {
+        private final String sourceText;
+        private final ArrayTokenSequence tokens;
+        private final TokenSet whitespaces;
+        private final TokenSet comments;
+
+        private SourceTokens(final String sourceText, final ArrayTokenSequence tokens,
+                             final TokenSet whitespaces, final TokenSet comments) {
+            this.sourceText = sourceText;
+            this.tokens = tokens;
+            this.whitespaces = whitespaces;
+            this.comments = comments;
+        }
+
+        private String text(final int start, final int end) {
+            return safeSubstring(sourceText, start, end);
+        }
+
+        /** The end of the last significant token in [start, end), or start if there is none. */
+        private int significantEnd(final int start, final int end) {
+            if (end <= start || tokens.getLexemeCount() == 0) {
+                return end;
+            }
+            int index = tokens.lexemeIndexByChar(Math.min(end, tokens.getTextLength()) - 1);
+            while (index >= 0 && tokens.lexStart(index) >= start && isTrivia(index)) {
+                index -= 1;
+            }
+            if (index < 0) {
+                return start;
+            }
+            return Math.max(start, Math.min(end, lexEnd(index)));
+        }
+
+        /**
+         * The source of [start, end) without its comments. A run of trivia that holds a comment
+         * becomes a single space where it separates two identifier characters and nothing
+         * otherwise; whitespace-only runs are kept as written.
+         */
+        private String textWithoutComments(final int start, final int end) {
+            if (end <= start || tokens.getLexemeCount() == 0) {
+                return text(start, end).trim();
+            }
+            final StringBuilder text = new StringBuilder();
+            final StringBuilder pendingTrivia = new StringBuilder();
+            boolean pendingComment = false;
+            int index = tokens.lexemeIndexByChar(Math.min(start, tokens.getTextLength() - 1));
+            while (index >= 0 && index < tokens.getLexemeCount() && tokens.lexStart(index) < end) {
+                final String lexeme = text(Math.max(start, tokens.lexStart(index)), Math.min(end, lexEnd(index)));
+                if (isTrivia(index)) {
+                    pendingComment |= comments.contains(tokens.lexType(index));
+                    pendingTrivia.append(lexeme);
+                } else {
+                    if (!pendingComment) {
+                        text.append(pendingTrivia);
+                    } else if (text.length() > 0 && !lexeme.isEmpty()
+                            && Character.isJavaIdentifierPart(text.charAt(text.length() - 1))
+                            && Character.isJavaIdentifierPart(lexeme.charAt(0))) {
+                        text.append(' ');
+                    }
+                    pendingTrivia.setLength(0);
+                    pendingComment = false;
+                    text.append(lexeme);
+                }
+                index += 1;
+            }
+            return text.toString().trim();
+        }
+
+        private boolean isTrivia(final int index) {
+            final IElementType type = tokens.lexType(index);
+            return whitespaces.contains(type) || comments.contains(type);
+        }
+
+        private int lexEnd(final int index) {
+            if (index + 1 < tokens.getLexemeCount()) {
+                return tokens.lexStart(index + 1);
+            }
+            return tokens.getTextLength();
+        }
     }
 
     private static final class SyntaxNode {

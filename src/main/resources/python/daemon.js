@@ -42,7 +42,8 @@ let state = {
   importResolver: null,
   program: null,
   fileUriMap: new Map(),
-  moduleClasses: new Map()
+  moduleDeclarations: new Map(),
+  moduleImports: new Map()
 };
 
 function writeResponse(id, result) {
@@ -529,9 +530,18 @@ function resolveRelativeModule(nodeModule, level, currentModule) {
 }
 
 function collectImports(fileText, ctx) {
+  return resolveImportStatements(collectImportStatements(fileText), ctx);
+}
+
+/**
+ * The names a list of import statements binds: `importedModules` maps a local name to the module it
+ * binds, `importedSymbols` a local name to the module member it binds, and `starModules` lists the
+ * modules star-imported from, in order.
+ */
+function resolveImportStatements(statements, ctx) {
   const importedModules = new Map();
   const importedSymbols = new Map();
-  const statements = collectImportStatements(fileText);
+  const starModules = [];
   for (const statement of statements) {
     const trimmed = statement.trim();
     if (!trimmed) {
@@ -571,6 +581,9 @@ function collectImports(fileText, ctx) {
       const names = splitArgs(namesPart);
       for (const name of names) {
         if (name === '*') {
+          if (fullModule) {
+            starModules.push(fullModule);
+          }
           continue;
         }
         const seg = name.split(/\s+as\s+/);
@@ -588,7 +601,7 @@ function collectImports(fileText, ctx) {
       }
     }
   }
-  return { importedModules, importedSymbols };
+  return { importedModules, importedSymbols, starModules };
 }
 
 function extractCandidateNames(raw) {
@@ -644,17 +657,17 @@ function moduleFileFor(moduleName, ctx) {
 }
 
 /**
- * The classes a repo module defines at its top level, read from its own source and cached per repo.
- * This is the evidence that a name imported from the module is a class -- and not a function, a
- * constant or a re-export -- before a use of that name is recorded as a type reference. A module
- * that cannot be read or parsed confirms no class, so a use of a name from it is simply not
- * recorded; it is never recorded as something else.
+ * The names a repo module declares at its top level -- classes, functions and assigned names --
+ * read from its own source and cached per repo. `classes` is the evidence that a name imported from
+ * the module is a class, and not a function, a constant or a re-export, before a use of that name is
+ * recorded as a type reference. A module that cannot be read or parsed declares nothing and is
+ * marked unparsed, so no name is ever attributed to it on the strength of a parse that did not happen.
  */
-function classesDefinedIn(filePath) {
-  if (state.moduleClasses.has(filePath)) {
-    return state.moduleClasses.get(filePath);
+function moduleDeclarations(filePath) {
+  if (state.moduleDeclarations.has(filePath)) {
+    return state.moduleDeclarations.get(filePath);
   }
-  let classes = new Set();
+  let declarations = { parsed: false, classes: new Set(), names: new Set() };
   try {
     const api = getPyrightApi();
     const parser = new api.parser.Parser();
@@ -671,19 +684,144 @@ function classesDefinedIn(filePath) {
       parseTree = parseResult.parseTree;
     }
     if (parseTree) {
-      classes = collectLocalClasses(parseTree, getParseNodeTypeEnum(api));
+      const parseNodeType = getParseNodeTypeEnum(api);
+      declarations = {
+        parsed: true,
+        classes: collectLocalClasses(parseTree, parseNodeType),
+        names: collectTopLevelNames(parseTree, parseNodeType)
+      };
     }
   } catch (err) {
-    classes = new Set();
+    declarations = { parsed: false, classes: new Set(), names: new Set() };
   }
-  state.moduleClasses.set(filePath, classes);
-  return classes;
+  state.moduleDeclarations.set(filePath, declarations);
+  return declarations;
+}
+
+function classesDefinedIn(filePath) {
+  return moduleDeclarations(filePath).classes;
+}
+
+/** The names bound at the top of a module by a class, a function or an assignment. */
+function collectTopLevelNames(parseTree, parseNodeType) {
+  const names = new Set();
+  for (const statement of getStatementsFromSuite(parseTree)) {
+    if (!statement) {
+      continue;
+    }
+    let name = '';
+    if (isClassNode(statement, parseNodeType) || isFunctionNode(statement, parseNodeType)) {
+      name = nameFromNode(statement.d && statement.d.name ? statement.d.name : null);
+    } else if (isAssignmentStatement(statement, parseNodeType)) {
+      let target = getNodeProp(statement, ['leftExpr', 'leftExpression', 'valueExpr', 'valueExpression']);
+      // `x: T = v` assigns to an annotation node, whose own value expression is the name.
+      if (target && !nameFromNode(target)) {
+        target = getNodeProp(target, ['valueExpr', 'valueExpression']);
+      }
+      name = nameFromNode(target);
+    }
+    if (name) {
+      names.add(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * A repo module's own file-level imports, resolved from that module's position in the repo and
+ * cached per repo, together with the context `moduleFileFor` needs to find what they name.
+ */
+function moduleImportsOf(filePath) {
+  if (state.moduleImports.has(filePath)) {
+    return state.moduleImports.get(filePath);
+  }
+  const moduleName = moduleBaseNameForPath(filePath);
+  const packageName = packageNameForPath(filePath, state.repoRoot);
+  const ctx = {
+    repoRoot: state.repoRoot,
+    moduleIndex: state.moduleIndex,
+    moduleName,
+    packageName,
+    fullModuleName: packageName ? packageName + '.' + moduleName : moduleName
+  };
+  let imports = { importedModules: new Map(), importedSymbols: new Map(), starModules: [] };
+  try {
+    imports = collectImports(fs.readFileSync(filePath, 'utf8'), ctx);
+  } catch (err) {
+    // An unreadable module re-exports nothing that can be followed.
+  }
+  const result = { ctx, imports };
+  state.moduleImports.set(filePath, result);
+  return result;
+}
+
+/** How many re-exports deep a name is followed before resolution gives up on finding its declaration. */
+const REEXPORT_MAX_DEPTH = 8;
+
+/**
+ * The repo module that declares `symbolName` as seen from the module in `filePath`, and the name it
+ * declares it under, or null when that declaration cannot be found.
+ *
+ * A package's `__init__.py` usually declares none of the names it exposes: it re-exports them with
+ * `from .responses import Redirect`, `from .bases import Base as PublicBase` or `from .extras import *`.
+ * A name the module declares itself is its own, whatever it also imports. Otherwise an explicit import
+ * of the name is followed, then each star import in order. The walk is bounded in depth and never
+ * revisits a module for the same name, so an import cycle ends it. A name bound to a module, a name
+ * imported from outside the repo, and a module that could not be parsed all end it with null: none of
+ * those is evidence of where the name is declared.
+ */
+function findDeclaration(filePath, symbolName, depth, visited) {
+  const key = filePath + '\u0000' + symbolName;
+  if (depth > REEXPORT_MAX_DEPTH || visited.has(key)) {
+    return null;
+  }
+  visited.add(key);
+  const declarations = moduleDeclarations(filePath);
+  if (!declarations.parsed) {
+    return null;
+  }
+  if (declarations.names.has(symbolName)) {
+    return { filePath, symbolName };
+  }
+  const { ctx, imports } = moduleImportsOf(filePath);
+  const explicit = imports.importedSymbols.get(symbolName);
+  if (explicit) {
+    const nextFile = explicit.moduleName ? moduleFileFor(explicit.moduleName, ctx) : null;
+    return nextFile ? findDeclaration(nextFile, explicit.symbolName, depth + 1, visited) : null;
+  }
+  if (imports.importedModules.has(symbolName)) {
+    return null;
+  }
+  for (const starModule of imports.starModules) {
+    const nextFile = moduleFileFor(starModule, ctx);
+    const found = nextFile ? findDeclaration(nextFile, symbolName, depth + 1, visited) : null;
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * The unique name a symbol of the module in `filePath` carries. It is rebuilt from the file's own
+ * path, which is what component unique names are built from too.
+ */
+function uniqueNameInFile(filePath, symbolName, ctx) {
+  const pkgName = packageNameForPath(filePath, ctx.repoRoot);
+  const modName = moduleBaseNameForPath(filePath);
+  if (!modName) {
+    return null;
+  }
+  if (pkgName) {
+    return pkgName + '.' + modName + '.' + symbolName;
+  }
+  return modName + '.' + symbolName;
 }
 
 /**
  * The unique name of the repo class a plain name refers to in the current file -- a class defined at
- * the top of this file, or one imported from a repo module that defines it -- or null for anything
- * else: a function, a constant, a re-export, or a name from outside the repo.
+ * the top of this file, or one imported from a repo module that declares it or re-exports it -- or
+ * null for anything else: a function, a constant, or a name from outside the repo.
  */
 function resolveRepoClass(name, ctx) {
   if (!name) {
@@ -697,12 +835,20 @@ function resolveRepoClass(name, ctx) {
     return null;
   }
   const filePath = moduleFileFor(imported.moduleName, ctx);
-  if (!filePath || !classesDefinedIn(filePath).has(imported.symbolName)) {
+  if (!filePath) {
     return null;
   }
-  return resolveModuleSymbol(imported.moduleName, imported.symbolName, ctx);
+  const declared = findDeclaration(filePath, imported.symbolName, 0, new Set());
+  if (!declared || !classesDefinedIn(declared.filePath).has(declared.symbolName)) {
+    return null;
+  }
+  return uniqueNameInFile(declared.filePath, declared.symbolName, ctx);
 }
 
+/**
+ * The unique name of `symbolName` imported from `moduleName`: in the module that declares it when the
+ * named module only re-exports it, and otherwise in the named module itself.
+ */
 function resolveModuleSymbol(moduleName, symbolName, ctx) {
   if (!moduleName || !symbolName) {
     return null;
@@ -711,15 +857,11 @@ function resolveModuleSymbol(moduleName, symbolName, ctx) {
   if (!filePath) {
     return null;
   }
-  const pkgName = packageNameForPath(filePath, ctx.repoRoot);
-  const modName = moduleBaseNameForPath(filePath);
-  if (!modName) {
-    return null;
+  const declared = findDeclaration(filePath, symbolName, 0, new Set());
+  if (declared) {
+    return uniqueNameInFile(declared.filePath, declared.symbolName, ctx);
   }
-  if (pkgName) {
-    return pkgName + '.' + modName + '.' + symbolName;
-  }
-  return modName + '.' + symbolName;
+  return uniqueNameInFile(filePath, symbolName, ctx);
 }
 
 function resolveDottedCandidate(candidate, ctx) {
@@ -1657,29 +1799,7 @@ function resolveModuleClass(moduleName, className, ctx) {
   if (!moduleName || !className) {
     return null;
   }
-  let filePath = ctx.moduleIndex.get(moduleName);
-  if (!filePath && ctx.packageName) {
-    filePath = ctx.moduleIndex.get(ctx.packageName + '.' + moduleName);
-  }
-  if (!filePath && ctx.fullModuleName && ctx.fullModuleName.includes('.')) {
-    const parts = ctx.fullModuleName.split('.');
-    parts.pop();
-    if (parts.length) {
-      filePath = ctx.moduleIndex.get(parts.join('.') + '.' + moduleName) || filePath;
-    }
-  }
-  if (!filePath) {
-    return null;
-  }
-  const pkgName = packageNameForPath(filePath, ctx.repoRoot);
-  const modName = moduleBaseNameForPath(filePath);
-  if (!modName) {
-    return null;
-  }
-  if (pkgName) {
-    return pkgName + '.' + modName + '.' + className;
-  }
-  return modName + '.' + className;
+  return resolveModuleSymbol(moduleName, className, ctx);
 }
 
 function extractClassInfo(type) {
@@ -1901,15 +2021,102 @@ function extractParams(funcNode, ctx, parseNodeType) {
 }
 
 /**
+ * The name node an import clause binds: the alias of `import a.b as m` and `from a import b as m`,
+ * the first segment of `import a.b`, and the name of `from a import b`.
+ */
+function importBindingNode(node, types) {
+  if (node.nodeType === types.ImportFromAs) {
+    return node.d.alias || node.d.name;
+  }
+  const nameParts = node.d.module && node.d.module.d ? node.d.module.d.nameParts : null;
+  if (node.d.alias) {
+    return node.d.alias;
+  }
+  return Array.isArray(nameParts) && nameParts.length ? nameParts[0] : null;
+}
+
+/**
+ * The scope a function body resolves names in. Python binds an import written in a function -- at
+ * any depth of `if`, `try`, `with` or loop -- in that function's scope alone, so its names resolve
+ * the references in that function and in no other, and hide any module-level binding of the same
+ * name there. A name the function also binds some other way -- `Order = fallback` -- may hold
+ * anything wherever it is used, so it resolves through neither the import nor the module. A nested
+ * function's or class's imports are its own. `functionImportNames` holds the names the function's
+ * own imports resolve.
+ */
+function functionScope(functionNode, ctx, parseNodeType) {
+  const types = parseNodeType || {};
+  const statements = [];
+  const importBound = new Set();
+
+  function visit(node, isRoot) {
+    if (!node || typeof node !== 'object' || !node.d) {
+      return;
+    }
+    if (!isRoot && (isFunctionNode(node, parseNodeType) || isClassNode(node, parseNodeType))) {
+      return;
+    }
+    if (node.nodeType === types.Import || node.nodeType === types.ImportFrom) {
+      statements.push(...collectImportStatements(textForNode(node, ctx.fileText)));
+    }
+    if (node.nodeType === types.ImportAs || node.nodeType === types.ImportFromAs) {
+      const bound = nameFromNode(importBindingNode(node, types));
+      if (bound) {
+        importBound.add(bound);
+      }
+    }
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      if (Array.isArray(child)) {
+        child.forEach(item => visit(item, false));
+      } else if (child && typeof child === 'object' && child.d) {
+        visit(child, false);
+      }
+    }
+  }
+
+  visit(functionNode, true);
+  if (!importBound.size) {
+    return ctx;
+  }
+  const rebound = collectLocalNames(functionNode, parseNodeType, false);
+  const importedModules = new Map(ctx.importedModules);
+  const importedSymbols = new Map(ctx.importedSymbols);
+  const localClasses = new Set(ctx.localClasses);
+  for (const name of importBound) {
+    importedModules.delete(name);
+    importedSymbols.delete(name);
+    localClasses.delete(name);
+  }
+  const functionImportNames = new Set();
+  const local = resolveImportStatements(statements, ctx);
+  // `import a.b` is keyed `a.b` and binds `a`.
+  const boundBy = key => key.split('.')[0];
+  for (const [key, moduleName] of local.importedModules) {
+    if (!rebound.has(boundBy(key))) {
+      importedModules.set(key, moduleName);
+      functionImportNames.add(boundBy(key));
+    }
+  }
+  for (const [key, symbol] of local.importedSymbols) {
+    if (!rebound.has(key)) {
+      importedSymbols.set(key, symbol);
+      functionImportNames.add(key);
+    }
+  }
+  return Object.assign({}, ctx, { importedModules, importedSymbols, localClasses, functionImportNames });
+}
+
+/**
  * The names a function binds for itself: its parameters, and every name it assigns, loops over,
  * catches, imports, deletes or otherwise declares anywhere in its body. Python decides scope per
  * function, not per statement -- a name bound anywhere in a function is local throughout it -- so in
  * `models = pick(); models.User()` the `models` is never the module imported under that name, on
  * whichever line the assignment sits. Nested functions and classes contribute only their own name.
  * Lambdas and comprehensions have scopes of their own but are counted in, which can only withhold a
- * reference, never invent one.
+ * reference, never invent one. Without `includeImports`, a name bound only by an import is left out.
  */
-function collectLocalNames(functionNode, parseNodeType) {
+function collectLocalNames(functionNode, parseNodeType, includeImports = true) {
   const names = new Set();
   const globals = new Set();
   const types = parseNodeType || {};
@@ -1953,15 +2160,8 @@ function collectLocalNames(functionNode, parseNodeType) {
       (node.d.targets || []).forEach(addTarget);
     } else if (type === types.Global) {
       (node.d.targets || []).forEach(target => globals.add(nameFromNode(target)));
-    } else if (type === types.ImportAs) {
-      const nameParts = node.d.module && node.d.module.d ? node.d.module.d.nameParts : null;
-      if (node.d.alias) {
-        addTarget(node.d.alias);
-      } else if (Array.isArray(nameParts) && nameParts.length) {
-        addTarget(nameParts[0]);
-      }
-    } else if (type === types.ImportFromAs) {
-      addTarget(node.d.alias || node.d.name);
+    } else if (includeImports && (type === types.ImportAs || type === types.ImportFromAs)) {
+      addTarget(importBindingNode(node, types));
     }
     for (const key of Object.keys(node.d)) {
       const child = node.d[key];
@@ -2047,6 +2247,8 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
   const refs = [];
   const seen = new Set();
   const localNames = collectLocalNames(functionNode, parseNodeType);
+  // A name the function's own imports bind resolves through them.
+  (ctx.functionImportNames || []).forEach(name => localNames.delete(name));
   const moduleMemberTargets = new Set();
   const calleeNames = new Set();
 
@@ -2335,7 +2537,9 @@ function extractMethod(methodNode, ctx, parseNodeType) {
   const cyclo = computeCyclo(methodNode, ctx.fileText);
   // The whole def, not just its suite: a changed signature or decorator is a change too.
   const implementationHash = stableImplementationHash(textForNode(methodNode, ctx.fileText));
-  const bodyReferences = collectBodyReferences(methodNode, ctx, parseNodeType);
+  // Parameter and return annotations are evaluated where the def is; the body in its own scope.
+  const bodyCtx = functionScope(methodNode, ctx, parseNodeType);
+  const bodyReferences = collectBodyReferences(methodNode, bodyCtx, parseNodeType);
   return {
     name,
     signature,
@@ -2347,7 +2551,7 @@ function extractMethod(methodNode, ctx, parseNodeType) {
     staticMethod: isStaticMethod,
     decorators,
     params,
-    locals: collectLocalVariables(methodNode, ctx, parseNodeType),
+    locals: collectLocalVariables(methodNode, bodyCtx, parseNodeType),
     return: returnRef,
     bodyReferences
   };
@@ -2374,7 +2578,9 @@ function extractFunction(functionNode, ctx, parseNodeType) {
   const cyclo = computeCyclo(functionNode, ctx.fileText);
   // The whole def, not just its suite: a changed signature or decorator is a change too.
   const implementationHash = stableImplementationHash(textForNode(functionNode, ctx.fileText));
-  const bodyReferences = collectBodyReferences(functionNode, ctx, parseNodeType);
+  // Parameter and return annotations are evaluated where the def is; the body in its own scope.
+  const bodyCtx = functionScope(functionNode, ctx, parseNodeType);
+  const bodyReferences = collectBodyReferences(functionNode, bodyCtx, parseNodeType);
   return {
     name,
     signature,
@@ -2386,7 +2592,7 @@ function extractFunction(functionNode, ctx, parseNodeType) {
     staticMethod: false,
     decorators,
     params,
-    locals: collectLocalVariables(functionNode, ctx, parseNodeType),
+    locals: collectLocalVariables(functionNode, bodyCtx, parseNodeType),
     return: returnRef,
     bodyReferences
   };
@@ -2599,7 +2805,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         if (method) {
           methods.push(method);
           if (method.name === '__init__') {
-            const instanceFields = extractInstanceFieldsFromMethod(node, classCtx);
+            const instanceFields = extractInstanceFieldsFromMethod(node, functionScope(node, classCtx, parseNodeType));
             for (const instanceField of instanceFields) {
               if (!instanceField || !instanceField.name || fieldNames.has(instanceField.name)) {
                 continue;
@@ -2691,7 +2897,8 @@ async function handleInitRepo(params) {
   const scannedFiles = scanRepo(normalized);
   state.moduleIndex = buildModuleIndex(normalized, extraPaths, scannedFiles);
   state.fileUriMap = new Map();
-  state.moduleClasses = new Map();
+  state.moduleDeclarations = new Map();
+  state.moduleImports = new Map();
   state.program = null;
   state.importResolver = null;
   state.serviceProvider = null;

@@ -41,8 +41,8 @@ public class PythonMethodBodyRefsTest {
     public void get_user_callsBuildName() {
         Component method = getMethod("UserService.get_user(user_id: int) : User");
         Assert.assertTrue("get_user should reference build_name",
-                containsInvokedName(method.externalDependencies(),
-                        "src.types.build_name"));
+                containsInvokedName(method.internalDependencies(),
+                        "src.types.build_name(first: str, last: str) : str"));
     }
 
     @Test
