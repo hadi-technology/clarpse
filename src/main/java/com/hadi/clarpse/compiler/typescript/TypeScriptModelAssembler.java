@@ -58,10 +58,9 @@ final class TypeScriptModelAssembler {
         if (fileModel == null || fileModel.declarations == null) {
             return;
         }
+        final FileScope scope = new FileScope(pkg, moduleName, sourcePath, repoRoot, inRepositoryNames);
         for (final TypeScriptComponentModel declaration : fileModel.declarations) {
-            final Stack<Component> stack = new Stack<>();
-            insertComponentTree(pkg, moduleName, sourcePath, repoRoot, declaration, stack, srcModel,
-                    inRepositoryNames);
+            insertComponentTree(scope, declaration, new Stack<>(), srcModel);
         }
         applyImports(repoRoot, sourcePath, fileModel, srcModel);
     }
@@ -108,24 +107,26 @@ final class TypeScriptModelAssembler {
                 .forEach(component -> component.setImports(imports));
     }
 
-    private static void insertComponentTree(final Package pkg,
-                                            final String moduleName,
-                                            final String sourcePath,
-                                            final String repoRoot,
+    /**
+     * What every component of one file shares: where it is declared, and the collector of names
+     * its references resolved to inside the repository.
+     */
+    private record FileScope(Package pkg, String moduleName, String sourcePath, String repoRoot,
+                             Set<String> inRepositoryNames) {
+    }
+
+    private static void insertComponentTree(final FileScope scope,
                                             final TypeScriptComponentModel declaration,
                                             final Stack<Component> stack,
-                                            final OOPSourceCodeModel srcModel,
-                                            final Set<String> inRepositoryNames) {
-        final Component component = buildComponent(pkg, moduleName, sourcePath, repoRoot, declaration, stack,
-                inRepositoryNames);
+                                            final OOPSourceCodeModel srcModel) {
+        final Component component = buildComponent(scope, declaration, stack);
         if (component == null) {
             return;
         }
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
         for (final TypeScriptComponentModel member : declaration.members) {
-            insertComponentTree(pkg, moduleName, sourcePath, repoRoot, member, stack, srcModel,
-                    inRepositoryNames);
+            insertComponentTree(scope, member, stack, srcModel);
         }
         if (component.componentType().isMethodComponent() && declaration.cyclo > 0) {
             component.setCyclo(declaration.cyclo);
@@ -135,13 +136,12 @@ final class TypeScriptModelAssembler {
         ParseUtil.copyRefsToParents(component, stack);
     }
 
-    private static Component buildComponent(final Package pkg,
-                                            final String moduleName,
-                                            final String sourcePath,
-                                            final String repoRoot,
+    private static Component buildComponent(final FileScope scope,
                                             final TypeScriptComponentModel declaration,
-                                            final Stack<Component> stack,
-                                            final Set<String> inRepositoryNames) {
+                                            final Stack<Component> stack) {
+        final Package pkg = scope.pkg();
+        final String moduleName = scope.moduleName();
+        final String sourcePath = scope.sourcePath();
         Component parent = null;
         if (!stack.isEmpty()) {
             parent = stack.peek();
@@ -166,7 +166,7 @@ final class TypeScriptModelAssembler {
         }
         final String codeFragment = buildCodeFragment(declaration, componentType);
         applyCodeSignature(component, declaration, codeFragment);
-        attachReferences(component, declaration, repoRoot, inRepositoryNames);
+        attachReferences(component, declaration, scope.repoRoot(), scope.inRepositoryNames());
         return component;
     }
 
