@@ -159,9 +159,25 @@ public final class TypeScriptDaemon implements AutoCloseable {
     }
 
     public TypeScriptFileModel getFileModel(final String filePath) throws TypeScriptDaemonException {
+        return getFileModel(filePath, false);
+    }
+
+    /**
+     * The model of one file, optionally as a boundary file of a one-level analysis, whose bodies are
+     * not read.
+     *
+     * @param filePath The file's path on disk.
+     * @param boundary Whether the file is a level-one file.
+     * @return The file's model.
+     */
+    public TypeScriptFileModel getFileModel(final String filePath, final boolean boundary)
+            throws TypeScriptDaemonException {
         ensureStarted();
         ObjectNode params = objectMapper.createObjectNode();
         params.put("filePath", filePath);
+        if (boundary) {
+            params.put("boundary", true);
+        }
         JsonNode result = request("getFileModel", params);
         try {
             return objectMapper.treeToValue(result, TypeScriptFileModel.class);
@@ -169,6 +185,42 @@ public final class TypeScriptDaemon implements AutoCloseable {
             throw new TypeScriptDaemonException("Failed to parse file model.",
                     TypeScriptDaemonException.CODE_DAEMON_ERROR, e);
         }
+    }
+
+    /**
+     * The repository files the given files' module specifiers resolve to, closed over re-exports,
+     * found by module resolution without building a program.
+     *
+     * @param focusFiles The analysed files' paths on disk.
+     * @return The level-one files' paths on disk, sorted, excluding the analysed files.
+     */
+    public List<String> discoverLevelOne(final List<String> focusFiles) throws TypeScriptDaemonException {
+        ensureStarted();
+        final ObjectNode params = objectMapper.createObjectNode();
+        final com.fasterxml.jackson.databind.node.ArrayNode focus = params.putArray("focusFiles");
+        focusFiles.forEach(focus::add);
+        final JsonNode result = request("discoverLevelOne", params);
+        final List<String> levelOne = new ArrayList<>();
+        result.path("levelOne").forEach(node -> levelOne.add(node.asText()));
+        return levelOne;
+    }
+
+    /**
+     * Switches the daemon to a one-level analysis of exactly the given files. Every later
+     * {@link #getFileModel(String, boolean)} is answered from programs holding only these files.
+     *
+     * @param focusFiles    The analysed files' paths on disk.
+     * @param levelOneFiles The level-one files' paths on disk.
+     */
+    public void planOneLevel(final List<String> focusFiles, final List<String> levelOneFiles)
+            throws TypeScriptDaemonException {
+        ensureStarted();
+        final ObjectNode params = objectMapper.createObjectNode();
+        final com.fasterxml.jackson.databind.node.ArrayNode focus = params.putArray("focusFiles");
+        focusFiles.forEach(focus::add);
+        final com.fasterxml.jackson.databind.node.ArrayNode levelOne = params.putArray("levelOneFiles");
+        levelOneFiles.forEach(levelOne::add);
+        request("planOneLevel", params);
     }
 
     private synchronized JsonNode request(final String method, final JsonNode params)

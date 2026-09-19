@@ -8,6 +8,7 @@ import com.hadi.clarpse.compiler.typescript.model.TypeScriptTargetModel;
 import com.hadi.clarpse.listener.ParseUtil;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
@@ -16,6 +17,7 @@ import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.Package;
 
+import java.util.Set;
 import java.util.Stack;
 
 /**
@@ -37,11 +39,29 @@ final class TypeScriptModelAssembler {
                                 final String repoRoot,
                                 final TypeScriptFileModel fileModel,
                                 final OOPSourceCodeModel srcModel) {
+        insertFileModel(pkg, moduleName, sourcePath, repoRoot, fileModel, srcModel, null);
+    }
+
+    /**
+     * Inserts a file's components, collecting the names of references that resolved into the
+     * repository. A reference whose type was lost is marked {@link ResolutionKind#UNRESOLVED}.
+     *
+     * @param inRepositoryNames Collects those names; may be {@code null}.
+     */
+    static void insertFileModel(final Package pkg,
+                                final String moduleName,
+                                final String sourcePath,
+                                final String repoRoot,
+                                final TypeScriptFileModel fileModel,
+                                final OOPSourceCodeModel srcModel,
+                                final Set<String> inRepositoryNames) {
         if (fileModel == null || fileModel.declarations == null) {
             return;
         }
         for (final TypeScriptComponentModel declaration : fileModel.declarations) {
-            insertComponentTree(pkg, moduleName, sourcePath, repoRoot, declaration, srcModel);
+            final Stack<Component> stack = new Stack<>();
+            insertComponentTree(pkg, moduleName, sourcePath, repoRoot, declaration, stack, srcModel,
+                    inRepositoryNames);
         }
         applyImports(repoRoot, sourcePath, fileModel, srcModel);
     }
@@ -93,26 +113,19 @@ final class TypeScriptModelAssembler {
                                             final String sourcePath,
                                             final String repoRoot,
                                             final TypeScriptComponentModel declaration,
-                                            final OOPSourceCodeModel srcModel) {
-        final Stack<Component> stack = new Stack<>();
-        insertComponentTree(pkg, moduleName, sourcePath, repoRoot, declaration, stack, srcModel);
-    }
-
-    private static void insertComponentTree(final Package pkg,
-                                            final String moduleName,
-                                            final String sourcePath,
-                                            final String repoRoot,
-                                            final TypeScriptComponentModel declaration,
                                             final Stack<Component> stack,
-                                            final OOPSourceCodeModel srcModel) {
-        final Component component = buildComponent(pkg, moduleName, sourcePath, repoRoot, declaration, stack);
+                                            final OOPSourceCodeModel srcModel,
+                                            final Set<String> inRepositoryNames) {
+        final Component component = buildComponent(pkg, moduleName, sourcePath, repoRoot, declaration, stack,
+                inRepositoryNames);
         if (component == null) {
             return;
         }
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
         for (final TypeScriptComponentModel member : declaration.members) {
-            insertComponentTree(pkg, moduleName, sourcePath, repoRoot, member, stack, srcModel);
+            insertComponentTree(pkg, moduleName, sourcePath, repoRoot, member, stack, srcModel,
+                    inRepositoryNames);
         }
         if (component.componentType().isMethodComponent() && declaration.cyclo > 0) {
             component.setCyclo(declaration.cyclo);
@@ -127,7 +140,8 @@ final class TypeScriptModelAssembler {
                                             final String sourcePath,
                                             final String repoRoot,
                                             final TypeScriptComponentModel declaration,
-                                            final Stack<Component> stack) {
+                                            final Stack<Component> stack,
+                                            final Set<String> inRepositoryNames) {
         Component parent = null;
         if (!stack.isEmpty()) {
             parent = stack.peek();
@@ -152,7 +166,7 @@ final class TypeScriptModelAssembler {
         }
         final String codeFragment = buildCodeFragment(declaration, componentType);
         applyCodeSignature(component, declaration, codeFragment);
-        attachReferences(component, declaration, repoRoot);
+        attachReferences(component, declaration, repoRoot, inRepositoryNames);
         return component;
     }
 
@@ -268,7 +282,8 @@ final class TypeScriptModelAssembler {
 
     private static void attachReferences(final Component component,
                                          final TypeScriptComponentModel declaration,
-                                         final String repoRoot) {
+                                         final String repoRoot,
+                                         final Set<String> inRepositoryNames) {
         if (declaration.references == null) {
             return;
         }
@@ -276,6 +291,12 @@ final class TypeScriptModelAssembler {
             final ComponentReference componentReference = buildComponentReference(reference, repoRoot);
             if (componentReference != null
                     && !componentReference.invokedComponent().equals(component.uniqueName())) {
+                if (reference.unresolved) {
+                    componentReference.setResolutionKind(ResolutionKind.UNRESOLVED);
+                }
+                if (inRepositoryNames != null && !reference.external && reference.target != null) {
+                    inRepositoryNames.add(componentReference.invokedComponent());
+                }
                 component.insertCmpRef(componentReference);
             }
         }
