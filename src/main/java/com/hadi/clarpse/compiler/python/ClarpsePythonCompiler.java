@@ -107,7 +107,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         final PythonModuleIndex index = new PythonModuleIndex(allFiles);
         if (focusFiles.isEmpty()) {
             return new PythonPreparedAnalysis(options, focusFiles, allFiles, Set.of(), index, null,
-                    new OOPSourceCodeModel(), failures, false);
+                    new FocusModel(new OOPSourceCodeModel(), failures));
         }
         if (!NodeRuntime.isNodeAvailable()) {
             for (final ProjectFile file : focusFiles) {
@@ -116,12 +116,13 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
                         PythonDaemonException.CODE_NODE_NOT_FOUND));
             }
             return new PythonPreparedAnalysis(options, focusFiles, allFiles, Set.of(), index, null,
-                    new OOPSourceCodeModel(), failures, false);
+                    new FocusModel(new OOPSourceCodeModel(), failures));
         }
         final String persistDir = projectFiles.projectDir();
         final OOPSourceCodeModel focusModel = modelInSession(focusFiles, persistDir, failures);
         return new PythonPreparedAnalysis(options, focusFiles, allFiles,
-                discoverLevelOne(focusModel, focusFiles, index), index, persistDir, focusModel, failures, true);
+                discoverLevelOne(focusModel, focusFiles, index), index, persistDir,
+                new FocusModel(focusModel, failures));
     }
 
     /** Models the given files in a daemon session that ends with this call. */
@@ -138,33 +139,36 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         }
     }
 
-    /** A Python one-level compile between discovering level one and modelling it. */
+    /** The analysed files' model and the failures modelling them, kept between the two phases. */
+    private record FocusModel(OOPSourceCodeModel model, Set<CompileFailure> failures) {
+    }
+
+    /**
+     * A Python one-level compile between discovering level one and modelling it. With no project
+     * directory, the analysed files could not be resolved and completing reports their failures.
+     */
     private final class PythonPreparedAnalysis extends AbstractPreparedAnalysis {
 
         private final PythonModuleIndex index;
         private final String persistDir;
         private final OOPSourceCodeModel focusModel;
         private final Set<CompileFailure> focusFailures;
-        private final boolean resolvable;
 
         PythonPreparedAnalysis(final AnalysisOptions options, final List<ProjectFile> focusFiles,
                                final List<ProjectFile> allFiles, final Set<String> discovered,
-                               final PythonModuleIndex index, final String persistDir,
-                               final OOPSourceCodeModel focusModel, final Set<CompileFailure> focusFailures,
-                               final boolean resolvable) {
+                               final PythonModuleIndex index, final String persistDir, final FocusModel focus) {
             super(options, focusFiles, allFiles, discovered);
             this.index = index;
             this.persistDir = persistDir;
-            this.focusModel = focusModel;
-            this.focusFailures = focusFailures;
-            this.resolvable = resolvable;
+            this.focusModel = focus.model();
+            this.focusFailures = focus.failures();
         }
 
         @Override
         protected CompileResult complete(final LevelOneSelection selection) throws CompileException {
             final Set<CompileFailure> compileFailures = new HashSet<>(focusFailures);
             final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
-            if (!resolvable) {
+            if (persistDir == null) {
                 return new CompileResult(srcModel, compileFailures).withLevelOne(
                         new LevelOneReport(List.of(), List.of(), List.of(), 0));
             }

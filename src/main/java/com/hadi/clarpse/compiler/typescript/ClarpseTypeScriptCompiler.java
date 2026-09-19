@@ -10,7 +10,6 @@ import com.hadi.clarpse.compiler.CompilerSupport;
 import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.Lang;
-import com.hadi.clarpse.compiler.LevelOneReport;
 import com.hadi.clarpse.compiler.LevelOneSelection;
 import com.hadi.clarpse.compiler.PreparedAnalysis;
 import com.hadi.clarpse.compiler.ProjectFile;
@@ -32,7 +31,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
