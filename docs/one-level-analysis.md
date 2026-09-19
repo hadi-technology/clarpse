@@ -264,6 +264,12 @@ reported by `LevelOneReport.heldByBudget()`, and references into them are left n
 The cap follows path order, not relevance. In C#, it can separate the parts of a level-one partial
 type.
 
+`PreparedAnalysis.compile(extraPaths, budget)` sets the cap for one compile, in place of the
+prepared one. A caller that adds level-one files of its own beside the discovered ones uses it to
+bound both sets exactly. It prepares with the largest budget any compile will use, then passes the
+discovered set's budget plus the number of its own files it adds. When the discovered set alone
+fills its budget, the caller adds none of its own and passes the discovered set's budget.
+
 The Java solver also caps how many distinct files it loads to resolve names: four times the budget,
 and at least 1000. A lookup past that cap answers unsolved, and the listener falls back to the names
 the source writes. `LevelOneReport.loadedBeyondLevelOne()` lists the files the solver read without
