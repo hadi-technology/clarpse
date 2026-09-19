@@ -1,5 +1,6 @@
 package com.hadi.clarpse.compiler.csharp;
 
+import com.hadi.clarpse.compiler.AnalysisOptions;
 import com.hadi.clarpse.compiler.ClarpseCompiler;
 import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
@@ -7,6 +8,8 @@ import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.CompilerParallelismSupport;
 import com.hadi.clarpse.compiler.CompilerSupport;
 import com.hadi.clarpse.compiler.Lang;
+import com.hadi.clarpse.compiler.LevelOneReport;
+import com.hadi.clarpse.compiler.LevelOneSelection;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
@@ -16,8 +19,11 @@ import org.apache.logging.log4j.Logger;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -58,6 +64,133 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
         ));
         CompilerSupport.classifyReferences(model);
         return new CompileResult(model, failures);
+    }
+
+    /**
+     * Compiles the analysed files and, for a one-level compile, the files they reference.
+     *
+     * <p>A {@link CSharpDeclarationIndex} of every C# file, read without parsing, lets the assembler
+     * resolve names against the whole repository through declaration-only stubs. The analysed files,
+     * the other parts of their partial types and every file with {@code global using} directives are
+     * parsed and assembled first; level one is then the set of files declaring what the analysed
+     * components reference, closed over the parts of partial types, cut to the budget, parsed, and
+     * assembled with the rest. Only the analysed files, the parts of their partial types and the
+     * level-one files are emitted, and the level-one components are marked boundary.
+     */
+    @Override
+    public CompileResult compile(final ProjectFiles projectFiles,
+                                 final Collection<String> analyzedFilePaths,
+                                 final AnalysisOptions options) throws CompileException {
+        if (options == null || !options.isOneLevel(analyzedFilePaths)) {
+            return compile(projectFiles, analyzedFilePaths);
+        }
+        final List<ProjectFile> analysed = ClarpseCompiler.analyzedFiles(projectFiles, Lang.CSHARP, analyzedFilePaths);
+        final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.CSHARP));
+        if (analysed.isEmpty()) {
+            return new CompileResult(new OOPSourceCodeModel(), Set.of()).withLevelOne(
+                    new LevelOneReport(List.of(), List.of(), List.of(), 0));
+        }
+        final Map<String, ProjectFile> byPath = new LinkedHashMap<>();
+        allFiles.forEach(file -> byPath.put(file.path(), file));
+        final CSharpDeclarationIndex index = new CSharpDeclarationIndex(allFiles);
+        final Set<String> focus = new TreeSet<>();
+        for (final ProjectFile file : analysed) {
+            focus.add(file.path());
+            focus.addAll(index.partialParts(file.path()));
+        }
+        final Set<CompileFailure> failures = new HashSet<>();
+        final OOPSourceCodeModel focusModel = assemble(focus, Set.of(), index, byPath, failures);
+        final List<ProjectFile> focusFiles = filesAt(focus, byPath);
+        final LevelOneSelection selection = LevelOneSelection.select(
+                discoverLevelOne(focusModel, focus, index), options, focusFiles, allFiles);
+        failures.clear();
+        final OOPSourceCodeModel model = assemble(focus, new TreeSet<>(selection.modelledPaths()), index, byPath,
+                failures);
+        CompilerSupport.classifyClassCyclo(model, Set.of(
+                com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType.CLASS,
+                com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType.STRUCT,
+                com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType.ENUM
+        ));
+        CompilerSupport.classifyReferences(model, reference -> index.declares(reference.invokedComponent()));
+        CompilerSupport.markBoundary(model, selection.modelledPaths());
+        return new CompileResult(model, failures).withLevelOne(
+                CompilerSupport.levelOneReport(model, selection, List.of()));
+    }
+
+    @Override
+    public Set<String> levelOneFiles(final ProjectFiles projectFiles,
+                                     final Collection<String> analyzedFilePaths,
+                                     final AnalysisOptions options) throws CompileException {
+        final List<ProjectFile> analysed = ClarpseCompiler.analyzedFiles(projectFiles, Lang.CSHARP, analyzedFilePaths);
+        if (analysed.isEmpty()) {
+            return Set.of();
+        }
+        final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.CSHARP));
+        final Map<String, ProjectFile> byPath = new LinkedHashMap<>();
+        allFiles.forEach(file -> byPath.put(file.path(), file));
+        final CSharpDeclarationIndex index = new CSharpDeclarationIndex(allFiles);
+        final Set<String> focus = new TreeSet<>();
+        for (final ProjectFile file : analysed) {
+            focus.add(file.path());
+            focus.addAll(index.partialParts(file.path()));
+        }
+        final Set<String> levelOne = discoverLevelOne(
+                assemble(focus, Set.of(), index, byPath, new HashSet<>()), focus, index);
+        analysed.forEach(file -> levelOne.remove(file.path()));
+        return levelOne;
+    }
+
+    /**
+     * Parses the analysed and level-one files together with every {@code global using} file, and
+     * assembles them against stubs of every other file. Components of the {@code global using}
+     * files are emitted only when those files are analysed or level one.
+     */
+    private OOPSourceCodeModel assemble(final Set<String> focus, final Set<String> levelOne,
+                                        final CSharpDeclarationIndex index,
+                                        final Map<String, ProjectFile> byPath,
+                                        final Set<CompileFailure> failures) throws CompileException {
+        final Set<String> emitted = new TreeSet<>(focus);
+        emitted.addAll(levelOne);
+        final Set<String> parsedPaths = new TreeSet<>(emitted);
+        parsedPaths.addAll(index.globalUsingFiles());
+        final List<CSharpModel.CSharpFileModel> parsed = new ArrayList<>();
+        for (final CSharpModel.ParseOutcome outcome : parseFiles(filesAt(parsedPaths, byPath))) {
+            if (outcome.failure() != null) {
+                failures.add(outcome.failure());
+            } else if (outcome.fileModel() != null) {
+                parsed.add(outcome.fileModel());
+            }
+        }
+        return CSharpModelAssembler.buildModel(parsed, index.stubs(parsedPaths), emitted);
+    }
+
+    /**
+     * The files declaring what the analysed components reference, with every part of a partial type
+     * among them, less the analysed files.
+     */
+    private static Set<String> discoverLevelOne(final OOPSourceCodeModel focusModel, final Set<String> focus,
+                                                final CSharpDeclarationIndex index) {
+        final Set<String> levelOne = new TreeSet<>();
+        focusModel.components()
+                .filter(component -> focus.contains(component.sourceFile()))
+                .forEach(component -> component.references().forEach(
+                        reference -> levelOne.addAll(index.filesDeclaring(reference.invokedComponent()))));
+        for (final String path : new ArrayList<>(levelOne)) {
+            levelOne.addAll(index.partialParts(path));
+        }
+        levelOne.removeAll(focus);
+        return levelOne;
+    }
+
+    private static List<ProjectFile> filesAt(final Collection<String> paths, final Map<String, ProjectFile> byPath) {
+        final List<ProjectFile> files = new ArrayList<>();
+        for (final String path : paths) {
+            final ProjectFile file = byPath.get(path);
+            if (file != null) {
+                files.add(file);
+            }
+        }
+        return files;
     }
 
     private List<CSharpModel.ParseOutcome> parseFiles(final List<ProjectFile> files) throws CompileException {
