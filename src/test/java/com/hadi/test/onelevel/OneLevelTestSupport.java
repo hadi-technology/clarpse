@@ -1,7 +1,12 @@
 package com.hadi.test.onelevel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hadi.clarpse.compiler.AnalysisOptions;
 import com.hadi.clarpse.compiler.ClarpseCompiler;
+import com.hadi.clarpse.compiler.ClarpseProject;
+import com.hadi.clarpse.compiler.CompileResult;
+import com.hadi.clarpse.compiler.Lang;
+import com.hadi.clarpse.compiler.PreparedAnalysis;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.reference.ComponentReference;
@@ -11,6 +16,7 @@ import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -71,6 +77,31 @@ final class OneLevelTestSupport {
                         && normalized.contains(ClarpseCompiler.normalizeForComparison(c.sourceFile())))
                 .map(Component::uniqueName)
                 .collect(Collectors.toCollection(TreeSet::new));
+    }
+
+    /** The level-one files a prepared one-level analysis discovers, closing it afterwards. */
+    static Set<String> discovered(final Map<String, String> files, final Lang lang, final List<String> analysed)
+            throws Exception {
+        try (PreparedAnalysis prepared = new ClarpseProject(project(files), lang, analysed,
+                AnalysisOptions.oneLevel()).prepare()) {
+            return prepared.levelOneFiles();
+        }
+    }
+
+    /**
+     * Compiles two revisions the way a caller comparing them does: prepare both, take the union of
+     * their level-one files, and complete each with it.
+     */
+    static CompileResult[] unionCompile(final Map<String, String> base, final Map<String, String> head,
+                                        final Lang lang, final List<String> analysed) throws Exception {
+        try (PreparedAnalysis baseAnalysis = new ClarpseProject(project(base), lang, analysed,
+                AnalysisOptions.oneLevel()).prepare();
+             PreparedAnalysis headAnalysis = new ClarpseProject(project(head), lang, analysed,
+                     AnalysisOptions.oneLevel()).prepare()) {
+            final Set<String> union = new TreeSet<>(baseAnalysis.levelOneFiles());
+            union.addAll(headAnalysis.levelOneFiles());
+            return new CompileResult[] {baseAnalysis.compile(union), headAnalysis.compile(union)};
+        }
     }
 
     static String json(final OOPSourceCodeModel model) throws Exception {

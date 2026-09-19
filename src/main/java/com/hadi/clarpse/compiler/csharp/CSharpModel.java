@@ -59,6 +59,21 @@ final class CSharpModel {
             this.sourceText = sourceText;
             this.moduleName = moduleName;
         }
+
+        /**
+         * A copy whose type models, nested ones included, are fresh objects, so assembling it leaves
+         * this model as parsed. Assembly merges the parts of a partial type into the first part's
+         * model, which is why a file model assembled more than once must be copied each time. Member
+         * models are shared: assembly only adds imports to them, which is idempotent.
+         */
+        CSharpFileModel assemblyCopy() {
+            final CSharpFileModel copy = new CSharpFileModel(sourceFile, sourceText, moduleName);
+            copy.usings.addAll(usings);
+            for (final CSharpTypeModel type : types) {
+                copy.types.add(type.assemblyCopy());
+            }
+            return copy;
+        }
     }
 
     static final class CSharpUsingModel {
@@ -105,6 +120,36 @@ final class CSharpModel {
         List<CSharpTypeModel> nestedTypes = new ArrayList<>();
         Set<String> imports = new LinkedHashSet<>();
         Map<String, String> usingAliases = new LinkedHashMap<>();
+
+        /** A copy with its own collections and its own copies of its nested types. */
+        CSharpTypeModel assemblyCopy() {
+            final CSharpTypeModel copy = new CSharpTypeModel();
+            copy.kind = kind;
+            copy.name = name;
+            copy.namespaceName = namespaceName;
+            copy.moduleName = moduleName;
+            copy.sourcePath = sourcePath;
+            copy.sourceText = sourceText;
+            copy.componentName = componentName;
+            copy.uniqueName = uniqueName;
+            copy.comment = comment;
+            copy.codeFragment = codeFragment;
+            copy.partial = partial;
+            copy.startOffset = startOffset;
+            copy.endOffset = endOffset;
+            copy.implementationHash = implementationHash;
+            copy.modifiers = new ArrayList<>(modifiers);
+            copy.annotations = new ArrayList<>(annotations);
+            copy.baseTypes = new ArrayList<>(baseTypes);
+            copy.members = new ArrayList<>(members);
+            copy.nestedTypes = new ArrayList<>();
+            for (final CSharpTypeModel nested : nestedTypes) {
+                copy.nestedTypes.add(nested.assemblyCopy());
+            }
+            copy.imports = new LinkedHashSet<>(imports);
+            copy.usingAliases = new LinkedHashMap<>(usingAliases);
+            return copy;
+        }
     }
 
     static final class CSharpMemberModel {

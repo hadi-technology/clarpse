@@ -1,9 +1,5 @@
 package com.hadi.clarpse.compiler.java;
 
-import com.github.javaparser.JavaParser;
-import com.github.javaparser.ParseStart;
-import com.github.javaparser.ParserConfiguration;
-import com.github.javaparser.Providers;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.TypeDeclaration;
 import com.github.javaparser.resolution.Navigator;
@@ -23,36 +19,31 @@ import java.util.Optional;
  *
  * <p>This is the only type solver for repository sources in a one-level Java compile. A name is
  * looked up by its longest indexed prefix, and the type is found inside the declaring file with
- * {@link Navigator#findType}, so nested types resolve through their top-level type. Files are read
- * from the in-memory project files, parsed once per solver and cached.
+ * {@link Navigator#findType}, so nested types resolve through their top-level type. Files come
+ * from the compile's {@link JavaUnitCache}, which parses each once for every solver of the compile.
  *
- * <p>Every file loaded is recorded with the shared {@link JavaLoadTracker}. When the tracker's cap
- * is reached a lookup that would load a new file answers unsolved, and the caller falls back to the
+ * <p>A file not yet parsed is loaded only while the cache's {@link JavaLoadTracker} admits it. Past
+ * the cap a lookup that would load a new file answers unsolved, and the caller falls back to the
  * names the source writes.
+ *
+ * <p>One instance serves one thread: its cache of solved names is not synchronised.
  */
 public final class IndexedTypeSolver implements TypeSolver {
 
     private final JavaDeclarationIndex index;
-    private final Map<String, String> contentByPath;
-    private final JavaLoadTracker tracker;
-    private final JavaParser parser = new JavaParser(new ParserConfiguration()
-            .setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE));
-    private final Map<String, Optional<CompilationUnit>> units = new HashMap<>();
+    private final JavaUnitCache units;
     private final Map<String, SymbolReference<ResolvedReferenceTypeDeclaration>> solved = new HashMap<>();
     private TypeSolver parent;
 
     /**
      * Creates a solver.
      *
-     * @param index         The repository's declaration index.
-     * @param contentByPath The source text of every repository Java file, by path.
-     * @param tracker       Records and caps the files loaded across a compile.
+     * @param index The repository's declaration index.
+     * @param units The compile's shared units.
      */
-    public IndexedTypeSolver(final JavaDeclarationIndex index, final Map<String, String> contentByPath,
-                             final JavaLoadTracker tracker) {
+    public IndexedTypeSolver(final JavaDeclarationIndex index, final JavaUnitCache units) {
         this.index = index;
-        this.contentByPath = contentByPath;
-        this.tracker = tracker;
+        this.units = units;
     }
 
     @Override
@@ -116,17 +107,6 @@ public final class IndexedTypeSolver implements TypeSolver {
     }
 
     private Optional<CompilationUnit> unit(final String path) {
-        final Optional<CompilationUnit> cached = units.get(path);
-        if (cached != null) {
-            return cached;
-        }
-        final String content = contentByPath.get(path);
-        if (content == null || !tracker.admit(path)) {
-            return Optional.empty();
-        }
-        final Optional<CompilationUnit> parsed =
-                parser.parse(ParseStart.COMPILATION_UNIT, Providers.provider(content)).getResult();
-        units.put(path, parsed);
-        return parsed;
+        return units.resolved(path);
     }
 }

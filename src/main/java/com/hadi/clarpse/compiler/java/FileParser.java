@@ -58,11 +58,37 @@ public final class FileParser {
             final ProjectFile file,
             final int index,
             final boolean shallow) {
+        return walk(file, index, () -> parser.parse(ParseStart.COMPILATION_UNIT,
+                new StringProvider(file.content())).getResult(), typeSolver, shallow, null);
+    }
+
+    /**
+     * Walk a single Java file in the given context: taking its unit from the context's shared cache
+     * when it has one, and parsing it otherwise.
+     *
+     * @param context the calling thread's parser context
+     * @param file    the file to walk
+     * @param index   the index of the file (for ordering in parallel processing)
+     * @param shallow whether to attribute method calls without resolving them
+     * @return the parse outcome
+     */
+    public static ParseOutcome parseFile(final ParserContext context, final ProjectFile file, final int index,
+                                         final boolean shallow) {
+        if (context.units() == null) {
+            return parseFile(context.parser(), context.typeSolver(), file, index, shallow);
+        }
+        return walk(file, index, () -> context.units().walked(file.path()), context.typeSolver(), shallow,
+                context);
+    }
+
+    private static ParseOutcome walk(final ProjectFile file, final int index,
+                                     final java.util.function.Supplier<java.util.Optional<CompilationUnit>> unit,
+                                     final CombinedTypeSolver typeSolver, final boolean shallow,
+                                     final ParserContext context) {
         final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
         CompileFailure failure = null;
         try {
-            var parseResult = parser.parse(ParseStart.COMPILATION_UNIT,
-                    new StringProvider(file.content())).getResult();
+            final java.util.Optional<CompilationUnit> parseResult = unit.get();
             if (parseResult.isEmpty()) {
                 LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
                 failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
@@ -72,6 +98,9 @@ public final class FileParser {
                     LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
                     failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
                 } else {
+                    if (context != null) {
+                        context.attach(cu);
+                    }
                     new JavaTreeListener(localModel, file, typeSolver, shallow).visit(cu, null);
                 }
             }

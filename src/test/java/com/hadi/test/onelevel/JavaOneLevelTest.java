@@ -133,17 +133,17 @@ public class JavaOneLevelTest {
         final Map<String, String> base = repository();
         final Map<String, String> head = repository();
         head.put(A, "package app;\nimport lib.Outer;\npublic class A { Outer.Inner inner; deep.C c; }\n");
-        final Set<String> union = new TreeSet<>();
-        union.addAll(new ClarpseProject(project(base), Lang.JAVA, List.of(A), AnalysisOptions.oneLevel())
-                .levelOneFiles());
-        union.addAll(new ClarpseProject(project(head), Lang.JAVA, List.of(A), AnalysisOptions.oneLevel())
-                .levelOneFiles());
-        final AnalysisOptions options = AnalysisOptions.oneLevel().withLevelOnePaths(union);
-        final CompileResult baseResult = oneLevel(project(base), options);
-        final CompileResult headResult = oneLevel(project(head), options);
+        final CompileResult[] both = OneLevelTestSupport.unionCompile(base, head, Lang.JAVA, List.of(A));
+        final CompileResult baseResult = both[0];
+        final CompileResult headResult = both[1];
         assertEquals(baseResult.levelOne().levelOneFiles(), headResult.levelOne().levelOneFiles());
         assertTrue(headResult.levelOne().levelOneFiles().contains(B));
         assertTrue(baseResult.levelOne().levelOneFiles().contains(C));
+        assertEquals(OneLevelTestSupport.discovered(base, Lang.JAVA, List.of(A)),
+                new TreeSet<>(Set.of(B, S, OUTER, HOLDER, OTHER_MODULE)));
+        final AnalysisOptions options = AnalysisOptions.oneLevel().withLevelOnePaths(
+                baseResult.levelOne().levelOneFiles());
+        assertEquals(json(headResult.model()), json(oneLevel(project(head), options).model()));
     }
 
     @Test
@@ -208,6 +208,18 @@ public class JavaOneLevelTest {
     }
 
     @Test
+    public void aPreparedAnalysisCanCompleteTwiceAndRefusesUseAfterClose() throws Exception {
+        final com.hadi.clarpse.compiler.PreparedAnalysis prepared =
+                new ClarpseProject(project(repository()), Lang.JAVA, List.of(A), AnalysisOptions.oneLevel()).prepare();
+        final String first = json(prepared.compile(null).model());
+        assertEquals(first, json(prepared.compile(List.of()).model()));
+        prepared.close();
+        prepared.close();
+        org.junit.Assert.assertThrows(IllegalStateException.class, prepared::levelOneFiles);
+        org.junit.Assert.assertThrows(IllegalStateException.class, () -> prepared.compile(null));
+    }
+
+    @Test
     public void aCompilerWithoutOneLevelSupportSaysSo() throws Exception {
         final com.hadi.clarpse.compiler.ClarpseCompiler plain = (files, paths) ->
                 new CompileResult(new OOPSourceCodeModel());
@@ -215,6 +227,6 @@ public class JavaOneLevelTest {
         org.junit.Assert.assertThrows(UnsupportedOperationException.class,
                 () -> plain.compile(project(repository()), List.of(A), AnalysisOptions.oneLevel()));
         org.junit.Assert.assertThrows(UnsupportedOperationException.class,
-                () -> plain.levelOneFiles(project(repository()), List.of(A), AnalysisOptions.oneLevel()));
+                () -> plain.prepare(project(repository()), List.of(A), AnalysisOptions.oneLevel()));
     }
 }

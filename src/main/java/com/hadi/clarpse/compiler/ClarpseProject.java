@@ -5,7 +5,6 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.Collection;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Represents a source code project that is analyzed to produce an object-oriented representation
@@ -83,20 +82,20 @@ public class ClarpseProject {
     }
 
     /**
-     * The level-one files of this project's analysed files, discovered without modelling them.
+     * Starts a one-level compile: resolves the analysed files and discovers their level-one files,
+     * holding what completing the compile reuses. A caller comparing two revisions prepares each,
+     * takes the union of their {@link PreparedAnalysis#levelOneFiles()}, and completes each with it
+     * through {@link PreparedAnalysis#compile(Collection)}. The caller must close it.
      *
-     * <p>A caller comparing two revisions computes this for each, and passes the union to both
-     * compiles through {@link AnalysisOptions#withLevelOnePaths(Collection)}.
-     *
-     * @return The discovered level-one paths, sorted, excluding the analysed files.
-     * @throws IllegalStateException When this project is not a one-level compile.
+     * @return The prepared analysis.
+     * @throws IllegalStateException When this project's options model no boundary level.
      */
-    public Set<String> levelOneFiles() throws CompileException {
-        if (!this.options.isOneLevel(this.analyzedFilePaths)) {
-            throw new IllegalStateException("Level-one files exist only for a one-level compile of named files.");
+    public PreparedAnalysis prepare() throws CompileException {
+        if (!this.options.modelsBoundary(this.analyzedFilePaths)) {
+            throw new IllegalStateException("Only a one-level compile of named files can be prepared.");
         }
         return CompilerFactory.getParsingTool(this.lang)
-                .levelOneFiles(this.projectFiles, this.analyzedFilePaths, this.options);
+                .prepare(this.projectFiles, this.analyzedFilePaths, this.options);
     }
 
     private int analyzedFileCount() {

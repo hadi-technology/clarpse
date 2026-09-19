@@ -5,6 +5,7 @@ import com.hadi.clarpse.compiler.java.IndexedTypeSolver;
 import com.hadi.clarpse.compiler.java.JavaDeclarationIndex;
 import com.hadi.clarpse.compiler.java.JavaLoadTracker;
 import com.hadi.clarpse.compiler.java.JavaParserFactory;
+import com.hadi.clarpse.compiler.java.JavaUnitCache;
 import com.hadi.clarpse.compiler.java.ParseOutcome;
 import com.hadi.clarpse.compiler.java.ParseResults;
 import com.hadi.clarpse.compiler.java.ParseTask;
@@ -102,40 +103,64 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
     }
 
     /**
-     * Compiles the analysed files and, for a one-level compile, the files they reference.
+     * Resolves the analysed files of a one-level compile and discovers their level-one files.
      *
-     * <p>A one-level compile resolves repository types only through an {@link IndexedTypeSolver}
-     * over a {@link JavaDeclarationIndex} of every Java file, so it never scans a directory and
-     * needs no project directory on disk. The analysed files are resolved in full; the level-one
-     * files their references lead to are then parsed with method calls attributed from written names
-     * only, and their components marked boundary.
+     * <p>Repository types resolve only through an {@link IndexedTypeSolver} over a
+     * {@link JavaDeclarationIndex} of every Java file, so nothing scans a directory and nothing is
+     * written to disk. Every unit is parsed once, into a {@link JavaUnitCache} shared by all parser
+     * threads and by both phases. Level one is the set of files declaring the analysed components'
+     * recorded references, which are fully qualified names. Completing the compile parses the
+     * level-one files with method calls attributed from written names only, and marks their
+     * components boundary.
      */
     @Override
-    public CompileResult compile(final ProjectFiles projectFiles,
-                                 final Collection<String> analyzedFilePaths,
-                                 final AnalysisOptions options) throws CompileException {
-        if (options == null || !options.isOneLevel(analyzedFilePaths)) {
-            return compile(projectFiles, analyzedFilePaths);
-        }
+    public PreparedAnalysis prepare(final ProjectFiles projectFiles,
+                                    final Collection<String> analyzedFilePaths,
+                                    final AnalysisOptions options) throws CompileException {
         final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.JAVA));
         final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.JAVA, analyzedFilePaths);
-        final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
-        final Set<CompileFailure> compileFailures = new HashSet<>();
-        if (focusFiles.isEmpty()) {
-            return new CompileResult(srcModel, compileFailures).withLevelOne(
-                    new LevelOneReport(List.of(), List.of(), List.of(), 0));
-        }
         final OneLevelResolution resolution = new OneLevelResolution(allFiles, options);
         try {
-            final ParseResults focusResults = parseJavaFiles(focusFiles, resolution::newContext, false);
-            final LevelOneSelection selection = LevelOneSelection.select(
-                    discoverLevelOne(focusResults.model(), focusFiles, resolution.index()), options,
-                    focusFiles, allFiles);
-            final ParseResults levelOneResults =
-                    parseJavaFiles(selection.modelled(), resolution::newContext, true);
+            ParseResults focusResults = new ParseResults(new OOPSourceCodeModel(), new HashSet<>());
+            if (!focusFiles.isEmpty()) {
+                focusResults = parseJavaFiles(focusFiles, resolution::newContext, false);
+            }
+            return new JavaPreparedAnalysis(options, focusFiles, allFiles, resolution, focusResults,
+                    discoverLevelOne(focusResults.model(), focusFiles, resolution.index()));
+        } catch (final IllegalStateException e) {
+            resolution.release();
+            throw new CompileException("An error occurred while parsing!", e);
+        }
+    }
+
+    /** A Java one-level compile between discovering level one and modelling it. */
+    private final class JavaPreparedAnalysis extends AbstractPreparedAnalysis {
+
+        private final List<ProjectFile> focusFiles;
+        private final OneLevelResolution resolution;
+        private final ParseResults focusResults;
+
+        JavaPreparedAnalysis(final AnalysisOptions options, final List<ProjectFile> focusFiles,
+                             final List<ProjectFile> allFiles, final OneLevelResolution resolution,
+                             final ParseResults focusResults, final Set<String> discovered) {
+            super(options, focusFiles, allFiles, discovered);
+            this.focusFiles = focusFiles;
+            this.resolution = resolution;
+            this.focusResults = focusResults;
+        }
+
+        @Override
+        protected CompileResult complete(final LevelOneSelection selection) throws CompileException {
+            final ParseResults levelOneResults;
+            try {
+                levelOneResults = parseJavaFiles(selection.modelled(), resolution::newContext, true);
+            } catch (final IllegalStateException e) {
+                throw new CompileException("An error occurred while parsing!", e);
+            }
+            final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
             srcModel.merge(focusResults.model());
             srcModel.merge(levelOneResults.model());
-            compileFailures.addAll(focusResults.failures());
+            final Set<CompileFailure> compileFailures = new HashSet<>(focusResults.failures());
             compileFailures.addAll(levelOneResults.failures());
             CompilerSupport.classifyReferences(srcModel,
                     reference -> resolution.index().declares(reference.invokedComponent()));
@@ -145,26 +170,11 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             beyond.removeAll(selection.modelledPaths());
             return new CompileResult(srcModel, compileFailures).withLevelOne(
                     CompilerSupport.levelOneReport(srcModel, selection, beyond));
-        } catch (final IllegalStateException e) {
-            throw new CompileException("An error occurred while parsing!", e);
         }
-    }
 
-    @Override
-    public Set<String> levelOneFiles(final ProjectFiles projectFiles,
-                                     final Collection<String> analyzedFilePaths,
-                                     final AnalysisOptions options) throws CompileException {
-        final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.JAVA));
-        final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.JAVA, analyzedFilePaths);
-        if (focusFiles.isEmpty()) {
-            return Set.of();
-        }
-        final OneLevelResolution resolution = new OneLevelResolution(allFiles, options);
-        try {
-            final ParseResults focusResults = parseJavaFiles(focusFiles, resolution::newContext, false);
-            return discoverLevelOne(focusResults.model(), focusFiles, resolution.index());
-        } catch (final IllegalStateException e) {
-            throw new CompileException("An error occurred while parsing!", e);
+        @Override
+        protected void release() {
+            resolution.release();
         }
     }
 
@@ -189,8 +199,9 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
     }
 
     /**
-     * What every parser thread of one one-level compile shares: the declaration index, the source
-     * text the solvers read, and the tracker capping how many files they load.
+     * What every parser thread of one one-level compile shares: the declaration index, the parsed
+     * units, and the tracker capping how many files solvers load. {@link #release()} drops the units
+     * and the parser facades built over them, so nothing of the compile outlives it.
      */
     private static final class OneLevelResolution {
 
@@ -201,11 +212,12 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
         private static final int MIN_LOAD_CAP = 1000;
 
         private final JavaDeclarationIndex index;
-        private final Map<String, String> contentByPath = new HashMap<>();
         private final JavaLoadTracker tracker;
+        private final JavaUnitCache units;
 
         OneLevelResolution(final List<ProjectFile> allFiles, final AnalysisOptions options) {
             this.index = JavaDeclarationIndex.of(allFiles);
+            final Map<String, String> contentByPath = new HashMap<>();
             for (final ProjectFile file : allFiles) {
                 if (file.path() != null && file.content() != null) {
                     contentByPath.put(file.path(), file.content());
@@ -213,11 +225,12 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             }
             this.tracker = new JavaLoadTracker(
                     Math.max(MIN_LOAD_CAP, LOADS_PER_BUDGETED_FILE * options.levelOneBudget()));
+            this.units = new JavaUnitCache(contentByPath, tracker);
         }
 
         ParserContext newContext() {
             return new ParserContext(JavaParserFactory.setupIndexedTypeSolver(
-                    new IndexedTypeSolver(index, contentByPath, tracker)));
+                    new IndexedTypeSolver(index, units)), units);
         }
 
         JavaDeclarationIndex index() {
@@ -226,6 +239,11 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
         JavaLoadTracker tracker() {
             return tracker;
+        }
+
+        void release() {
+            units.clear();
+            JavaParserFacade.clearInstances();
         }
     }
 

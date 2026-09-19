@@ -1,5 +1,6 @@
 package com.hadi.clarpse.compiler.python;
 
+import com.hadi.clarpse.compiler.AbstractPreparedAnalysis;
 import com.hadi.clarpse.compiler.AnalysisOptions;
 import com.hadi.clarpse.compiler.ClarpseCompiler;
 import com.hadi.clarpse.compiler.CompileException;
@@ -10,6 +11,7 @@ import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.LevelOneReport;
 import com.hadi.clarpse.compiler.LevelOneSelection;
+import com.hadi.clarpse.compiler.PreparedAnalysis;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.compiler.python.model.PythonFileModel;
@@ -78,84 +80,103 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
     }
 
     /**
-     * Compiles the analysed files and, for a one-level compile, the files they reference, in one
-     * daemon session.
+     * Resolves the analysed files of a one-level compile and discovers their level-one files.
      *
      * <p>Every repository name the resolver writes is its declaring module's name followed by the
      * symbol's, so level one is read off the analysed files' references through a
      * {@link PythonModuleIndex}. The resolver already stops at one level by construction: it reads a
-     * referenced module only for the names of its classes. Level-one files are modelled after the
-     * analysed files, in the same session, and their components marked boundary.
+     * referenced module only for what it declares. Each phase runs in a daemon session of its own
+     * that ends with the phase, so a prepared analysis holds no daemon slot and several may be open
+     * at once; what it keeps between phases is the analysed files' model. Completing the compile
+     * models the level-one files and marks their components boundary.
      */
     @Override
-    public CompileResult compile(final ProjectFiles projectFiles,
-                                 final Collection<String> analyzedFilePaths,
-                                 final AnalysisOptions options) throws CompileException {
-        if (options == null || !options.isOneLevel(analyzedFilePaths)) {
-            return compile(projectFiles, analyzedFilePaths);
-        }
-        final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
-        final Set<CompileFailure> compileFailures = new HashSet<>();
+    public PreparedAnalysis prepare(final ProjectFiles projectFiles,
+                                    final Collection<String> analyzedFilePaths,
+                                    final AnalysisOptions options) throws CompileException {
         final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.PYTHON, analyzedFilePaths);
         final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.PYTHON));
+        final Set<CompileFailure> failures = new HashSet<>();
+        final PythonModuleIndex index = new PythonModuleIndex(allFiles);
         if (focusFiles.isEmpty()) {
-            return new CompileResult(srcModel, compileFailures).withLevelOne(
-                    new LevelOneReport(List.of(), List.of(), List.of(), 0));
+            return new PythonPreparedAnalysis(options, focusFiles, allFiles, Set.of(), index, null,
+                    new OOPSourceCodeModel(), failures, false);
         }
         if (!NodeRuntime.isNodeAvailable()) {
             for (final ProjectFile file : focusFiles) {
-                compileFailures.add(new CompileFailure(file,
+                failures.add(new CompileFailure(file,
                         "Node.js not found. Python parsing requires Node.js.",
                         PythonDaemonException.CODE_NODE_NOT_FOUND));
             }
-            return new CompileResult(srcModel, compileFailures);
+            return new PythonPreparedAnalysis(options, focusFiles, allFiles, Set.of(), index, null,
+                    new OOPSourceCodeModel(), failures, false);
         }
         final String persistDir = projectFiles.projectDir();
-        final PythonModuleIndex index = new PythonModuleIndex(allFiles);
-        final LevelOneSelection selection;
-        try (PythonDaemon daemon = new PythonDaemon()) {
-            daemon.start();
-            try (InterruptWatchdog watchdog = new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
-                daemon.initRepo(persistDir, System.getProperty("clarpse.python.version"));
-                final OOPSourceCodeModel focusModel = modelFiles(focusFiles, persistDir, daemon, compileFailures);
-                selection = LevelOneSelection.select(discoverLevelOne(focusModel, focusFiles, index), options,
-                        focusFiles, allFiles);
-                final OOPSourceCodeModel levelOneModel =
-                        modelFiles(selection.modelled(), persistDir, daemon, compileFailures);
-                srcModel.merge(focusModel);
-                srcModel.merge(levelOneModel);
-            }
-        } catch (final PythonDaemonException e) {
-            throw new CompileException("Python resolver failed: " + e.getMessage(), e);
-        }
-        PythonModelAssembler.resolveFunctionReferences(srcModel);
-        CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(OOPSourceModelConstants.ComponentType.CLASS));
-        CompilerSupport.classifyReferences(srcModel,
-                reference -> index.fileDeclaring(reference.invokedComponent()) != null);
-        CompilerSupport.markBoundary(srcModel, selection.modelledPaths());
-        return new CompileResult(srcModel, compileFailures).withLevelOne(
-                CompilerSupport.levelOneReport(srcModel, selection, List.of()));
+        final OOPSourceCodeModel focusModel = modelInSession(focusFiles, persistDir, failures);
+        return new PythonPreparedAnalysis(options, focusFiles, allFiles,
+                discoverLevelOne(focusModel, focusFiles, index), index, persistDir, focusModel, failures, true);
     }
 
-    @Override
-    public Set<String> levelOneFiles(final ProjectFiles projectFiles,
-                                     final Collection<String> analyzedFilePaths,
-                                     final AnalysisOptions options) throws CompileException {
-        final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.PYTHON, analyzedFilePaths);
-        if (focusFiles.isEmpty() || !NodeRuntime.isNodeAvailable()) {
-            return Set.of();
-        }
-        final String persistDir = projectFiles.projectDir();
-        final PythonModuleIndex index = new PythonModuleIndex(projectFiles.files(Lang.PYTHON));
+    /** Models the given files in a daemon session that ends with this call. */
+    private OOPSourceCodeModel modelInSession(final List<ProjectFile> files, final String persistDir,
+                                              final Set<CompileFailure> failures) throws CompileException {
         try (PythonDaemon daemon = new PythonDaemon()) {
             daemon.start();
             try (InterruptWatchdog watchdog = new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
                 daemon.initRepo(persistDir, System.getProperty("clarpse.python.version"));
-                return discoverLevelOne(modelFiles(focusFiles, persistDir, daemon, new HashSet<>()), focusFiles,
-                        index);
+                return modelFiles(files, persistDir, daemon, failures);
             }
         } catch (final PythonDaemonException e) {
             throw new CompileException("Python resolver failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** A Python one-level compile between discovering level one and modelling it. */
+    private final class PythonPreparedAnalysis extends AbstractPreparedAnalysis {
+
+        private final PythonModuleIndex index;
+        private final String persistDir;
+        private final OOPSourceCodeModel focusModel;
+        private final Set<CompileFailure> focusFailures;
+        private final boolean resolvable;
+
+        PythonPreparedAnalysis(final AnalysisOptions options, final List<ProjectFile> focusFiles,
+                               final List<ProjectFile> allFiles, final Set<String> discovered,
+                               final PythonModuleIndex index, final String persistDir,
+                               final OOPSourceCodeModel focusModel, final Set<CompileFailure> focusFailures,
+                               final boolean resolvable) {
+            super(options, focusFiles, allFiles, discovered);
+            this.index = index;
+            this.persistDir = persistDir;
+            this.focusModel = focusModel;
+            this.focusFailures = focusFailures;
+            this.resolvable = resolvable;
+        }
+
+        @Override
+        protected CompileResult complete(final LevelOneSelection selection) throws CompileException {
+            final Set<CompileFailure> compileFailures = new HashSet<>(focusFailures);
+            final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
+            if (!resolvable) {
+                return new CompileResult(srcModel, compileFailures).withLevelOne(
+                        new LevelOneReport(List.of(), List.of(), List.of(), 0));
+            }
+            srcModel.merge(focusModel);
+            if (!selection.modelled().isEmpty()) {
+                srcModel.merge(modelInSession(selection.modelled(), persistDir, compileFailures));
+            }
+            PythonModelAssembler.resolveFunctionReferences(srcModel);
+            CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(OOPSourceModelConstants.ComponentType.CLASS));
+            CompilerSupport.classifyReferences(srcModel,
+                    reference -> index.fileDeclaring(reference.invokedComponent()) != null);
+            CompilerSupport.markBoundary(srcModel, selection.modelledPaths());
+            return new CompileResult(srcModel, compileFailures).withLevelOne(
+                    CompilerSupport.levelOneReport(srcModel, selection, List.of()));
+        }
+
+        /** Holds no process; the analysed files' model is released with this analysis. */
+        @Override
+        protected void release() {
         }
     }
 

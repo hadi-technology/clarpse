@@ -64,6 +64,19 @@ public final class JavaParserFactory {
         return typeSolver;
     }
 
+    /**
+     * The configuration a {@link JavaUnitCache} parses with: that of {@link #setupParserConfig}
+     * without a symbol resolver, which each thread attaches to a unit before walking it.
+     *
+     * @return A fresh configuration.
+     */
+    public static ParserConfiguration unitParserConfig() {
+        final ParserConfiguration parserConfiguration = new ParserConfiguration();
+        parserConfiguration.setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE);
+        parserConfiguration.setIgnoreAnnotationsWhenAttributingComments(true);
+        return parserConfiguration;
+    }
+
     public static ParserConfiguration setupParserConfig(CombinedTypeSolver typeSolver) {
         final ParserConfiguration parserConfiguration = new ParserConfiguration();
         parserConfiguration.setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE);

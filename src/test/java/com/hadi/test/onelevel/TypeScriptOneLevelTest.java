@@ -168,8 +168,16 @@ public class TypeScriptOneLevelTest {
     @Test
     public void levelOneFilesCanBeDiscoveredWithoutModelling() throws Exception {
         assertEquals(new TreeSet<>(Set.of(B, SHAPE, BARREL, IMPL, ALIASED, REMOTE)),
-                new ClarpseProject(project(repository()), Lang.TYPESCRIPT, List.of(A),
-                        AnalysisOptions.oneLevel()).levelOneFiles());
+                OneLevelTestSupport.discovered(repository(), Lang.TYPESCRIPT, List.of(A)));
+    }
+
+    /** Preparing, reading level one and completing gives the model a direct compile gives. */
+    @Test
+    public void aPreparedAnalysisCompletesToTheDirectCompile() throws Exception {
+        final CompileResult[] both = OneLevelTestSupport.unionCompile(repository(), repository(), Lang.TYPESCRIPT,
+                List.of(A));
+        assertEquals(json(oneLevel.model()), json(both[0].model()));
+        assertEquals(oneLevel.levelOne().levelOneFiles(), both[1].levelOne().levelOneFiles());
     }
 
     @Test

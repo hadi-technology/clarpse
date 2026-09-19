@@ -37,8 +37,10 @@ public interface ClarpseCompiler {
     /**
      * Compiles source code with an optional file scope and the given options.
      *
-     * <p>A compile that is not one-level (see {@link AnalysisOptions#isOneLevel(Collection)}) is
-     * exactly {@link #compile(ProjectFiles, Collection)}.
+     * <p>A compile that models no boundary level (see
+     * {@link AnalysisOptions#modelsBoundary(Collection)}) is exactly
+     * {@link #compile(ProjectFiles, Collection)}. Otherwise it is {@link #prepare} followed by
+     * {@link PreparedAnalysis#compile(Collection)}.
      *
      * @param projectFiles      Files to compile.
      * @param analyzedFilePaths File paths to analyse, {@code null} for all files.
@@ -48,24 +50,26 @@ public interface ClarpseCompiler {
     default CompileResult compile(final ProjectFiles projectFiles,
                                   final Collection<String> analyzedFilePaths,
                                   final AnalysisOptions options) throws CompileException {
-        if (options == null || !options.isOneLevel(analyzedFilePaths)) {
+        if (options == null || !options.modelsBoundary(analyzedFilePaths)) {
             return compile(projectFiles, analyzedFilePaths);
         }
-        throw new UnsupportedOperationException("One-level analysis is not supported by " + getClass().getSimpleName());
+        try (PreparedAnalysis prepared = prepare(projectFiles, analyzedFilePaths, options)) {
+            return prepared.compile(null);
+        }
     }
 
     /**
-     * The level-one files of the given analysed files, without modelling them.
+     * Resolves the analysed files of a one-level compile and discovers their level-one files,
+     * holding what the rest of the compile reuses. See {@link PreparedAnalysis} for its lifetime.
      *
      * @param projectFiles      Files to compile.
      * @param analyzedFilePaths File paths to analyse; must not be {@code null}.
-     * @param options           Analysis options; only the budget-independent discovery is used.
-     * @return The discovered level-one paths, sorted, in the form of {@link ProjectFile#path()},
-     *         excluding the analysed files.
+     * @param options           Options with a depth of 1.
+     * @return The prepared analysis, which the caller must close.
      */
-    default Set<String> levelOneFiles(final ProjectFiles projectFiles,
-                                      final Collection<String> analyzedFilePaths,
-                                      final AnalysisOptions options) throws CompileException {
+    default PreparedAnalysis prepare(final ProjectFiles projectFiles,
+                                     final Collection<String> analyzedFilePaths,
+                                     final AnalysisOptions options) throws CompileException {
         throw new UnsupportedOperationException("One-level analysis is not supported by " + getClass().getSimpleName());
     }
 

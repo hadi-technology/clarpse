@@ -59,6 +59,6 @@ public class ParseTask implements Callable<ParseOutcome> {
             throw new CancellationException("Java parse task for " + path + " cancelled before start.");
         }
         final ParserContext parserContext = context.get();
-        return FileParser.parseFile(parserContext.parser(), parserContext.typeSolver(), file, index, shallow);
+        return FileParser.parseFile(parserContext, file, index, shallow);
     }
 }

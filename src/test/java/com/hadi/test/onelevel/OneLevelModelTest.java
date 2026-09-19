@@ -1,7 +1,6 @@
 package com.hadi.test.onelevel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.hadi.clarpse.compiler.AnalysisDepth;
 import com.hadi.clarpse.compiler.AnalysisOptions;
 import com.hadi.clarpse.compiler.ClarpseProject;
 import com.hadi.clarpse.compiler.CompilerSupport;
@@ -42,10 +41,14 @@ public class OneLevelModelTest {
 
     @Test
     public void optionsDefaultToFullAndOneLevelNeedsNamedFiles() {
-        assertEquals(AnalysisDepth.FULL, AnalysisOptions.full().depth());
-        assertFalse(AnalysisOptions.full().isOneLevel(List.of("/a.java")));
-        assertTrue(AnalysisOptions.oneLevel().isOneLevel(List.of("/a.java")));
-        assertFalse(AnalysisOptions.oneLevel().isOneLevel(null));
+        assertEquals(0, AnalysisOptions.full().depth());
+        assertEquals(1, AnalysisOptions.oneLevel().depth());
+        assertEquals(1, AnalysisOptions.full().withDepth(1).depth());
+        assertThrows(IllegalArgumentException.class, () -> AnalysisOptions.full().withDepth(0));
+        assertThrows(IllegalArgumentException.class, () -> AnalysisOptions.full().withDepth(2));
+        assertFalse(AnalysisOptions.full().modelsBoundary(List.of("/a.java")));
+        assertTrue(AnalysisOptions.oneLevel().modelsBoundary(List.of("/a.java")));
+        assertFalse(AnalysisOptions.oneLevel().modelsBoundary(null));
         assertEquals(AnalysisOptions.DEFAULT_LEVEL_ONE_BUDGET, AnalysisOptions.oneLevel().levelOneBudget());
         assertThrows(IllegalArgumentException.class, () -> AnalysisOptions.oneLevel().withLevelOneBudget(-1));
         assertEquals(Set.of("/b.java"),
@@ -145,9 +148,9 @@ public class OneLevelModelTest {
     }
 
     @Test
-    public void levelOneFilesNeedAOneLevelProject() {
+    public void onlyAOneLevelProjectCanBePrepared() {
         final ClarpseProject project = new ClarpseProject(project(files("/A.java", "class A { }")), Lang.JAVA,
                 List.of("/A.java"));
-        assertThrows(IllegalStateException.class, project::levelOneFiles);
+        assertThrows(IllegalStateException.class, project::prepare);
     }
 }

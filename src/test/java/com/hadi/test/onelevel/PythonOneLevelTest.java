@@ -154,8 +154,16 @@ public class PythonOneLevelTest {
     @Test
     public void levelOneFilesCanBeDiscoveredWithoutModelling() throws Exception {
         assertEquals(new TreeSet<>(Set.of(B, SHAPE, REMOTE, RESPONSES, TEXT)),
-                new ClarpseProject(project(repository()), Lang.PYTHON, List.of(A), AnalysisOptions.oneLevel())
-                        .levelOneFiles());
+                OneLevelTestSupport.discovered(repository(), Lang.PYTHON, List.of(A)));
+    }
+
+    /** Preparing, reading level one and completing gives the model a direct compile gives. */
+    @Test
+    public void aPreparedAnalysisCompletesToTheDirectCompile() throws Exception {
+        final CompileResult[] both = OneLevelTestSupport.unionCompile(repository(), repository(), Lang.PYTHON,
+                List.of(A));
+        assertEquals(json(oneLevel.model()), json(both[0].model()));
+        assertEquals(oneLevel.levelOne().levelOneFiles(), both[1].levelOne().levelOneFiles());
     }
 
     @Test

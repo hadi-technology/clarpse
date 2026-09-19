@@ -138,8 +138,16 @@ public class CSharpOneLevelTest {
     @Test
     public void levelOneFilesCanBeDiscoveredWithoutModelling() throws Exception {
         assertEquals(new TreeSet<>(Set.of(B, SHAPE, OUTER, EXTRA, EXTRA_MORE, REMOTE, HELPER)),
-                new ClarpseProject(project(repository()), Lang.CSHARP, List.of(A), AnalysisOptions.oneLevel())
-                        .levelOneFiles());
+                OneLevelTestSupport.discovered(repository(), Lang.CSHARP, List.of(A)));
+    }
+
+    /** Preparing, reading level one and completing gives the model a direct compile gives. */
+    @Test
+    public void aPreparedAnalysisCompletesToTheDirectCompile() throws Exception {
+        final CompileResult[] both = OneLevelTestSupport.unionCompile(repository(), repository(), Lang.CSHARP,
+                List.of(A));
+        assertEquals(json(oneLevel.model()), json(both[0].model()));
+        assertEquals(oneLevel.levelOne().levelOneFiles(), both[1].levelOne().levelOneFiles());
     }
 
     @Test
