@@ -530,10 +530,18 @@ function resolveRelativeModule(nodeModule, level, currentModule) {
 }
 
 function collectImports(fileText, ctx) {
+  return resolveImportStatements(collectImportStatements(fileText), ctx);
+}
+
+/**
+ * The names a list of import statements binds: `importedModules` maps a local name to the module it
+ * binds, `importedSymbols` a local name to the module member it binds, and `starModules` lists the
+ * modules star-imported from, in order.
+ */
+function resolveImportStatements(statements, ctx) {
   const importedModules = new Map();
   const importedSymbols = new Map();
   const starModules = [];
-  const statements = collectImportStatements(fileText);
   for (const statement of statements) {
     const trimmed = statement.trim();
     if (!trimmed) {
@@ -2013,15 +2021,102 @@ function extractParams(funcNode, ctx, parseNodeType) {
 }
 
 /**
+ * The name node an import clause binds: the alias of `import a.b as m` and `from a import b as m`,
+ * the first segment of `import a.b`, and the name of `from a import b`.
+ */
+function importBindingNode(node, types) {
+  if (node.nodeType === types.ImportFromAs) {
+    return node.d.alias || node.d.name;
+  }
+  const nameParts = node.d.module && node.d.module.d ? node.d.module.d.nameParts : null;
+  if (node.d.alias) {
+    return node.d.alias;
+  }
+  return Array.isArray(nameParts) && nameParts.length ? nameParts[0] : null;
+}
+
+/**
+ * The scope a function body resolves names in. Python binds an import written in a function -- at
+ * any depth of `if`, `try`, `with` or loop -- in that function's scope alone, so its names resolve
+ * the references in that function and in no other, and hide any module-level binding of the same
+ * name there. A name the function also binds some other way -- `Order = fallback` -- may hold
+ * anything wherever it is used, so it resolves through neither the import nor the module. A nested
+ * function's or class's imports are its own. `functionImportNames` holds the names the function's
+ * own imports resolve.
+ */
+function functionScope(functionNode, ctx, parseNodeType) {
+  const types = parseNodeType || {};
+  const statements = [];
+  const importBound = new Set();
+
+  function visit(node, isRoot) {
+    if (!node || typeof node !== 'object' || !node.d) {
+      return;
+    }
+    if (!isRoot && (isFunctionNode(node, parseNodeType) || isClassNode(node, parseNodeType))) {
+      return;
+    }
+    if (node.nodeType === types.Import || node.nodeType === types.ImportFrom) {
+      statements.push(...collectImportStatements(textForNode(node, ctx.fileText)));
+    }
+    if (node.nodeType === types.ImportAs || node.nodeType === types.ImportFromAs) {
+      const bound = nameFromNode(importBindingNode(node, types));
+      if (bound) {
+        importBound.add(bound);
+      }
+    }
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      if (Array.isArray(child)) {
+        child.forEach(item => visit(item, false));
+      } else if (child && typeof child === 'object' && child.d) {
+        visit(child, false);
+      }
+    }
+  }
+
+  visit(functionNode, true);
+  if (!importBound.size) {
+    return ctx;
+  }
+  const rebound = collectLocalNames(functionNode, parseNodeType, false);
+  const importedModules = new Map(ctx.importedModules);
+  const importedSymbols = new Map(ctx.importedSymbols);
+  const localClasses = new Set(ctx.localClasses);
+  for (const name of importBound) {
+    importedModules.delete(name);
+    importedSymbols.delete(name);
+    localClasses.delete(name);
+  }
+  const functionImportNames = new Set();
+  const local = resolveImportStatements(statements, ctx);
+  // `import a.b` is keyed `a.b` and binds `a`.
+  const boundBy = key => key.split('.')[0];
+  for (const [key, moduleName] of local.importedModules) {
+    if (!rebound.has(boundBy(key))) {
+      importedModules.set(key, moduleName);
+      functionImportNames.add(boundBy(key));
+    }
+  }
+  for (const [key, symbol] of local.importedSymbols) {
+    if (!rebound.has(key)) {
+      importedSymbols.set(key, symbol);
+      functionImportNames.add(key);
+    }
+  }
+  return Object.assign({}, ctx, { importedModules, importedSymbols, localClasses, functionImportNames });
+}
+
+/**
  * The names a function binds for itself: its parameters, and every name it assigns, loops over,
  * catches, imports, deletes or otherwise declares anywhere in its body. Python decides scope per
  * function, not per statement -- a name bound anywhere in a function is local throughout it -- so in
  * `models = pick(); models.User()` the `models` is never the module imported under that name, on
  * whichever line the assignment sits. Nested functions and classes contribute only their own name.
  * Lambdas and comprehensions have scopes of their own but are counted in, which can only withhold a
- * reference, never invent one.
+ * reference, never invent one. Without `includeImports`, a name bound only by an import is left out.
  */
-function collectLocalNames(functionNode, parseNodeType) {
+function collectLocalNames(functionNode, parseNodeType, includeImports = true) {
   const names = new Set();
   const globals = new Set();
   const types = parseNodeType || {};
@@ -2065,15 +2160,8 @@ function collectLocalNames(functionNode, parseNodeType) {
       (node.d.targets || []).forEach(addTarget);
     } else if (type === types.Global) {
       (node.d.targets || []).forEach(target => globals.add(nameFromNode(target)));
-    } else if (type === types.ImportAs) {
-      const nameParts = node.d.module && node.d.module.d ? node.d.module.d.nameParts : null;
-      if (node.d.alias) {
-        addTarget(node.d.alias);
-      } else if (Array.isArray(nameParts) && nameParts.length) {
-        addTarget(nameParts[0]);
-      }
-    } else if (type === types.ImportFromAs) {
-      addTarget(node.d.alias || node.d.name);
+    } else if (includeImports && (type === types.ImportAs || type === types.ImportFromAs)) {
+      addTarget(importBindingNode(node, types));
     }
     for (const key of Object.keys(node.d)) {
       const child = node.d[key];
@@ -2159,6 +2247,8 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
   const refs = [];
   const seen = new Set();
   const localNames = collectLocalNames(functionNode, parseNodeType);
+  // A name the function's own imports bind resolves through them.
+  (ctx.functionImportNames || []).forEach(name => localNames.delete(name));
   const moduleMemberTargets = new Set();
   const calleeNames = new Set();
 
@@ -2447,7 +2537,9 @@ function extractMethod(methodNode, ctx, parseNodeType) {
   const cyclo = computeCyclo(methodNode, ctx.fileText);
   // The whole def, not just its suite: a changed signature or decorator is a change too.
   const implementationHash = stableImplementationHash(textForNode(methodNode, ctx.fileText));
-  const bodyReferences = collectBodyReferences(methodNode, ctx, parseNodeType);
+  // Parameter and return annotations are evaluated where the def is; the body in its own scope.
+  const bodyCtx = functionScope(methodNode, ctx, parseNodeType);
+  const bodyReferences = collectBodyReferences(methodNode, bodyCtx, parseNodeType);
   return {
     name,
     signature,
@@ -2459,7 +2551,7 @@ function extractMethod(methodNode, ctx, parseNodeType) {
     staticMethod: isStaticMethod,
     decorators,
     params,
-    locals: collectLocalVariables(methodNode, ctx, parseNodeType),
+    locals: collectLocalVariables(methodNode, bodyCtx, parseNodeType),
     return: returnRef,
     bodyReferences
   };
@@ -2486,7 +2578,9 @@ function extractFunction(functionNode, ctx, parseNodeType) {
   const cyclo = computeCyclo(functionNode, ctx.fileText);
   // The whole def, not just its suite: a changed signature or decorator is a change too.
   const implementationHash = stableImplementationHash(textForNode(functionNode, ctx.fileText));
-  const bodyReferences = collectBodyReferences(functionNode, ctx, parseNodeType);
+  // Parameter and return annotations are evaluated where the def is; the body in its own scope.
+  const bodyCtx = functionScope(functionNode, ctx, parseNodeType);
+  const bodyReferences = collectBodyReferences(functionNode, bodyCtx, parseNodeType);
   return {
     name,
     signature,
@@ -2498,7 +2592,7 @@ function extractFunction(functionNode, ctx, parseNodeType) {
     staticMethod: false,
     decorators,
     params,
-    locals: collectLocalVariables(functionNode, ctx, parseNodeType),
+    locals: collectLocalVariables(functionNode, bodyCtx, parseNodeType),
     return: returnRef,
     bodyReferences
   };
@@ -2711,7 +2805,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         if (method) {
           methods.push(method);
           if (method.name === '__init__') {
-            const instanceFields = extractInstanceFieldsFromMethod(node, classCtx);
+            const instanceFields = extractInstanceFieldsFromMethod(node, functionScope(node, classCtx, parseNodeType));
             for (const instanceField of instanceFields) {
               if (!instanceField || !instanceField.name || fieldNames.has(instanceField.name)) {
                 continue;
