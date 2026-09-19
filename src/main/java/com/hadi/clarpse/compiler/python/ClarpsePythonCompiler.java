@@ -1,5 +1,6 @@
 package com.hadi.clarpse.compiler.python;
 
+import com.hadi.clarpse.compiler.AnalysisOptions;
 import com.hadi.clarpse.compiler.ClarpseCompiler;
 import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
@@ -7,6 +8,8 @@ import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.CompilerSupport;
 import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.Lang;
+import com.hadi.clarpse.compiler.LevelOneReport;
+import com.hadi.clarpse.compiler.LevelOneSelection;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.compiler.python.model.PythonFileModel;
@@ -23,6 +26,7 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
@@ -70,6 +74,123 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(OOPSourceModelConstants.ComponentType.CLASS));
         CompilerSupport.classifyReferences(srcModel);
         return new CompileResult(srcModel, compileFailures);
+    }
+
+    /**
+     * Compiles the analysed files and, for a one-level compile, the files they reference, in one
+     * daemon session.
+     *
+     * <p>Every repository name the resolver writes is its declaring module's name followed by the
+     * symbol's, so level one is read off the analysed files' references through a
+     * {@link PythonModuleIndex}. The resolver already stops at one level by construction: it reads a
+     * referenced module only for the names of its classes. Level-one files are modelled after the
+     * analysed files, in the same session, and their components marked boundary.
+     */
+    @Override
+    public CompileResult compile(final ProjectFiles projectFiles,
+                                 final Collection<String> analyzedFilePaths,
+                                 final AnalysisOptions options) throws CompileException {
+        if (options == null || !options.isOneLevel(analyzedFilePaths)) {
+            return compile(projectFiles, analyzedFilePaths);
+        }
+        final OOPSourceCodeModel srcModel = new OOPSourceCodeModel();
+        final Set<CompileFailure> compileFailures = new HashSet<>();
+        final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.PYTHON, analyzedFilePaths);
+        final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.PYTHON));
+        if (focusFiles.isEmpty()) {
+            return new CompileResult(srcModel, compileFailures).withLevelOne(
+                    new LevelOneReport(List.of(), List.of(), List.of(), 0));
+        }
+        if (!NodeRuntime.isNodeAvailable()) {
+            for (final ProjectFile file : focusFiles) {
+                compileFailures.add(new CompileFailure(file,
+                        "Node.js not found. Python parsing requires Node.js.",
+                        PythonDaemonException.CODE_NODE_NOT_FOUND));
+            }
+            return new CompileResult(srcModel, compileFailures);
+        }
+        final String persistDir = projectFiles.projectDir();
+        final PythonModuleIndex index = new PythonModuleIndex(allFiles);
+        final LevelOneSelection selection;
+        try (PythonDaemon daemon = new PythonDaemon()) {
+            daemon.start();
+            try (InterruptWatchdog watchdog = new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
+                daemon.initRepo(persistDir, System.getProperty("clarpse.python.version"));
+                final OOPSourceCodeModel focusModel = modelFiles(focusFiles, persistDir, daemon, compileFailures);
+                selection = LevelOneSelection.select(discoverLevelOne(focusModel, focusFiles, index), options,
+                        focusFiles, allFiles);
+                final OOPSourceCodeModel levelOneModel =
+                        modelFiles(selection.modelled(), persistDir, daemon, compileFailures);
+                srcModel.merge(focusModel);
+                srcModel.merge(levelOneModel);
+            }
+        } catch (final PythonDaemonException e) {
+            throw new CompileException("Python resolver failed: " + e.getMessage(), e);
+        }
+        CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(OOPSourceModelConstants.ComponentType.CLASS));
+        CompilerSupport.classifyReferences(srcModel,
+                reference -> index.fileDeclaring(reference.invokedComponent()) != null);
+        CompilerSupport.markBoundary(srcModel, selection.modelledPaths());
+        return new CompileResult(srcModel, compileFailures).withLevelOne(
+                CompilerSupport.levelOneReport(srcModel, selection, List.of()));
+    }
+
+    @Override
+    public Set<String> levelOneFiles(final ProjectFiles projectFiles,
+                                     final Collection<String> analyzedFilePaths,
+                                     final AnalysisOptions options) throws CompileException {
+        final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.PYTHON, analyzedFilePaths);
+        if (focusFiles.isEmpty() || !NodeRuntime.isNodeAvailable()) {
+            return Set.of();
+        }
+        final String persistDir = projectFiles.projectDir();
+        final PythonModuleIndex index = new PythonModuleIndex(projectFiles.files(Lang.PYTHON));
+        try (PythonDaemon daemon = new PythonDaemon()) {
+            daemon.start();
+            try (InterruptWatchdog watchdog = new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
+                daemon.initRepo(persistDir, System.getProperty("clarpse.python.version"));
+                return discoverLevelOne(modelFiles(focusFiles, persistDir, daemon, new HashSet<>()), focusFiles,
+                        index);
+            }
+        } catch (final PythonDaemonException e) {
+            throw new CompileException("Python resolver failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** The files declaring what the analysed files' components reference, less the analysed files. */
+    private static Set<String> discoverLevelOne(final OOPSourceCodeModel focusModel,
+                                                final List<ProjectFile> focusFiles,
+                                                final PythonModuleIndex index) {
+        final Set<String> focusPaths = new HashSet<>();
+        focusFiles.forEach(file -> focusPaths.add(file.path()));
+        final Set<String> levelOne = new TreeSet<>();
+        focusModel.components()
+                .filter(component -> focusPaths.contains(component.sourceFile()))
+                .forEach(component -> component.references().forEach(reference -> {
+                    final String file = index.fileDeclaring(reference.invokedComponent());
+                    if (file != null) {
+                        levelOne.add(file);
+                    }
+                }));
+        levelOne.removeAll(focusPaths);
+        return levelOne;
+    }
+
+    private OOPSourceCodeModel modelFiles(final List<ProjectFile> files, final String persistDir,
+                                          final PythonDaemon daemon, final Set<CompileFailure> failures)
+            throws PythonDaemonException, CompileException {
+        final OOPSourceCodeModel model = new OOPSourceCodeModel();
+        for (int i = 0; i < files.size(); i += 1) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new CompileException("Interrupted while parsing Python files.", new InterruptedException());
+            }
+            final ParseOutcome outcome = parseSingleFile(files.get(i), i, persistDir, daemon);
+            model.merge(outcome.model);
+            if (outcome.failure != null) {
+                failures.add(outcome.failure);
+            }
+        }
+        return model;
     }
 
     private ParseResults parsePythonFiles(final List<ProjectFile> files,

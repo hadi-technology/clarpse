@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -55,7 +56,7 @@ public final class PythonDaemon implements AutoCloseable {
     private volatile BufferedWriter writer;
     private volatile BufferedReader reader;
     private int nextId = 1;
-    private Path tempDir;
+    private static Path sharedScript;
     private boolean permitHeld;
 
     public void start() throws PythonDaemonException {
@@ -196,16 +197,31 @@ public final class PythonDaemon implements AutoCloseable {
         }
     }
 
+    /**
+     * The daemon script, extracted with the pyright bundle once per JVM and shared by every daemon.
+     * The bundle is large and identical for every daemon, so extracting it per daemon cost each
+     * compile an unzip per worker. The directory is removed when the JVM exits, or re-extracted if
+     * something removed it in the meantime.
+     */
+    private static synchronized Path sharedDaemonScript() throws IOException {
+        if (sharedScript != null && Files.isRegularFile(sharedScript)) {
+            return sharedScript;
+        }
+        final DaemonResourceExtractor.Extraction extraction = DaemonResourceExtractor.extract(
+                PythonDaemon.class,
+                "clarpse-py-daemon",
+                DAEMON_RESOURCE,
+                PYRIGHT_BUNDLE_RESOURCE
+        );
+        final Path dir = extraction.tempDir();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> FileUtils.deleteQuietly(dir.toFile())));
+        sharedScript = extraction.scriptPath();
+        return sharedScript;
+    }
+
     private Path extractDaemonScript() throws PythonDaemonException {
         try {
-            DaemonResourceExtractor.Extraction extraction = DaemonResourceExtractor.extract(
-                    getClass(),
-                    "clarpse-py-daemon",
-                    DAEMON_RESOURCE,
-                    PYRIGHT_BUNDLE_RESOURCE
-            );
-            tempDir = extraction.tempDir();
-            return extraction.scriptPath();
+            return sharedDaemonScript();
         } catch (final IOException e) {
             throw new PythonDaemonException("Failed to extract daemon resource.",
                     PythonDaemonException.CODE_DAEMON_ERROR, e);
@@ -231,10 +247,6 @@ public final class PythonDaemon implements AutoCloseable {
         process = null;
         writer = null;
         reader = null;
-        if (tempDir != null) {
-            FileUtils.deleteQuietly(tempDir.toFile());
-            tempDir = null;
-        }
         releasePermit();
     }
 
