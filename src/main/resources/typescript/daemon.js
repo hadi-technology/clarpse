@@ -27,7 +27,9 @@ let state = {
   fileMap: new Map(),
   programCache: new Map(),
   programOrder: [],
-  maxPrograms: DEFAULT_MAX_PROGRAMS
+  maxPrograms: DEFAULT_MAX_PROGRAMS,
+  oneLevel: null,
+  shallowBody: false
 };
 
 function writeResponse(id, result) {
@@ -395,11 +397,7 @@ function programFor(index) {
   }
   let program;
   try {
-    program = state.ts.createProgram({
-      rootNames: config.rootNames,
-      options: config.options,
-      projectReferences: config.projectReferences
-    });
+    program = state.ts.createProgram(programSpec(config));
   } catch (err) {
     console.error("[clarpse] PROGRAM_CREATE_FAILED for", config.configPath, err.message);
     config.programFailed = true;
@@ -419,6 +417,26 @@ function programFor(index) {
   return entry;
 }
 
+/**
+ * What a config's program is built from. Ordinarily that is every root file the config claims. In a
+ * one-level analysis it is only the files planned for that config (see `handlePlanOneLevel`), with
+ * `noResolve` so the compiler does not follow imports past them, and without project references,
+ * which would redirect a referenced project's sources to build output a checkout does not have.
+ */
+function programSpec(config) {
+  if (state.oneLevel) {
+    return {
+      rootNames: config.oneLevelRoots || [],
+      options: Object.assign({}, config.options, { noResolve: true })
+    };
+  }
+  return {
+    rootNames: config.rootNames,
+    options: config.options,
+    projectReferences: config.projectReferences
+  };
+}
+
 function touchProgram(index) {
   const at = state.programOrder.indexOf(index);
   if (at >= 0) {
@@ -434,6 +452,14 @@ function touchProgram(index) {
  * program in the repository to answer one question.
  */
 function configIndicesForFile(filePath) {
+  if (state.oneLevel) {
+    // A one-level analysis models exactly the files it planned, each in the program of the config
+    // that owns it, and never builds a program it did not plan.
+    if (state.oneLevel.fileConfig.has(filePath)) {
+      return [state.oneLevel.fileConfig.get(filePath)];
+    }
+    return [];
+  }
   if (state.fileMap.has(filePath)) {
     return [state.fileMap.get(filePath)];
   }
@@ -785,7 +811,7 @@ function buildReferenceModelsFromType(type, checker, kind) {
   if (!entries.length) {
     const displayName = checker.typeToString(type);
     if (displayName && displayName !== "void") {
-      references.push({ kind, external: true, displayName });
+      references.push(externalReference(kind, displayName, isLostType(type, displayName)));
     }
     return references;
   }
@@ -817,7 +843,7 @@ function buildReferenceModelsFromType(type, checker, kind) {
       }
       const key = `${kind}|external|${displayName}`;
       if (!seen.has(key)) {
-        references.push({ kind, external: true, displayName });
+        references.push(externalReference(kind, displayName, !decl || isLostType(entry.type || type, displayName)));
         seen.add(key);
       }
     }
@@ -828,11 +854,38 @@ function buildReferenceModelsFromType(type, checker, kind) {
     }
     const key = `${kind}|external|${displayName}`;
     if (!seen.has(key)) {
-      references.push({ kind, external: true, displayName });
+      references.push(externalReference(kind, displayName, isLostType(null, displayName)));
       seen.add(key);
     }
   }
   return references;
+}
+
+/**
+ * An external reference, flagged `unresolved` in a one-level analysis when the type behind it was
+ * lost rather than found outside the repository. Outside a one-level analysis nothing is flagged,
+ * so ordinary output is unchanged.
+ */
+function externalReference(kind, displayName, lost) {
+  if (state.oneLevel && lost) {
+    return { kind, external: true, unresolved: true, displayName };
+  }
+  return { kind, external: true, displayName };
+}
+
+const ANY_WORD = /(^|[^A-Za-z0-9_$])any([^A-Za-z0-9_$]|$)/;
+
+/**
+ * Whether a type is one a one-level program cannot tell apart from a lost one: `any`, alone or
+ * nested (`any[]`, `Promise<any>`). With `noResolve`, a type declared past level one has no
+ * declaration and collapses to `any` once combined with another type, so an explicitly written
+ * `any` is flagged as well; the flag errs toward "not known".
+ */
+function isLostType(type, displayName) {
+  if (type && type.flags !== undefined && (type.flags & state.ts.TypeFlags.Any)) {
+    return true;
+  }
+  return !!displayName && ANY_WORD.test(displayName);
 }
 
 function buildHeritageReferences(node, checker) {
@@ -1026,6 +1079,11 @@ function buildTopLevelVariableModel(declaration, statement, checker) {
 function collectBodyDetails(body, checker) {
   const references = [];
   const locals = [];
+  if (state.shallowBody) {
+    // A boundary file of a one-level analysis: its bodies reach into types past level one, which
+    // its program does not hold, so they are not read at all.
+    return { references, locals };
+  }
   function visit(node) {
     if (state.ts.isFunctionLike(node) && node !== body) {
       return;
@@ -1492,7 +1550,9 @@ async function handleInitRepo(params) {
     fileMap,
     programCache: new Map(),
     programOrder: [],
-    maxPrograms: resolveMaxPrograms(params)
+    maxPrograms: resolveMaxPrograms(params),
+    oneLevel: null,
+    shallowBody: false
   };
   const fileCount = parsedConfigs.reduce((sum, config) => sum + config.rootNames.length, 0);
   return {
@@ -1532,6 +1592,7 @@ async function handleGetFileModel(params) {
   const checker = entryInfo.entry.checker || entryInfo.entry.program.getTypeChecker();
   const unresolvedBases = [];
   let declarations;
+  state.shallowBody = !!(state.oneLevel && params.boundary);
   try {
     declarations = collectTopLevelDeclarations(ts, entryInfo.source, checker, unresolvedBases);
   } catch (err) {
@@ -1543,6 +1604,7 @@ async function handleGetFileModel(params) {
     }
     throw err;
   }
+  state.shallowBody = false;
   let imports = [];
   try {
     imports = collectImports(ts, entryInfo.source, checker);
@@ -1582,6 +1644,11 @@ function collectImports(ts, source, checker) {
     } catch (err) {
       resolvedFile = null;
     }
+    if (!resolvedFile && state.oneLevel) {
+      // A one-level program does not load what a boundary file imports, so the checker cannot see
+      // the module; its path is still known without loading it.
+      resolvedFile = resolveInternalModule(specifier, source.fileName);
+    }
 
     const names = [];
     const clause = statement.importClause;
@@ -1607,8 +1674,222 @@ function collectImports(ts, source, checker) {
   return results;
 }
 
+/**
+ * The config that owns a file: the one listing it as a root file, otherwise the nearest config whose
+ * directory encloses it. -1 when none does.
+ */
+function owningConfigIndex(filePath) {
+  if (state.fileMap.has(filePath)) {
+    return state.fileMap.get(filePath);
+  }
+  const candidates = [];
+  for (let i = 0; i < state.configs.length; i += 1) {
+    const config = state.configs[i];
+    if (!config.rootNames.length) {
+      continue;
+    }
+    if (filePath === config.dir || filePath.startsWith(config.dir + path.sep)) {
+      candidates.push(i);
+    }
+  }
+  candidates.sort((a, b) => state.configs[b].dir.length - state.configs[a].dir.length);
+  if (candidates.length) {
+    return candidates[0];
+  }
+  return -1;
+}
+
+function optionsForFile(filePath) {
+  const index = owningConfigIndex(filePath);
+  if (index < 0) {
+    return {};
+  }
+  return state.configs[index].options;
+}
+
+/**
+ * The repository source file a module specifier written in `fromFile` resolves to, using the
+ * options of the config that owns `fromFile`, so `paths` and `baseUrl` apply. Path resolution only:
+ * nothing is parsed. Null for a specifier that resolves outside the repository, into
+ * `node_modules`, to a non-TypeScript file, or not at all.
+ */
+function resolveInternalModule(specifier, fromFile) {
+  const ts = state.ts;
+  let resolved;
+  try {
+    resolved = ts.resolveModuleName(specifier, fromFile, optionsForFile(fromFile), ts.sys).resolvedModule;
+  } catch (err) {
+    return null;
+  }
+  if (!resolved || !resolved.resolvedFileName) {
+    return null;
+  }
+  const fileName = resolved.resolvedFileName;
+  if (!isTypeScriptFile(fileName) || !isInternalFile(fileName)) {
+    return null;
+  }
+  return normalizePath(ts, fileName);
+}
+
+function readSource(filePath) {
+  const text = state.ts.sys.readFile(filePath);
+  if (text === undefined) {
+    return null;
+  }
+  return text;
+}
+
+/** Every module a file names: imports, `export ... from`, `require` and dynamic `import()`. */
+function moduleSpecifiers(filePath) {
+  const text = readSource(filePath);
+  if (text === null) {
+    return [];
+  }
+  return state.ts.preProcessFile(text, true, true).importedFiles.map((entry) => entry.fileName);
+}
+
+/** The modules a file re-exports from, read from its syntax alone. */
+function reexportSpecifiers(filePath) {
+  const ts = state.ts;
+  const text = readSource(filePath);
+  if (text === null) {
+    return [];
+  }
+  const source = ts.createSourceFile(filePath, text, ts.ScriptTarget.Latest, false);
+  const specifiers = [];
+  for (const statement of source.statements) {
+    if (ts.isExportDeclaration(statement) && statement.moduleSpecifier
+      && ts.isStringLiteral(statement.moduleSpecifier)) {
+      specifiers.push(statement.moduleSpecifier.text);
+    }
+  }
+  return specifiers;
+}
+
+/**
+ * The level-one files of the given focus files: every repository file a focus file's module
+ * specifiers resolve to, closed over the re-exports of those files, since a name imported through
+ * a barrel (`export * from "./impl"`) is declared in the file the barrel re-exports. Focus files are
+ * excluded. Sorted.
+ */
+function handleDiscoverLevelOne(params) {
+  requireReady();
+  const ts = state.ts;
+  const focus = new Set((params.focusFiles || []).map((file) => normalizePath(ts, file)));
+  const levelOne = new Set();
+  const queue = [];
+  for (const file of focus) {
+    for (const specifier of moduleSpecifiers(file)) {
+      const resolved = resolveInternalModule(specifier, file);
+      if (resolved && !focus.has(resolved) && !levelOne.has(resolved)) {
+        levelOne.add(resolved);
+        queue.push(resolved);
+      }
+    }
+  }
+  while (queue.length) {
+    const file = queue.shift();
+    for (const specifier of reexportSpecifiers(file)) {
+      const resolved = resolveInternalModule(specifier, file);
+      if (resolved && !focus.has(resolved) && !levelOne.has(resolved)) {
+        levelOne.add(resolved);
+        queue.push(resolved);
+      }
+    }
+  }
+  return { levelOne: Array.from(levelOne).sort() };
+}
+
+/**
+ * Switches the daemon to one-level analysis of the given focus and level-one files.
+ *
+ * Each file is assigned to the config that owns it and is modelled in that config's program. The
+ * program of every config that owns a focus file holds all planned files, so a focus file's
+ * references into level one resolve whichever config owns the target; the program of a config that
+ * owns only level-one files holds those. Every planned program also holds its config's own `.d.ts`
+ * root files, so global declarations and module augmentations in the repository still resolve.
+ * Programs built before the plan are discarded.
+ */
+function handlePlanOneLevel(params) {
+  requireReady();
+  const ts = state.ts;
+  const focus = (params.focusFiles || []).map((file) => normalizePath(ts, file));
+  const levelOne = (params.levelOneFiles || []).map((file) => normalizePath(ts, file));
+  const planned = Array.from(new Set([...focus, ...levelOne]));
+  const fileConfig = new Map();
+  const rootsByConfig = new Map();
+  const unowned = [];
+  const addRoot = (index, file) => {
+    if (!rootsByConfig.has(index)) {
+      rootsByConfig.set(index, new Set());
+    }
+    rootsByConfig.get(index).add(file);
+  };
+  const focusConfigs = new Set();
+  for (const file of planned) {
+    const index = owningConfigIndex(file);
+    if (index < 0) {
+      unowned.push(file);
+      continue;
+    }
+    fileConfig.set(file, index);
+    addRoot(index, file);
+  }
+  for (const file of focus) {
+    if (fileConfig.has(file)) {
+      focusConfigs.add(fileConfig.get(file));
+    }
+  }
+  for (const index of focusConfigs) {
+    for (const file of planned) {
+      addRoot(index, file);
+    }
+  }
+  for (let i = 0; i < state.configs.length; i += 1) {
+    delete state.configs[i].oneLevelRoots;
+  }
+  for (const [index, roots] of rootsByConfig) {
+    const config = state.configs[index];
+    for (const root of config.rootNames) {
+      if (root.toLowerCase().endsWith(".d.ts")) {
+        roots.add(normalizePath(ts, root));
+      }
+    }
+    config.oneLevelRoots = Array.from(roots).sort();
+  }
+  state.programCache = new Map();
+  state.programOrder = [];
+  state.oneLevel = { fileConfig };
+  return {
+    plannedFiles: planned.length - unowned.length,
+    programCount: rootsByConfig.size,
+    unowned: unowned.sort()
+  };
+}
+
+function requireReady() {
+  if (!state.ts || !state.configs || !state.configs.length) {
+    const err = new Error("PROGRAM_NOT_READY");
+    err.code = ERROR_CODES.PROGRAM_CREATE_FAILED;
+    throw err;
+  }
+}
+
 async function handleRequest(request) {
   const { id, method, params } = request;
+  if (method === "discoverLevelOne" || method === "planOneLevel") {
+    try {
+      const handler = method === "discoverLevelOne" ? handleDiscoverLevelOne : handlePlanOneLevel;
+      writeResponse(id, handler(params || {}));
+    } catch (err) {
+      if (err.code) {
+        writeError(id, err.code, err.message, err.data);
+      } else {
+        writeError(id, ERROR_CODES.PROGRAM_CREATE_FAILED, err.message);
+      }
+    }
+    return;
+  }
   if (method === "initRepo") {
     try {
       const result = await handleInitRepo(params);

@@ -4,11 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hadi.clarpse.compiler.ClarpseProperties;
+import com.hadi.clarpse.compiler.DaemonProcesses;
 import com.hadi.clarpse.compiler.DaemonResourceExtractor;
 import com.hadi.clarpse.compiler.NodeDaemonGate;
 import com.hadi.clarpse.compiler.python.model.PythonFileModel;
 import com.hadi.clarpse.compiler.typescript.NodeRuntime;
-import org.apache.commons.io.FileUtils;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -16,11 +16,11 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Manages the Node-based Python daemon process and JSON transport.
@@ -55,7 +55,7 @@ public final class PythonDaemon implements AutoCloseable {
     private volatile BufferedWriter writer;
     private volatile BufferedReader reader;
     private int nextId = 1;
-    private Path tempDir;
+    private static Path sharedScript;
     private boolean permitHeld;
 
     public void start() throws PythonDaemonException {
@@ -196,16 +196,34 @@ public final class PythonDaemon implements AutoCloseable {
         }
     }
 
+    /**
+     * The daemon script, extracted with the pyright bundle once per JVM and shared by every daemon.
+     * The bundle is large and identical for every daemon, so extracting it per daemon cost each
+     * compile an unzip per worker. The directory stays registered with Clarpse's temporary
+     * directories and is removed when the JVM exits. If the script or the runtime is gone when a
+     * daemon starts, whatever is left is deleted and both are extracted afresh.
+     */
+    private static synchronized Path sharedDaemonScript() throws IOException {
+        if (sharedScript != null && Files.isRegularFile(sharedScript)
+                && Files.isDirectory(sharedScript.resolveSibling("node_modules").resolve("pyright"))) {
+            return sharedScript;
+        }
+        if (sharedScript != null) {
+            DaemonResourceExtractor.delete(sharedScript.getParent());
+        }
+        final DaemonResourceExtractor.Extraction extraction = DaemonResourceExtractor.extract(
+                PythonDaemon.class,
+                "clarpse-py-daemon",
+                DAEMON_RESOURCE,
+                PYRIGHT_BUNDLE_RESOURCE
+        );
+        sharedScript = extraction.scriptPath();
+        return sharedScript;
+    }
+
     private Path extractDaemonScript() throws PythonDaemonException {
         try {
-            DaemonResourceExtractor.Extraction extraction = DaemonResourceExtractor.extract(
-                    getClass(),
-                    "clarpse-py-daemon",
-                    DAEMON_RESOURCE,
-                    PYRIGHT_BUNDLE_RESOURCE
-            );
-            tempDir = extraction.tempDir();
-            return extraction.scriptPath();
+            return sharedDaemonScript();
         } catch (final IOException e) {
             throw new PythonDaemonException("Failed to extract daemon resource.",
                     PythonDaemonException.CODE_DAEMON_ERROR, e);
@@ -219,22 +237,11 @@ public final class PythonDaemon implements AutoCloseable {
                 request("shutdown", null);
             } catch (final PythonDaemonException ignored) {
             }
-            try {
-                if (!process.waitFor(SHUTDOWN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
-                    process.destroyForcibly();
-                }
-            } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
-                process.destroyForcibly();
-            }
         }
+        DaemonProcesses.terminate(process, SHUTDOWN_TIMEOUT);
         process = null;
         writer = null;
         reader = null;
-        if (tempDir != null) {
-            FileUtils.deleteQuietly(tempDir.toFile());
-            tempDir = null;
-        }
         releasePermit();
     }
 

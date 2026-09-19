@@ -50,6 +50,33 @@ public final class JavaParserFactory {
         return typeSolver;
     }
 
+    /**
+     * Builds the type solver of a one-level compile: the JDK through reflection, and repository
+     * sources through the given index-backed solver alone, so no lookup scans a directory.
+     *
+     * @param indexedTypeSolver Resolves repository types.
+     * @return The combined solver.
+     */
+    public static CombinedTypeSolver setupIndexedTypeSolver(final IndexedTypeSolver indexedTypeSolver) {
+        final CombinedTypeSolver typeSolver = new CombinedTypeSolver();
+        typeSolver.add(new ReflectionTypeSolver());
+        typeSolver.add(indexedTypeSolver);
+        return typeSolver;
+    }
+
+    /**
+     * The configuration a {@link JavaUnitCache} parses with: that of {@link #setupParserConfig}
+     * without a symbol resolver, which each thread attaches to a unit before walking it.
+     *
+     * @return A fresh configuration.
+     */
+    public static ParserConfiguration unitParserConfig() {
+        final ParserConfiguration parserConfiguration = new ParserConfiguration();
+        parserConfiguration.setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE);
+        parserConfiguration.setIgnoreAnnotationsWhenAttributingComments(true);
+        return parserConfiguration;
+    }
+
     public static ParserConfiguration setupParserConfig(CombinedTypeSolver typeSolver) {
         final ParserConfiguration parserConfiguration = new ParserConfiguration();
         parserConfiguration.setLanguageLevel(ParserConfiguration.LanguageLevel.BLEEDING_EDGE);

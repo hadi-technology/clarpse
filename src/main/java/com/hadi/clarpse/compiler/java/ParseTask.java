@@ -23,11 +23,26 @@ public class ParseTask implements Callable<ParseOutcome> {
     private final ThreadLocal<ParserContext> context;
     private final ProjectFile file;
     private final int index;
+    private final boolean shallow;
 
     public ParseTask(final ThreadLocal<ParserContext> context, final ProjectFile file, final int index) {
+        this(context, file, index, false);
+    }
+
+    /**
+     * A task that may attribute method calls without resolving them.
+     *
+     * @param context Thread-local parser context.
+     * @param file    File to parse.
+     * @param index   Position of the file, for deterministic ordering.
+     * @param shallow Whether to attribute method calls from written names only.
+     */
+    public ParseTask(final ThreadLocal<ParserContext> context, final ProjectFile file, final int index,
+                     final boolean shallow) {
         this.context = context;
         this.file = file;
         this.index = index;
+        this.shallow = shallow;
     }
 
     @Override
@@ -44,6 +59,6 @@ public class ParseTask implements Callable<ParseOutcome> {
             throw new CancellationException("Java parse task for " + path + " cancelled before start.");
         }
         final ParserContext parserContext = context.get();
-        return FileParser.parseFile(parserContext.parser(), parserContext.typeSolver(), file, index);
+        return FileParser.parseFile(parserContext, file, index, shallow);
     }
 }

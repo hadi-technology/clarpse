@@ -16,6 +16,7 @@ public class ClarpseProject {
     private final ProjectFiles projectFiles;
     private final Lang lang;
     private final Collection<String> analyzedFilePaths;
+    private final AnalysisOptions options;
     private CompileResult compileResult;
 
     public ClarpseProject(ProjectFiles pfs, Lang lang) {
@@ -25,7 +26,27 @@ public class ClarpseProject {
     public ClarpseProject(final ProjectFiles pfs,
                           final Lang lang,
                           final Collection<String> pathsToAnalyze) {
+        this(pfs, lang, pathsToAnalyze, AnalysisOptions.full());
+    }
+
+    /**
+     * A project whose compile uses the given options.
+     *
+     * @param pfs            The project's files.
+     * @param lang           The language to compile.
+     * @param pathsToAnalyze The files to analyse, {@code null} for all files of the language.
+     * @param options        Analysis options; {@code null} is read as {@link AnalysisOptions#full()}.
+     */
+    public ClarpseProject(final ProjectFiles pfs,
+                          final Lang lang,
+                          final Collection<String> pathsToAnalyze,
+                          final AnalysisOptions options) {
         validateInput(lang);
+        if (options == null) {
+            this.options = AnalysisOptions.full();
+        } else {
+            this.options = options;
+        }
         this.projectFiles = pfs;
         this.lang = lang;
         if (pathsToAnalyze == null) {
@@ -49,7 +70,8 @@ public class ClarpseProject {
                     + " source files (from " + totalLangFileCount + " available files)..");
             long startTime = System.nanoTime();
             final ClarpseCompiler parsingTool = CompilerFactory.getParsingTool(this.lang);
-            CompileResult compileRes = parsingTool.compile(this.projectFiles, this.analyzedFilePaths);
+            CompileResult compileRes = parsingTool.compile(this.projectFiles, this.analyzedFilePaths,
+                    this.options);
             long duration = (System.nanoTime() - startTime) / 1000000;
             LOGGER.info("Parsed " + compileRes.model().size() + " components from "
                     + analyzedLangFileCount + " " + this.lang.value() + " files in " + duration + " ms.");
@@ -57,6 +79,23 @@ public class ClarpseProject {
         }
         LOGGER.info("Returning generated compile result ..");
         return this.compileResult;
+    }
+
+    /**
+     * Starts a one-level compile: resolves the analysed files and discovers their level-one files,
+     * holding what completing the compile reuses. A caller comparing two revisions prepares each,
+     * takes the union of their {@link PreparedAnalysis#levelOneFiles()}, and completes each with it
+     * through {@link PreparedAnalysis#compile(Collection)}. The caller must close it.
+     *
+     * @return The prepared analysis.
+     * @throws IllegalStateException When this project's options model no boundary level.
+     */
+    public PreparedAnalysis prepare() throws CompileException {
+        if (!this.options.modelsBoundary(this.analyzedFilePaths)) {
+            throw new IllegalStateException("Only a one-level compile of named files can be prepared.");
+        }
+        return CompilerFactory.getParsingTool(this.lang)
+                .prepare(this.projectFiles, this.analyzedFilePaths, this.options);
     }
 
     private int analyzedFileCount() {
