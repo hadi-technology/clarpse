@@ -189,8 +189,11 @@ These rules hold of the implementation. A change that breaks one changes what th
   explicitly written `any` is flagged the same way, since the two cannot be told apart.
 - **TypeScript discovery** does not follow `/// <reference path>` directives, and does not find
   `declare global` blocks in modules that are not `.d.ts` files.
-- **Java boundary files** attribute method calls from written names, so an edge that only
-  method-chain resolution would find is missing from a boundary component.
+- **Java boundary files** attribute method calls from written names. A call on a type named as its
+  receiver (`Util.make()`, `deep.D.make()`) is attributed. A call on a variable (`c.go()`) is not,
+  since naming the variable's type needs the resolution the boundary pass skips, and neither is any
+  edge found only by resolving a chain of calls. The variable's own declaration still references its
+  type.
 - **C# extension methods.** An extension method's link onto the type it extends is made by the file
   declaring the extension. An extension declared in a file that is not modelled links nothing.
 - **C# preprocessor conditionals** are not evaluated by the declaration scanner, which, like the
