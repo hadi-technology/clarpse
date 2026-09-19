@@ -2,7 +2,6 @@ package com.hadi.clarpse.compiler;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -11,6 +10,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -28,7 +29,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -58,23 +58,6 @@ import java.util.zip.ZipInputStream;
 public class ProjectFiles implements AutoCloseable {
 
     private static final Logger LOGGER = LogManager.getLogger(ProjectFiles.class);
-
-    /**
-     * Temp dirs created by {@link #persistDir()} that have not yet been cleaned up. A single
-     * JVM-shutdown hook deletes whatever remains, so an interrupted or crashed process can no longer
-     * leak extracted-source temp dirs. Normal cleanup is still {@link #close()} (and the in-place
-     * cleanup in {@link #shiftSubDirsLeft()}), which also deregister here — so in steady state this
-     * set only holds currently-open projects and does not grow.
-     */
-    private static final Set<String> PENDING_TEMP_DIRS = ConcurrentHashMap.newKeySet();
-
-    static {
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            for (final String dir : PENDING_TEMP_DIRS) {
-                FileUtils.deleteQuietly(new File(dir));
-            }
-        }, "clarpse-projectfiles-tempdir-cleanup"));
-    }
 
     private static final int MAX_ZIP_ENTRIES = ClarpseProperties.getInt("clarpse.zip.maxEntries", 100000);
     private static final long MAX_TOTAL_UNCOMPRESSED_BYTES =
@@ -179,12 +162,7 @@ public class ProjectFiles implements AutoCloseable {
         this.configFiles.forEach((path, content) -> shiftedConfigFiles.put(shiftConfigPath(path), content));
         this.configFiles.clear();
         this.configFiles.putAll(shiftedConfigFiles);
-        if (this.tempProjectDir && this.projectDir != null && !this.projectDir.isEmpty()) {
-            FileUtils.deleteQuietly(new File(this.projectDir));
-            PENDING_TEMP_DIRS.remove(this.projectDir);
-            this.tempProjectDir = false;
-            this.projectDir = null;
-        }
+        deleteTempDir();
     }
 
     public int size() {
@@ -413,20 +391,57 @@ public class ProjectFiles implements AutoCloseable {
         return this.tempProjectDir;
     }
 
+    /**
+     * Deletes the temporary directory this instance wrote its files to, if it wrote them. A later
+     * {@link #projectDir()} writes them again. A directory this instance was read from is never
+     * deleted.
+     */
     @Override
     public void close() {
-        if (this.tempProjectDir && this.projectDir != null && !this.projectDir.isEmpty()) {
-            FileUtils.deleteQuietly(new File(this.projectDir));
-            PENDING_TEMP_DIRS.remove(this.projectDir);
+        deleteTempDir();
+    }
+
+    /** Whether this instance has written its files to a temporary directory not yet deleted. */
+    boolean hasTempDir() {
+        return this.tempProjectDir && this.projectDir != null && !this.projectDir.isEmpty();
+    }
+
+    /** Deletes the temporary directory this instance wrote its files to, if there is one. */
+    void deleteTempDir() {
+        if (hasTempDir()) {
+            ClarpseTempDirs.delete(Paths.get(this.projectDir));
             this.tempProjectDir = false;
+            this.projectDir = null;
         }
+    }
+
+    /**
+     * Deletes the temporary directories Clarpse left under {@code java.io.tmpdir}: those whose names
+     * start with {@code clarpse-}, last modified longer ago than {@code olderThan}, and not open in
+     * this JVM.
+     *
+     * <p>Every temporary directory Clarpse creates is deleted when its owner is closed, and by a JVM
+     * shutdown hook otherwise. A process that is killed, or dies out of memory, runs no hook; calling
+     * this at startup, or periodically, removes what such a process left. Directories another
+     * running JVM has open are not known to this one, so {@code olderThan} must exceed the longest
+     * analysis any such JVM runs.
+     *
+     * @param olderThan The age past which a directory is stale.
+     * @return The directories deleted.
+     */
+    public static List<Path> deleteStaleTempDirs(final Duration olderThan) {
+        return ClarpseTempDirs.deleteStale(olderThan);
     }
 
     private void persistDir() {
         long startTime = System.currentTimeMillis();
         Set<String> dirs = new HashSet<>();
-        final String rootDir = System.getProperty("java.io.tmpdir")
-                + File.separator + RandomStringUtils.randomAlphanumeric(16);
+        final String rootDir;
+        try {
+            rootDir = ClarpseTempDirs.create("src").toString();
+        } catch (final IOException e) {
+            throw new UncheckedIOException("Could not create a temporary directory for the project files.", e);
+        }
         LOGGER.info("Persisting files to " + rootDir);
         dirs.add(rootDir);
         this.langToFilesMap.forEach((lang, projectFiles) -> projectFiles.forEach(projectFile -> {
@@ -465,7 +480,6 @@ public class ProjectFiles implements AutoCloseable {
         LOGGER.info(this.size() + " files were persisted in " + elapsedTime + " ms");
         this.projectDir = rootDir;
         this.tempProjectDir = true;
-        PENDING_TEMP_DIRS.add(rootDir);   // shutdown-hook backstop if close() never runs
     }
 
     private String resolvePersistedRelativePath(final String projectPath) {

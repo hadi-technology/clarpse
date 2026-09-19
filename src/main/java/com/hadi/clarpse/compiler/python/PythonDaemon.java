@@ -4,11 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hadi.clarpse.compiler.ClarpseProperties;
+import com.hadi.clarpse.compiler.DaemonProcesses;
 import com.hadi.clarpse.compiler.DaemonResourceExtractor;
 import com.hadi.clarpse.compiler.NodeDaemonGate;
 import com.hadi.clarpse.compiler.python.model.PythonFileModel;
 import com.hadi.clarpse.compiler.typescript.NodeRuntime;
-import org.apache.commons.io.FileUtils;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -200,8 +200,9 @@ public final class PythonDaemon implements AutoCloseable {
     /**
      * The daemon script, extracted with the pyright bundle once per JVM and shared by every daemon.
      * The bundle is large and identical for every daemon, so extracting it per daemon cost each
-     * compile an unzip per worker. The directory is removed when the JVM exits, or re-extracted if
-     * something removed it in the meantime.
+     * compile an unzip per worker. The directory stays registered with Clarpse's temporary
+     * directories and is removed when the JVM exits, or re-extracted if something removed it in the
+     * meantime.
      */
     private static synchronized Path sharedDaemonScript() throws IOException {
         if (sharedScript != null && Files.isRegularFile(sharedScript)) {
@@ -213,8 +214,6 @@ public final class PythonDaemon implements AutoCloseable {
                 DAEMON_RESOURCE,
                 PYRIGHT_BUNDLE_RESOURCE
         );
-        final Path dir = extraction.tempDir();
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> FileUtils.deleteQuietly(dir.toFile())));
         sharedScript = extraction.scriptPath();
         return sharedScript;
     }
@@ -235,15 +234,8 @@ public final class PythonDaemon implements AutoCloseable {
                 request("shutdown", null);
             } catch (final PythonDaemonException ignored) {
             }
-            try {
-                if (!process.waitFor(SHUTDOWN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
-                    process.destroyForcibly();
-                }
-            } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
-                process.destroyForcibly();
-            }
         }
+        DaemonProcesses.terminate(process, SHUTDOWN_TIMEOUT);
         process = null;
         writer = null;
         reader = null;

@@ -8,11 +8,15 @@ import java.util.TreeSet;
 
 /**
  * The shared part of every language's {@link PreparedAnalysis}: the discovered level-one set, the
- * choice of the level-one files to model from it, the caller's paths and the budget, and the
- * closed state.
+ * choice of the level-one files to model from it, the caller's paths and the budget, the closed
+ * state, and the temporary directory the analysis made its {@link ProjectFiles} write.
  *
  * <p>A language supplies the discovery, done before construction, {@link #complete} to model a
- * chosen level one, and {@link #release} to free what it holds.
+ * chosen level one, and {@link #release} to free what it holds, and builds the analysis through
+ * {@link #prepareCleanly}. When preparing made the project files write themselves to a temporary
+ * directory, that directory belongs to the analysis: it is deleted when preparing fails, and
+ * otherwise when the analysis is closed. A directory the project files had written before is left
+ * to their owner.
  */
 public abstract class AbstractPreparedAnalysis implements PreparedAnalysis {
 
@@ -20,7 +24,47 @@ public abstract class AbstractPreparedAnalysis implements PreparedAnalysis {
     private final List<ProjectFile> analysed;
     private final List<ProjectFile> languageFiles;
     private final Set<String> discovered;
+    private ProjectFiles ownedTempDir;
     private boolean closed;
+
+    /** Builds a language's prepared analysis. */
+    @FunctionalInterface
+    public interface Preparation {
+
+        /**
+         * Resolves the analysed files and discovers level one.
+         *
+         * @return The prepared analysis.
+         */
+        AbstractPreparedAnalysis prepare() throws CompileException;
+    }
+
+    /**
+     * Runs a preparation, and takes ownership of the temporary directory it made the project files
+     * write: the directory is deleted at once if the preparation fails, and when the analysis is
+     * closed if it succeeds.
+     *
+     * @param projectFiles The project files the preparation reads.
+     * @param preparation  The preparation.
+     * @return The prepared analysis.
+     */
+    public static PreparedAnalysis prepareCleanly(final ProjectFiles projectFiles, final Preparation preparation)
+            throws CompileException {
+        final boolean hadTempDir = projectFiles.hasTempDir();
+        boolean prepared = false;
+        try {
+            final AbstractPreparedAnalysis analysis = preparation.prepare();
+            if (!hadTempDir && projectFiles.hasTempDir()) {
+                analysis.ownedTempDir = projectFiles;
+            }
+            prepared = true;
+            return analysis;
+        } finally {
+            if (!prepared && !hadTempDir) {
+                projectFiles.deleteTempDir();
+            }
+        }
+    }
 
     /**
      * Creates the shared state.
@@ -68,11 +112,22 @@ public abstract class AbstractPreparedAnalysis implements PreparedAnalysis {
     /** Frees what this analysis holds. Called once, by the first {@link #close()}. */
     protected abstract void release();
 
+    /**
+     * Releases what the analysis holds, and deletes the temporary directory it made its project
+     * files write, even when releasing fails.
+     */
     @Override
     public final void close() {
         if (!closed) {
             closed = true;
-            release();
+            try {
+                release();
+            } finally {
+                if (ownedTempDir != null) {
+                    ownedTempDir.deleteTempDir();
+                    ownedTempDir = null;
+                }
+            }
         }
     }
 

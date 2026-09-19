@@ -4,10 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hadi.clarpse.compiler.ClarpseProperties;
+import com.hadi.clarpse.compiler.DaemonProcesses;
 import com.hadi.clarpse.compiler.DaemonResourceExtractor;
 import com.hadi.clarpse.compiler.NodeDaemonGate;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptFileModel;
-import org.apache.commons.io.FileUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -314,20 +314,13 @@ public final class TypeScriptDaemon implements AutoCloseable {
                 request("shutdown", null);
             } catch (final TypeScriptDaemonException ignored) {
             }
-            try {
-                if (!process.waitFor(SHUTDOWN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
-                    process.destroyForcibly();
-                }
-            } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
-                process.destroyForcibly();
-            }
         }
+        DaemonProcesses.terminate(process, SHUTDOWN_TIMEOUT);
         process = null;
         writer = null;
         reader = null;
         if (tempDir != null) {
-            FileUtils.deleteQuietly(tempDir.toFile());
+            DaemonResourceExtractor.delete(tempDir);
             tempDir = null;
         }
         releasePermit();

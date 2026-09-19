@@ -11,6 +11,10 @@ import java.util.zip.ZipInputStream;
 
 /**
  * Extracts daemon scripts and bundled runtime archives to temp directories.
+ *
+ * <p>An extraction's directory is named {@code clarpse-<kind>-<random>} and stays registered with
+ * the other temporary directories Clarpse creates until {@link #delete(Path)} removes it, or the JVM
+ * exits.
  */
 public final class DaemonResourceExtractor {
 
@@ -24,13 +28,25 @@ public final class DaemonResourceExtractor {
         if (ownerClass == null) {
             throw new IllegalArgumentException("ownerClass cannot be null.");
         }
-        final Path tempDir = Files.createTempDirectory(tempDirPrefix);
-        final Path scriptPath = tempDir.resolve("daemon.js");
-        copyResource(ownerClass, scriptResource, scriptPath);
-        unzipResource(ownerClass, bundleZipResource, tempDir);
-        scriptPath.toFile().deleteOnExit();
-        tempDir.toFile().deleteOnExit();
-        return new Extraction(tempDir, scriptPath);
+        final Path tempDir = ClarpseTempDirs.create(tempDirPrefix);
+        try {
+            final Path scriptPath = tempDir.resolve("daemon.js");
+            copyResource(ownerClass, scriptResource, scriptPath);
+            unzipResource(ownerClass, bundleZipResource, tempDir);
+            return new Extraction(tempDir, scriptPath);
+        } catch (final IOException | RuntimeException e) {
+            ClarpseTempDirs.delete(tempDir);
+            throw e;
+        }
+    }
+
+    /**
+     * Deletes a directory {@link #extract} created.
+     *
+     * @param tempDir The extraction's directory; {@code null} is ignored.
+     */
+    public static void delete(final Path tempDir) {
+        ClarpseTempDirs.delete(tempDir);
     }
 
     private static void copyResource(final Class<?> ownerClass,

@@ -156,6 +156,13 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
     public PreparedAnalysis prepare(final ProjectFiles projectFiles,
                                     final Collection<String> analyzedFilePaths,
                                     final AnalysisOptions options) throws CompileException {
+        return AbstractPreparedAnalysis.prepareCleanly(projectFiles,
+                () -> prepareAnalysis(projectFiles, analyzedFilePaths, options));
+    }
+
+    private AbstractPreparedAnalysis prepareAnalysis(final ProjectFiles projectFiles,
+                                                     final Collection<String> analyzedFilePaths,
+                                                     final AnalysisOptions options) throws CompileException {
         final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.TYPESCRIPT,
                 analyzedFilePaths);
         final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.TYPESCRIPT));
