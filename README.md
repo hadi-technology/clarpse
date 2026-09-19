@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>11.4.7</version>
+  <version>11.5.0</version>
 </dependency>
 ```
 
@@ -264,19 +264,54 @@ System.out.println(methodComponent.codeFragment());
 ```
 
 ## One-Level Analysis
-To model a few files of a large repository together with the files they reference, without
-compiling the rest of it, pass the files to analyse and one-level options:
+To model a few files of a large repository together with the repository files they reference,
+without compiling the rest of it, give the files to analyse and a depth of 1. The referenced files
+are the boundary level: their components are marked `isBoundary()`.
 
 ```java
-final CompileResult result = new ClarpseProject(projectFiles, Lang.JAVA,
-        List.of("/src/main/java/app/OrderController.java"), AnalysisOptions.oneLevel()).result();
-result.levelOne().levelOneFiles();   // the referenced files that were modelled
+final List<String> analysed = List.of("/src/main/java/app/OrderController.java");
+final AnalysisOptions options = AnalysisOptions.full().withDepth(1);   // same as AnalysisOptions.oneLevel()
+try (ProjectFiles files = new ProjectFiles("/path/to/repository")) {
+    final CompileResult result = new ClarpseProject(files, Lang.JAVA, analysed, options).result();
+    result.levelOne().levelOneFiles();   // the referenced files that were modelled
+}
 ```
 
-Components of the referenced files are marked `isBoundary()`, and a reference whose target is
-declared in the repository but was not loaded reports `isNotLoaded()` rather than `isExternal()`.
-See `docs/one-level-analysis.md` for how each language finds the referenced files, what the model
-promises, and how to compare two revisions.
+To compare two revisions, prepare each, join their level-one sets, and complete each with the
+union, so a type loaded in one revision is loaded in the other. Preparing resolves the analysed
+files once; completing reuses that work.
+
+```java
+try (PreparedAnalysis base = new ClarpseProject(baseFiles, lang, analysed, options).prepare();
+     PreparedAnalysis head = new ClarpseProject(headFiles, lang, analysed, options).prepare()) {
+    final Set<String> union = new TreeSet<>(base.levelOneFiles());
+    union.addAll(head.levelOneFiles());
+    final CompileResult baseResult = base.compile(union);
+    final CompileResult headResult = head.compile(union);
+}
+```
+
+A reference is internal, external, or **not loaded**: declared in the repository but absent from
+the model. The three sets are disjoint, so in this mode a consumer that read
+`internalDependencies()` and `externalDependencies()` must also read `notLoadedDependencies()`.
+Only depth 1 is offered. See `docs/one-level-analysis.md` for how each language finds the
+referenced files, what the model promises, why deeper levels are not offered, and the limits.
+
+## Cleanup
+Nothing an analysis creates outlives it:
+- **Close what you open.** `ProjectFiles` and `PreparedAnalysis` are `AutoCloseable`; use
+  try-with-resources. Closing is idempotent and also happens on failure and interruption.
+- **Copies of sources.** TypeScript and Python resolve against files on disk, so `ProjectFiles`
+  writes itself to a temporary directory on first use and reuses it; `close()` deletes it. A copy a
+  one-level analysis caused is deleted when that analysis closes, or when preparing it fails. Java and
+  C# one-level compiles write nothing to disk.
+- **Resolver processes** (the Node daemons for TypeScript and Python) are stopped and waited for
+  when their session ends, including when the calling thread is interrupted.
+- **Temporary directories** are all named `clarpse-<kind>-<random>` under `java.io.tmpdir` and are
+  deleted by a JVM shutdown hook if still open at exit. A process killed without running its hooks
+  can leave some behind: `ProjectFiles.deleteStaleTempDirs(Duration.ofHours(6))` deletes the
+  `clarpse-` directories older than the given age that this JVM does not have open, and returns
+  them. Run it at startup, with an age longer than the longest analysis on the host.
 
 ## Failure Contract
 - Java/C#/TypeScript/Python all report recoverable issues in `CompileResult.failures()` using

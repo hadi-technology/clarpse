@@ -55,7 +55,9 @@ Layer 3: TypeScript daemon (Node)
 
 # One-Level Analysis
 A one-level compile (see `docs/one-level-analysis.md`) builds programs from the analysed and
-level-one files only.
+level-one files only. It runs in two phases, each in a daemon session of its own that is stopped,
+and waited for, when the phase ends: `ClarpseProject.prepare()` discovers level one, and
+`PreparedAnalysis.compile` plans and models it. Between the phases only the discovered set is held.
 1) `discoverLevelOne` finds level one without building a program. It reads each analysed file's
    module specifiers with `ts.preProcessFile`, resolves them with `ts.resolveModuleName` using the
    options of the config owning the file, and follows the re-exports of the files it reaches.

@@ -29,45 +29,112 @@ repository.
 ## Using it
 
 ```java
-final ProjectFiles files = new ProjectFiles("/path/to/repository");
 final List<String> analysed = List.of("/src/main/java/app/OrderController.java");
+final AnalysisOptions options = AnalysisOptions.full().withDepth(1);   // or AnalysisOptions.oneLevel()
 
-final CompileResult result = new ClarpseProject(files, Lang.JAVA, analysed,
-        AnalysisOptions.oneLevel()).result();
+try (ProjectFiles files = new ProjectFiles("/path/to/repository")) {
+    final CompileResult result = new ClarpseProject(files, Lang.JAVA, analysed, options).result();
 
-final OOPSourceCodeModel model = result.model();
-final LevelOneReport levelOne = result.levelOne();
-levelOne.levelOneFiles();         // level-one files, modelled
-levelOne.heldByBudget();          // level-one files the budget kept out
-levelOne.notLoadedReferences();   // references left in the not-loaded state
+    final OOPSourceCodeModel model = result.model();
+    final LevelOneReport levelOne = result.levelOne();
+    levelOne.levelOneFiles();         // level-one files, modelled
+    levelOne.heldByBudget();          // level-one files the budget kept out
+    levelOne.notLoadedReferences();   // references left in the not-loaded state
+}
 ```
 
 Every file of the language must be in `ProjectFiles`, not only the analysed ones. The analysed
 paths use the form of `ProjectFile.path()`. A compile given no analysed paths (`null`) analyses
 every file, and is then an ordinary compile.
 
+### Depth
+
+`AnalysisOptions.depth()` counts the levels of referenced files modelled past the analysed files.
+Depth 0 is an ordinary compile, `AnalysisOptions.full()`. Depth 1 is this mode, and `withDepth`
+accepts nothing else. Two things keep deeper levels out:
+
+- **Fan-out.** A single analysed file of apache/kafka references 75 to 102 repository files. Level
+  two is the files those reference, which on a repository of that shape approaches the whole
+  repository, the cost this mode exists to avoid.
+- **Boundary files are parsed shallowly.** Level one is modelled without the resolution that would
+  say what it references in full: Java boundary files skip method-call resolution and TypeScript
+  boundary files skip function bodies. Level two would need level one parsed in full first, so a
+  depth of two is not the depth-one work repeated but a different, more expensive, first level.
+
+The level-one names in the API (`LevelOneReport`, `LevelOneSelection`, `levelOneBudget`) name the
+boundary level, the last level a compile models, which at depth 1 is level one.
+
 ### Comparing two revisions
 
 A caller comparing two revisions needs the same level-one set in both. If a type were loaded in
 one revision and not the other, it would look added or deleted when it was neither. So each
-revision's level one is computed first, the two are joined, and both revisions are compiled with
-the union:
+revision is prepared, the two level-one sets are joined, and each revision's compile is completed
+with the union:
 
 ```java
 final AnalysisOptions options = AnalysisOptions.oneLevel();
-final Set<String> union = new TreeSet<>();
-union.addAll(new ClarpseProject(base, lang, analysed, options).levelOneFiles());
-union.addAll(new ClarpseProject(head, lang, analysed, options).levelOneFiles());
-
-final AnalysisOptions both = options.withLevelOnePaths(union);
-final CompileResult baseResult = new ClarpseProject(base, lang, analysed, both).result();
-final CompileResult headResult = new ClarpseProject(head, lang, analysed, both).result();
+try (ProjectFiles baseFiles = new ProjectFiles(baseZip);
+     ProjectFiles headFiles = new ProjectFiles(headZip);
+     PreparedAnalysis base = new ClarpseProject(baseFiles, lang, analysed, options).prepare();
+     PreparedAnalysis head = new ClarpseProject(headFiles, lang, analysed, options).prepare()) {
+    final Set<String> union = new TreeSet<>(base.levelOneFiles());
+    union.addAll(head.levelOneFiles());
+    final CompileResult baseResult = base.compile(union);
+    final CompileResult headResult = head.compile(union);
+}
 ```
 
-`levelOneFiles()` resolves the analysed files but models nothing past them. Paths passed to
-`withLevelOnePaths` that name no file of the language, or that name an analysed file, are ignored.
-A path of a file deleted in one revision therefore drops out of that revision's compile, as it
-must.
+`prepare()` resolves the analysed files and discovers their level-one files, and `compile(union)`
+models level one from that work: no analysed file is resolved twice and no index is built twice.
+Paths passed to `compile`, or to `AnalysisOptions.withLevelOnePaths`, that name no file of the
+language, or that name an analysed file, are ignored. A path of a file deleted in one revision
+therefore drops out of that revision's compile, as it must.
+
+### The prepared analysis and its lifetime
+
+A `PreparedAnalysis` holds what completing the compile reuses:
+
+| language | held between `prepare()` and `compile()` |
+|---|---|
+| Java | the declaration index, the parsed compilation units, and the analysed files' model |
+| TypeScript | the discovered level-one set |
+| Python | the analysed files' model and the module index |
+| C# | the declaration index and the parsed file models |
+
+It never holds a resolver process between calls. TypeScript and Python take a daemon session for
+each phase and end it with the phase, so several prepared analyses may be open at once however few
+daemons may run concurrently (`clarpse.node.maxConcurrentDaemons`, 1 by default). The cost is that
+the TypeScript and Python daemons start, and read their configuration, once per phase.
+
+Open it in a try-with-resources block. `compile` may be called more than once. `close()` is
+idempotent, and after it every other method throws `IllegalStateException`. The `CompileResult`
+holds none of the prepared state and outlives it. A prepared analysis is not thread-safe.
+
+### Cleanup
+
+Nothing an analysis creates outlives it.
+
+- **Resolver processes.** Every TypeScript and Python daemon is stopped when its session ends, by
+  asking it to shut down, then killing it, and in both cases waiting for it to exit. That happens on
+  success, on failure, and when the calling thread is interrupted, as an analysis deadline
+  interrupts it: the interrupt kills the daemon at once.
+- **The copy of the sources.** TypeScript and Python resolve against files on disk, so their
+  `ProjectFiles` writes itself to a temporary directory, once, on first use, and every later
+  compile of the same `ProjectFiles` reuses that copy. When preparing a one-level analysis caused
+  the copy, the analysis owns it: the copy is deleted if preparing fails, and when the analysis is
+  closed, whether the compile succeeded, failed or was interrupted. A copy that existed before is
+  left to the `ProjectFiles`, whose `close()` deletes it. Java and C# one-level compiles work from
+  the files in memory and write nothing to disk.
+- **Temporary directories.** Every temporary directory Clarpse creates is named
+  `clarpse-<kind>-<random>` under `java.io.tmpdir` (`clarpse-src-` for copies of sources,
+  `clarpse-ts-daemon-` and `clarpse-py-daemon-` for extracted runtimes) and stays registered until it
+  is deleted. A JVM shutdown hook deletes whatever is still registered. The Python runtime is
+  extracted once per JVM and shared by every Python daemon, so it lives until the JVM exits.
+- **After a crash.** A process killed by a signal it cannot handle, or by the kernel for memory,
+  runs no shutdown hook. `ProjectFiles.deleteStaleTempDirs(Duration olderThan)` deletes the
+  `clarpse-` directories under `java.io.tmpdir` older than the given age that this JVM does not have
+  open, and returns them. Run it at startup, and choose an age longer than the longest analysis any
+  other JVM on the host runs, since their open directories are not known to this one.
 
 ## How level one is found
 
@@ -131,8 +198,12 @@ Only a one-level compile produces the not-loaded state. A reference ends up in i
   declaration, and becomes `any` once combined with another type. Such references keep the name
   the compiler gives them, are marked `ResolutionKind.UNRESOLVED`, and may name `any`.
 
-A consumer that treats every reference that is not external as internal must check
-`isNotLoaded()` first.
+The three sets are disjoint: `internalDependencies()`, `externalDependencies()` and
+`notLoadedDependencies()` never share a reference, and together they are `references()`. In
+particular `notLoadedDependencies()` is disjoint from `externalDependencies()`. A consumer that read
+a component's dependencies as internal plus external must also read `notLoadedDependencies()` in this
+mode, or it will miss every reference to a repository type that was not loaded. A consumer that
+treats every reference that is not external as internal must check `isNotLoaded()` first.
 
 Both new fields are left out of JSON at their default values, so the serialised output of an
 ordinary compile is unchanged.
@@ -156,29 +227,44 @@ modelling them, typically supertypes and the return types of chained calls.
 
 These rules hold of the implementation. A change that breaks one changes what the model promises.
 
-1. **An ordinary compile is unaffected.** A compile whose options are not `ONE_LEVEL`, or whose
-   analysed paths are `null`, runs exactly `ClarpseCompiler.compile(ProjectFiles, Collection)`. Every
-   language's `compile(ProjectFiles, Collection, AnalysisOptions)` starts by delegating to it in that
-   case.
+1. **An ordinary compile is unaffected.** A compile whose depth is 0, or whose analysed paths are
+   `null`, runs exactly `ClarpseCompiler.compile(ProjectFiles, Collection)`:
+   `ClarpseCompiler.compile(ProjectFiles, Collection, AnalysisOptions)` delegates to it in that case,
+   and otherwise runs `prepare` and `PreparedAnalysis.compile`.
 2. **Only `CompilerSupport.classifyReferences` decides that a reference is not loaded.** `Component`
    carries that state through copies and serialisation, but no front end sets it.
 3. **Only `CompilerSupport.markBoundary` marks a component boundary**, and it marks exactly the
    components whose source file is one of the modelled level-one files.
 4. **Only `LevelOneSelection.select` applies the level-one budget**, and every language's one-level
-   compile chooses its level-one files through it.
+   compile chooses its level-one files through it, from `AbstractPreparedAnalysis.compile`.
 5. **Only `IndexedTypeSolver` resolves repository types in a one-level Java compile.** In that mode
    `ClarpseJavaCompiler` builds its parser contexts through
    `JavaParserFactory.setupIndexedTypeSolver`, and never constructs a `JavaParserTypeSolver`.
 6. **`IndexedTypeSolver` never scans a directory.** It reads only files that `JavaDeclarationIndex`
-   names for the type being resolved, and every file it loads first passes
-   `JavaLoadTracker.admit`.
-7. **A one-level TypeScript program holds only planned files.** Once `planOneLevel` has run,
+   names for the type being resolved, through `JavaUnitCache.resolved`, which parses a file only
+   once `JavaLoadTracker.admit` admits it.
+7. **A Java one-level compile parses each file at most once.** Every unit, analysed, level one or
+   read only to resolve a name, comes from the compile's one `JavaUnitCache`, shared by all parser
+   threads and both phases; releasing the prepared analysis clears it and calls
+   `JavaParserFacade.clearInstances()`.
+8. **A one-level TypeScript program holds only planned files.** Once `planOneLevel` has run,
    `daemon.js` builds programs only from each config's `oneLevelRoots`, with `noResolve` and without
    project references, and answers `getFileModel` only for planned files.
-8. **`CSharpModelAssembler` never emits a stub.** `buildModel(parsed, stubs, emittedPaths)` emits
+9. **`CSharpModelAssembler` never emits a stub.** `buildModel(parsed, stubs, emittedPaths)` emits
    only components declared in `emittedPaths`, which never includes a file given as a stub.
-9. **Level one never includes an analysed file.** `LevelOneSelection` drops analysed paths from the
-   candidates, and `levelOneFiles()` returns none.
+10. **A C# file model is assembled only through a copy.** `ClarpseCSharpCompiler` assembles
+    `CSharpFileModel.assemblyCopy()` of each parsed model, so a prepared analysis can assemble
+    again.
+11. **Level one never includes an analysed file.** `LevelOneSelection` drops analysed paths from the
+    candidates, and `PreparedAnalysis.levelOneFiles()` returns none.
+12. **A prepared analysis holds no resolver process between calls.** The TypeScript and Python
+    prepared analyses open a daemon only inside `prepare` and `complete`, each in a
+    try-with-resources block.
+13. **Only `ClarpseTempDirs` creates or deletes a Clarpse temporary directory**, always named with
+    the `clarpse-` prefix; `ProjectFiles` and `DaemonResourceExtractor` go through it.
+14. **A prepared analysis deletes only the copy it caused.** `AbstractPreparedAnalysis.prepareCleanly`
+    takes ownership of the `ProjectFiles` temporary directory only when it did not exist before
+    preparing, and deletes it when preparing fails or the analysis is closed.
 
 ## Limits
 
@@ -199,5 +285,6 @@ These rules hold of the implementation. A change that breaks one changes what th
 - **C# preprocessor conditionals** are not evaluated by the declaration scanner, which, like the
   parser, sees every branch.
 - **Disk.** TypeScript and Python resolve against the files on disk, so a one-level compile in those
-  languages writes the whole `ProjectFiles` to a temporary directory, as an ordinary compile does.
-  Java and C# read the files from memory and write nothing.
+  languages writes the whole `ProjectFiles` to a temporary directory, as an ordinary compile does, for
+  the lifetime of the analysis (see *Cleanup*). Java and C# read the files from memory and write
+  nothing.
