@@ -196,9 +196,10 @@ final class CSharpFileParser {
         if (fileScoped || "cs:namespace-block-declaration".equals(type)) {
             final boolean namesDeclarations = !laterAlternatives.get(node.startOffset)
                     && (fileScoped || !insideFileScopedNamespace);
-            final String namespaceName = namesDeclarations
-                    ? combineNamespace(currentNamespace, namespaceName(node))
-                    : currentNamespace;
+            String namespaceName = currentNamespace;
+            if (namesDeclarations) {
+                namespaceName = combineNamespace(currentNamespace, namespaceName(node));
+            }
             final boolean nestedInsideFileScoped = insideFileScopedNamespace || fileScoped;
             for (final SyntaxNode child : node.children) {
                 if ("cs:block-list".equals(child.type)) {
