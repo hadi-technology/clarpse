@@ -18,7 +18,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileTime;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -28,6 +30,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -91,7 +94,44 @@ public class ProjectFiles implements AutoCloseable {
     }
 
     public ProjectFiles(InputStream zipFileInputStream) throws Exception {
-        extractProjectFilesFromStream(zipFileInputStream);
+        extractProjectFilesFromStream(zipFileInputStream, null);
+    }
+
+    /**
+     * Reads a zip archive from a stream, handing every entry it does not keep to the given
+     * observer. The files this instance holds are the files it holds without an observer; see
+     * {@link DiscardedEntryObserver} for what an observer may and may not do. The stream is closed.
+     *
+     * @param zipFileInputStream The archive to read.
+     * @param observer The observer for the entries this instance does not keep.
+     * @return The source and configuration files of the archive.
+     * @throws Exception If the archive cannot be read, or the observer throws.
+     */
+    public static ProjectFiles fromZip(final InputStream zipFileInputStream,
+                                       final DiscardedEntryObserver observer) throws Exception {
+        Objects.requireNonNull(zipFileInputStream, "A zip input stream is required.");
+        Objects.requireNonNull(observer, "An observer is required; use the constructor without one.");
+        final ProjectFiles projectFiles = new ProjectFiles();
+        projectFiles.extractProjectFilesFromStream(zipFileInputStream, observer);
+        return projectFiles;
+    }
+
+    /**
+     * Reads a local zip archive, handing every entry it does not keep to the given observer. The
+     * files this instance holds are the files it holds without an observer; see
+     * {@link DiscardedEntryObserver} for what an observer may and may not do.
+     *
+     * @param zipFile The archive to read.
+     * @param observer The observer for the entries this instance does not keep.
+     * @return The source and configuration files of the archive.
+     * @throws Exception If the archive cannot be read, or the observer throws.
+     */
+    public static ProjectFiles fromZip(final File zipFile,
+                                       final DiscardedEntryObserver observer) throws Exception {
+        Objects.requireNonNull(zipFile, "A zip file is required.");
+        try (InputStream io = FileUtils.openInputStream(zipFile)) {
+            return fromZip(io, observer);
+        }
     }
 
     public ProjectFiles(final Collection<ProjectFile> projectFiles) {
@@ -134,7 +174,7 @@ public class ProjectFiles implements AutoCloseable {
     private void initFilesFromZipPath(File projectFiles) throws Exception {
         try (InputStream io = FileUtils.openInputStream(projectFiles)) {
             LOGGER.info("Converted zip path to an input stream..");
-            extractProjectFilesFromStream(io);
+            extractProjectFilesFromStream(io, null);
         }
     }
 
@@ -184,7 +224,7 @@ public class ProjectFiles implements AutoCloseable {
         LOGGER.info("Read " + this.size + " files.");
     }
 
-    private void extractProjectFilesFromStream(final InputStream is)
+    private void extractProjectFilesFromStream(final InputStream is, final DiscardedEntryObserver observer)
             throws Exception {
         LOGGER.info("Extracting source files from input stream..");
         int filesCounter = 0;
@@ -203,22 +243,37 @@ public class ProjectFiles implements AutoCloseable {
                         if (safeName == null) {
                             throw new IllegalArgumentException("Unsafe zip entry path: " + entry.getName());
                         }
-                        byte[] content = readEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, safeName);
-                        totalBytes += content.length;
+                        String entryPath = safeName.replace('\\', '/');
+                        String fileName = Paths.get(safeName).getFileName().toString();
+                        Lang lang = Lang.langFromExtn(FilenameUtils.getExtension(fileName));
+                        boolean configFile = isConfigFile(entryPath);
+                        boolean kept = lang != null || configFile;
+                        boolean observed = !kept && observer != null && observesPath(observer, entryPath);
+                        byte[] content = null;
+                        if (kept || observed) {
+                            content = readEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, safeName);
+                            totalBytes += content.length;
+                        } else {
+                            totalBytes += countEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, safeName);
+                        }
                         if (totalBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
                             throw new IllegalArgumentException("Zip exceeds maximum uncompressed size.");
                         }
-                        String fileName = Paths.get(safeName).getFileName().toString();
-                        String textContent = new String(content, StandardCharsets.UTF_8);
-                        handlePotentialConfigFile(safeName, textContent);
-                        Lang lang = Lang.langFromExtn(FilenameUtils.getExtension(fileName));
-                        if (lang != null) {
-                            ProjectFile newFile = new ProjectFile(
-                                    File.separator + safeName.replace(" ", "_"),
-                                    textContent);
-                            LOGGER.debug("Extracted project file " + newFile + ".");
-                            this.insertFile(newFile);
-                            filesCounter += 1;
+                        if (kept) {
+                            String textContent = new String(content, StandardCharsets.UTF_8);
+                            if (configFile) {
+                                insertConfigFile(new ProjectFile(entryPath, textContent));
+                            }
+                            if (lang != null) {
+                                ProjectFile newFile = new ProjectFile(
+                                        File.separator + safeName.replace(" ", "_"),
+                                        textContent);
+                                LOGGER.debug("Extracted project file " + newFile + ".");
+                                this.insertFile(newFile);
+                                filesCounter += 1;
+                            }
+                        } else if (observed) {
+                            observe(observer, entryPath, content, entry);
                         }
                     }
                 } catch (final IllegalArgumentException e) {
@@ -231,12 +286,63 @@ public class ProjectFiles implements AutoCloseable {
                 }
                 entry = zis.getNextEntry();
             }
+        } catch (final ObserverFailure e) {
+            throw e.failure();
         } catch (final IllegalArgumentException e) {
             throw e;
         } catch (final Exception e) {
             throw new Exception("Error while  reading  files from zip!", e);
         }
         LOGGER.info("Extracted " + filesCounter + " files.");
+    }
+
+    /**
+     * Asks the observer whether an entry's bytes are worth reading. An observer that throws must
+     * not be mistaken for a problematic entry, which extraction skips and carries on from, so its
+     * exception travels wrapped past that recovery and is unwrapped once the archive is closed.
+     */
+    private static boolean observesPath(final DiscardedEntryObserver observer, final String entryPath) {
+        try {
+            return observer.observesPath(entryPath);
+        } catch (final RuntimeException e) {
+            throw new ObserverFailure(e);
+        }
+    }
+
+    /** Hands a discarded entry to the observer, whose exceptions travel as {@link ObserverFailure}. */
+    private static void observe(final DiscardedEntryObserver observer, final String entryPath,
+                                final byte[] content, final ZipEntry entry) {
+        final Instant lastModified = lastModifiedOf(entry);
+        try {
+            observer.observe(entryPath, content, lastModified);
+        } catch (final RuntimeException e) {
+            throw new ObserverFailure(e);
+        }
+    }
+
+    private static Instant lastModifiedOf(final ZipEntry entry) {
+        final FileTime lastModified = entry.getLastModifiedTime();
+        if (lastModified == null) {
+            return null;
+        }
+        return lastModified.toInstant();
+    }
+
+    /** Carries an observer's exception past the per-entry recovery that would otherwise swallow it. */
+    private static final class ObserverFailure extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        private final RuntimeException failure;
+
+        private ObserverFailure(final RuntimeException failure) {
+            super(failure);
+            this.failure = failure;
+        }
+
+        private RuntimeException failure() {
+            return this.failure;
+        }
     }
 
     private String sanitizeEntryName(String entryName) {
@@ -275,11 +381,22 @@ public class ProjectFiles implements AutoCloseable {
         return output.toByteArray();
     }
 
-    private void handlePotentialConfigFile(String safeName, String content) {
-        String normalizedSafeName = safeName.replace("\\", "/");
-        if (isConfigFile(normalizedSafeName)) {
-            insertConfigFile(new ProjectFile(normalizedSafeName, content));
+    /**
+     * Reads past an entry whose bytes nothing needs, returning how many bytes it held so it counts
+     * against the archive's uncompressed-size limit like an entry that was kept.
+     */
+    private long countEntryBytes(InputStream inputStream, long maxBytes, String entryName) throws IOException {
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        int read;
+        while ((read = inputStream.read(buffer)) != -1) {
+            total += read;
+            if (total > maxBytes) {
+                throw new IllegalArgumentException(
+                        "Zip entry exceeds maximum allowed size: " + entryName + ".");
+            }
         }
+        return total;
     }
 
     private boolean anyMatchExtensions(String s, String[] extn) {

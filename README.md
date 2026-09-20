@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>11.7.1</version>
+  <version>11.8.0</version>
 </dependency>
 ```
 
@@ -115,6 +115,8 @@ Clarpse includes configurable limits for zip processing to prevent resource exha
 - `clarpse.zip.maxEntries` (default: 100000) - Maximum number of entries in a zip file
 - `clarpse.zip.maxTotalUncompressedBytes` (default: 209715200, ~200MB) - Maximum total uncompressed size
 - `clarpse.zip.maxEntryUncompressedBytes` (default: 10485760, ~10MB) - Maximum size per entry
+
+Entries handed to a `DiscardedEntryObserver` count against these limits like any other entry.
 
 ## Node.js Configuration
 - `CLARPSE_NODE_PATH` or `-Dclarpse.node.path=<path>` sets a custom Node.js executable path.
@@ -228,6 +230,48 @@ Path rules for `ProjectFile`:
 - in-memory `ProjectFile` entries
 
 See `src/test/java/com/hadi/test/ProjectFilesTest.java` for examples.
+
+### Reading a repository's other files in the same pass
+
+`ProjectFiles` keeps only the files whose extension maps to a language, plus the configuration
+files a compiler needs. Everything else — documentation, licences, data — is read past and dropped,
+and reaching an entry means inflating the ones before it, so collecting a repository's documents
+from a second walk of the same archive inflates it twice.
+
+`ProjectFiles.fromZip(archive, observer)` hands those entries over as extraction reaches them:
+
+```java
+final Map<String, String> documents = new LinkedHashMap<>();
+try (InputStream archive = Files.newInputStream(Path.of("/path/to/repo.zip"))) {
+    ProjectFiles files = ProjectFiles.fromZip(archive, new DiscardedEntryObserver() {
+        @Override
+        public boolean observesPath(String path) {
+            return path.endsWith(".md");           // asked before the entry's bytes are read
+        }
+
+        @Override
+        public void observe(String path, byte[] content, Instant lastModified) {
+            documents.put(path, new String(content, StandardCharsets.UTF_8));
+        }
+    });
+}
+```
+
+What an observer is and is not:
+
+- It sees an entry's path relative to the archive root, its uncompressed bytes, and its
+  last-modified time, and it owns the array it is handed.
+- It decides nothing about parsing. The `ProjectFiles` an observed extraction produces is the one
+  it produces without an observer.
+- It is asked `observesPath` before an entry is read, so declining a path costs the archive's own
+  read and nothing else.
+- It never sees a kept entry, and never sees a path extraction refused: normalisation and the
+  refusal of entries that point outside the archive root happen first.
+- Observed entries are extraction's entries, counted against the zip entry limits like any other.
+- An exception it throws propagates to the caller with the archive closed.
+
+`new ProjectFiles(archive)` without an observer keeps the files it always kept, and reads past the
+entries nothing asked for.
 
 TypeScript usage follows the same API, but requires Node.js and a valid `tsconfig.json`:
 ```java
