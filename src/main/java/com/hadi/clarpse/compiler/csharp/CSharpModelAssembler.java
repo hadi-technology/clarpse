@@ -76,6 +76,10 @@ final class CSharpModelAssembler {
      * {@code emittedPaths}. A stub is never emitted: it exists so a name declared elsewhere in the
      * repository resolves to the unique name it has there.
      *
+     * <p>A component that names no source file is not emitted: no file claims it, so no emitted path
+     * can. Its path is never looked up either, because {@code emittedPaths} may be a sorted set, and
+     * a sorted set rejects a null lookup rather than answering it.
+     *
      * @param parsed       File models of the parsed files; listed first, so a partial type merged
      *                     with a stub part keeps a parsed part's identity.
      * @param stubs        Declaration-only file models of the files not parsed.
@@ -90,7 +94,8 @@ final class CSharpModelAssembler {
         final OOPSourceCodeModel resolved = buildModel(fileModels);
         final OOPSourceCodeModel model = new OOPSourceCodeModel();
         resolved.components()
-                .filter(component -> emittedPaths.contains(component.sourceFile()))
+                .filter(component -> component.sourceFile() != null
+                        && emittedPaths.contains(component.sourceFile()))
                 .forEach(model::insertComponent);
         return model;
     }
