@@ -254,12 +254,16 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
     /**
      * The files declaring what the analysed components reference, with every part of a partial type
      * among them, less the analysed files.
+     *
+     * <p>A component that names no source file is not among the analysed ones, and its path is never
+     * looked up: {@code focus} is a sorted set, which rejects a null lookup rather than answering it.
      */
     private static Set<String> discoverLevelOne(final OOPSourceCodeModel focusModel, final Set<String> focus,
                                                 final CSharpDeclarationIndex index) {
         final Set<String> levelOne = new TreeSet<>();
         focusModel.components()
-                .filter(component -> focus.contains(component.sourceFile()))
+                .filter(component -> component.sourceFile() != null
+                        && focus.contains(component.sourceFile()))
                 .forEach(component -> component.references().forEach(
                         reference -> levelOne.addAll(index.filesDeclaring(reference.invokedComponent()))));
         for (final String path : new ArrayList<>(levelOne)) {

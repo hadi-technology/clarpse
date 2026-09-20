@@ -535,7 +535,7 @@ final class CSharpFileParser {
         }
 
         if ("delegate".equals(typeModel.kind)) {
-            typeModel.members.addAll(parseParametersAsMembers(node, "parameter"));
+            typeModel.members.addAll(parseParametersAsMembers(node, fileModel, typeModel, "parameter"));
         }
         if ("record".equals(typeModel.kind) || "recordStruct".equals(typeModel.kind)) {
             final SyntaxNode parentList = firstChild(node, "cs:parent-list");
@@ -796,7 +796,16 @@ final class CSharpFileParser {
         return member;
     }
 
+    /**
+     * The parameters of a declaration that has no body of its own -- a delegate -- as members of the
+     * type it declares. Each carries the declaring file, so a component built from it can be
+     * attributed to that file like every other component.
+     */
     private static List<CSharpModel.CSharpMemberModel> parseParametersAsMembers(final SyntaxNode node,
+                                                                                 final CSharpModel.CSharpFileModel
+                                                                                         fileModel,
+                                                                                 final CSharpModel.CSharpTypeModel
+                                                                                         ownerType,
                                                                                  final String kind) {
         final List<CSharpModel.CSharpMemberModel> members = new ArrayList<>();
         final SyntaxNode parentList = firstChild(node, "cs:parent-list");
@@ -809,8 +818,14 @@ final class CSharpFileParser {
                 member.kind = kind;
                 member.name = firstIdentifier(child);
                 member.declaredType = firstDirectChildText(child, "cs:type-usage-role");
+                member.sourcePath = fileModel.sourceFile.path();
+                member.sourceText = fileModel.sourceText;
+                member.moduleName = fileModel.moduleName;
+                member.ownerTypeUniqueName = ownerType.uniqueName;
                 member.modifiers = parseModifiers(child.text);
                 member.codeFragment = trimTypeText(member.declaredType);
+                member.startOffset = child.startOffset;
+                member.endOffset = child.endOffset;
                 member.implementationHash = implementationHash(child.text);
                 if (member.declaredType != null && !member.declaredType.isEmpty()) {
                     member.simpleTypeUsages.add(member.declaredType);
