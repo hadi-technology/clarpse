@@ -27,6 +27,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -67,11 +68,21 @@ public class ProjectFiles implements AutoCloseable {
             ClarpseProperties.getLong("clarpse.zip.maxTotalUncompressedBytes", 200L * 1024 * 1024);
     private static final long MAX_ENTRY_UNCOMPRESSED_BYTES =
             ClarpseProperties.getLong("clarpse.zip.maxEntryUncompressedBytes", 10L * 1024 * 1024);
+    /**
+     * How many paths of files in languages this library does not read one instance may hold. Only
+     * paths are kept, so the cost is a few dozen bytes each; the cap is what stops a pathological
+     * archive from turning that into an unbounded one. Past it the record stops growing and reports
+     * itself incomplete, rather than dropping paths and calling the result exhaustive.
+     */
+    private static final int MAX_UNREAD_SOURCE_PATHS =
+            ClarpseProperties.getInt("clarpse.unreadSourceFiles.maxPaths", 20000);
     private final Map<Lang, List<ProjectFile>> langToFilesMap = new HashMap<>();
     private int size = 0;
     private String projectDir;
     private boolean tempProjectDir = false;
     private final Map<String, String> configFiles = new HashMap<>();
+    private final Set<String> unreadSourcePaths = new LinkedHashSet<>();
+    private boolean unreadSourcePathsComplete = true;
 
     /**
      * Constructs a ProjectFiles instance from a path to a local directory or zip file.
@@ -160,6 +171,8 @@ public class ProjectFiles implements AutoCloseable {
         });
         // Deep copy configFiles
         this.configFiles.putAll(other.configFiles);
+        this.unreadSourcePaths.addAll(other.unreadSourcePaths);
+        this.unreadSourcePathsComplete = other.unreadSourcePathsComplete;
     }
 
     /**
@@ -202,6 +215,7 @@ public class ProjectFiles implements AutoCloseable {
         this.configFiles.forEach((path, content) -> shiftedConfigFiles.put(shiftConfigPath(path), content));
         this.configFiles.clear();
         this.configFiles.putAll(shiftedConfigFiles);
+        shiftUnreadSourcePaths();
         deleteTempDir();
     }
 
@@ -216,9 +230,13 @@ public class ProjectFiles implements AutoCloseable {
         Iterator<File> it = FileUtils.iterateFiles(projectFiles, null, true);
         while (it.hasNext()) {
             File nextFile = it.next();
-            if (nextFile.isFile() && shouldLoadPath(nextFile.getAbsolutePath())) {
-                String content = FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8);
-                this.insertFile(new ProjectFile(nextFile.getAbsolutePath(), content));
+            if (nextFile.isFile()) {
+                if (shouldLoadPath(nextFile.getAbsolutePath())) {
+                    String content = FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8);
+                    this.insertFile(new ProjectFile(nextFile.getAbsolutePath(), content));
+                } else {
+                    recordUnreadSourceFile(nextFile.getAbsolutePath());
+                }
             }
         }
         LOGGER.info("Read " + this.size + " files.");
@@ -241,6 +259,7 @@ public class ProjectFiles implements AutoCloseable {
                     if (!entry.isDirectory()) {
                         String safeName = sanitizeEntryName(entry.getName());
                         if (safeName == null) {
+                            noteUnrecordableEntry(entry.getName());
                             throw new IllegalArgumentException("Unsafe zip entry path: " + entry.getName());
                         }
                         String entryPath = safeName.replace('\\', '/');
@@ -248,6 +267,9 @@ public class ProjectFiles implements AutoCloseable {
                         Lang lang = Lang.langFromExtn(FilenameUtils.getExtension(fileName));
                         boolean configFile = isConfigFile(entryPath);
                         boolean kept = lang != null || configFile;
+                        if (!kept) {
+                            recordUnreadSourceFile(File.separator + safeName.replace(" ", "_"));
+                        }
                         boolean observed = !kept && observer != null && observesPath(observer, entryPath);
                         byte[] content = null;
                         if (kept || observed) {
@@ -422,6 +444,7 @@ public class ProjectFiles implements AutoCloseable {
         } else if (isConfigFile(file.path())) {
             this.insertConfigFile(file);
         } else {
+            recordUnreadSourceFile(file.path());
             LOGGER.debug("Skipping file: " + file.path() + ".");
         }
     }
@@ -444,12 +467,16 @@ public class ProjectFiles implements AutoCloseable {
     }
 
     /**
-     * Removes a file from this ProjectFiles instance by path.
+     * Removes a file from this ProjectFiles instance by path. A path in a language this library
+     * does not read leaves {@link #unreadSourceFiles()}, so the record does not outlive the file,
+     * but such a file was never held here and removing one is not a removal: the return value and
+     * {@link #size()} answer for the files this instance holds, as they always have.
      *
      * @param path the path of the file to remove
      * @return true if the file was found and removed, false otherwise
      */
     public boolean removeFile(final String path) {
+        forgetUnreadSourceFile(path);
         int removedCount = 0;
         for (Map.Entry<Lang, List<ProjectFile>> entry : this.langToFilesMap.entrySet()) {
             List<ProjectFile> files = entry.getValue();
@@ -662,6 +689,86 @@ public class ProjectFiles implements AutoCloseable {
         }
         return isConfigFile(path)
                 || Lang.langFromExtn(FilenameUtils.getExtension(path)) != null;
+    }
+
+    /**
+     * The files this instance was given whose extension names a programming language this library
+     * has no parser for. They are not parsed and are held nowhere else: a caller that asks
+     * {@link #files()} whether a project holds a Kotlin or Scala file is told no whether or not the
+     * project holds one, and this is what tells the two apart.
+     *
+     * @return A record of those files, which reports itself incomplete rather than answer for a
+     *         path it could not keep.
+     */
+    public UnreadSourceFiles unreadSourceFiles() {
+        return new UnreadSourceFiles(this.unreadSourcePaths, this.unreadSourcePathsComplete);
+    }
+
+    /**
+     * Records a path this instance is discarding, when it names a source file in a language this
+     * library does not read. A path that cannot be recorded leaves the record incomplete instead of
+     * being dropped quietly.
+     */
+    private void recordUnreadSourceFile(final String rawPath) {
+        if (!UnreadSourceFiles.isUnreadSourceFile(rawPath)) {
+            return;
+        }
+        if (this.unreadSourcePaths.size() >= MAX_UNREAD_SOURCE_PATHS) {
+            this.unreadSourcePathsComplete = false;
+            LOGGER.warn("Reached the cap of {} unread source file paths; the record is no longer "
+                    + "complete.", MAX_UNREAD_SOURCE_PATHS);
+            return;
+        }
+        try {
+            this.unreadSourcePaths.add(ProjectFile.normalizePath(rawPath));
+        } catch (final IllegalArgumentException e) {
+            this.unreadSourcePathsComplete = false;
+            LOGGER.warn("Cannot record the unread source file {}: {}", rawPath, e.getMessage());
+        }
+    }
+
+    /**
+     * Notes an archive entry that holds a source file in a language this library does not read but
+     * whose path cannot be kept, so the record reports the file as unknown rather than absent.
+     */
+    private void noteUnrecordableEntry(final String entryName) {
+        if (UnreadSourceFiles.isUnreadSourceFile(entryName)) {
+            this.unreadSourcePathsComplete = false;
+            LOGGER.warn("Cannot record the unread source file at the unsafe entry path {}.", entryName);
+        }
+    }
+
+    /** Drops a path from the unread-source-file record, so the record does not outlive the file. */
+    private void forgetUnreadSourceFile(final String path) {
+        if (this.unreadSourcePaths.isEmpty() || !UnreadSourceFiles.isUnreadSourceFile(path)) {
+            return;
+        }
+        try {
+            this.unreadSourcePaths.remove(ProjectFile.normalizePath(path));
+        } catch (final IllegalArgumentException e) {
+            LOGGER.debug("Cannot match {} against the unread source files.", path);
+        }
+    }
+
+    /**
+     * Shifts the unread-source-file paths the way {@link #shiftSubDirsLeft()} shifts the files this
+     * instance holds. A path with no subdirectory to shift into cannot be shifted; it leaves the
+     * record incomplete rather than throwing, because these files were never what the caller asked
+     * to shift.
+     */
+    private void shiftUnreadSourcePaths() {
+        final Set<String> shifted = new LinkedHashSet<>();
+        for (final String path : this.unreadSourcePaths) {
+            if (StringUtils.countMatches(path, "/") > 1) {
+                shifted.add(path.substring(StringUtils.ordinalIndexOf(path, "/", 2)));
+            } else {
+                this.unreadSourcePathsComplete = false;
+                LOGGER.warn("Cannot shift the unread source file {}; the record is no longer "
+                        + "complete.", path);
+            }
+        }
+        this.unreadSourcePaths.clear();
+        this.unreadSourcePaths.addAll(shifted);
     }
 
     private String normalizeConfigPath(String path) {
