@@ -126,8 +126,7 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
         } catch (final TypeScriptDaemonException e) {
             if (isFileLevelFailure(e)) {
                 compileFailures.add(new CompileFailure(file, e.getMessage(), e.code()));
-                LOGGER.warn("TypeScript resolver failed for file {} (code={}).",
-                        file.path(), e.code(), e);
+                logFileLevelFailure(file, e);
                 return;
             }
             throw new CompileException("TypeScript resolver failed: " + e.getMessage(), e);
@@ -367,6 +366,32 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             LOGGER.warn("Could not resolve the base expression of {} in {}.",
                     unresolvedBase, file.path());
         }
+    }
+
+    /**
+     * Logs a failure confined to one file, at the level the failure deserves.
+     *
+     * <p>A file that belongs to no program of the project is what a tsconfig that names its files,
+     * or excludes tests, scripts or tooling, produces: one such file for every file it leaves out.
+     * It is recorded as a failure because a caller cannot otherwise tell it from a file that was
+     * analysed and declared nothing, but nothing went wrong and nobody acts on it, so it is a
+     * single line naming the file and carries no stack trace.
+     *
+     * <p>A file that could not be found, or whose references could not be resolved, does say
+     * something went wrong, and keeps its warning and its exception.
+     *
+     * @param file The file the failure is confined to.
+     * @param e    The daemon failure recorded for it.
+     */
+    private static void logFileLevelFailure(final ProjectFile file,
+                                            final TypeScriptDaemonException e) {
+        if (e.code() == TypeScriptDaemonException.CODE_FILE_NOT_IN_PROGRAM) {
+            LOGGER.debug("TypeScript file {} belongs to no program of this project (code={}).",
+                    file.path(), e.code());
+            return;
+        }
+        LOGGER.warn("TypeScript resolver failed for file {} (code={}).",
+                file.path(), e.code(), e);
     }
 
     private static boolean isFileLevelFailure(final TypeScriptDaemonException e) {
