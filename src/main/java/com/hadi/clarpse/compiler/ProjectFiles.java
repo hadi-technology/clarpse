@@ -68,12 +68,7 @@ public class ProjectFiles implements AutoCloseable {
             ClarpseProperties.getLong("clarpse.zip.maxTotalUncompressedBytes", 200L * 1024 * 1024);
     private static final long MAX_ENTRY_UNCOMPRESSED_BYTES =
             ClarpseProperties.getLong("clarpse.zip.maxEntryUncompressedBytes", 10L * 1024 * 1024);
-    /**
-     * How many paths of files in languages this library does not read one instance may hold. Only
-     * paths are kept, so the cost is a few dozen bytes each; the cap is what stops a pathological
-     * archive from turning that into an unbounded one. Past it the record stops growing and reports
-     * itself incomplete, rather than dropping paths and calling the result exhaustive.
-     */
+    /** How many unread source file paths one instance records before the record turns partial. */
     private static final int MAX_UNREAD_SOURCE_PATHS =
             ClarpseProperties.getInt("clarpse.unreadSourceFiles.maxPaths", 20000);
     private final Map<Lang, List<ProjectFile>> langToFilesMap = new HashMap<>();
@@ -467,10 +462,8 @@ public class ProjectFiles implements AutoCloseable {
     }
 
     /**
-     * Removes a file from this ProjectFiles instance by path. A path in a language this library
-     * does not read leaves {@link #unreadSourceFiles()}, so the record does not outlive the file,
-     * but such a file was never held here and removing one is not a removal: the return value and
-     * {@link #size()} answer for the files this instance holds, as they always have.
+     * Removes a file from this ProjectFiles instance by path. An unread source file is dropped from
+     * the unread record, and was never a file this instance held, so removing one is not a removal.
      *
      * @param path the path of the file to remove
      * @return true if the file was found and removed, false otherwise
@@ -692,25 +685,18 @@ public class ProjectFiles implements AutoCloseable {
     }
 
     /**
-     * The files this instance was given whose extension names a programming language this library
-     * has no parser for. They are not parsed and are held nowhere else: a caller that asks
-     * {@link #files()} whether a project holds a Kotlin or Scala file is told no whether or not the
-     * project holds one, and this is what tells the two apart.
+     * The source files this instance was given but does not hold, because no parser here reads
+     * their language.
      *
-     * @return A record of those files, which reports itself incomplete rather than answer for a
-     *         path it could not keep.
+     * @return A record of their paths, which says so when it is too partial to answer.
      */
     public UnreadSourceFiles unreadSourceFiles() {
         return new UnreadSourceFiles(this.unreadSourcePaths, this.unreadSourcePathsComplete);
     }
 
-    /**
-     * Records a path this instance is discarding, when it names a source file in a language this
-     * library does not read. A path that cannot be recorded leaves the record incomplete instead of
-     * being dropped quietly.
-     */
+    /** Records a discarded path when it names a source file in a language no parser here reads. */
     private void recordUnreadSourceFile(final String rawPath) {
-        if (!UnreadSourceFiles.isUnreadSourceFile(rawPath)) {
+        if (UnreadLang.langFromPath(rawPath) == null) {
             return;
         }
         if (this.unreadSourcePaths.size() >= MAX_UNREAD_SOURCE_PATHS) {
@@ -727,20 +713,17 @@ public class ProjectFiles implements AutoCloseable {
         }
     }
 
-    /**
-     * Notes an archive entry that holds a source file in a language this library does not read but
-     * whose path cannot be kept, so the record reports the file as unknown rather than absent.
-     */
+    /** Turns the record partial for an unread source file whose path cannot be kept. */
     private void noteUnrecordableEntry(final String entryName) {
-        if (UnreadSourceFiles.isUnreadSourceFile(entryName)) {
+        if (UnreadLang.langFromPath(entryName) != null) {
             this.unreadSourcePathsComplete = false;
             LOGGER.warn("Cannot record the unread source file at the unsafe entry path {}.", entryName);
         }
     }
 
-    /** Drops a path from the unread-source-file record, so the record does not outlive the file. */
+    /** Drops a path from the unread record, so the record does not outlive the file. */
     private void forgetUnreadSourceFile(final String path) {
-        if (this.unreadSourcePaths.isEmpty() || !UnreadSourceFiles.isUnreadSourceFile(path)) {
+        if (this.unreadSourcePaths.isEmpty() || UnreadLang.langFromPath(path) == null) {
             return;
         }
         try {
@@ -750,12 +733,7 @@ public class ProjectFiles implements AutoCloseable {
         }
     }
 
-    /**
-     * Shifts the unread-source-file paths the way {@link #shiftSubDirsLeft()} shifts the files this
-     * instance holds. A path with no subdirectory to shift into cannot be shifted; it leaves the
-     * record incomplete rather than throwing, because these files were never what the caller asked
-     * to shift.
-     */
+    /** Shifts the recorded paths, turning the record partial for any that cannot be shifted. */
     private void shiftUnreadSourcePaths() {
         final Set<String> shifted = new LinkedHashSet<>();
         for (final String path : this.unreadSourcePaths) {
