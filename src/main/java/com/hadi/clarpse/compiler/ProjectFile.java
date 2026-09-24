@@ -112,7 +112,15 @@ public class ProjectFile {
         return FilenameUtils.getExtension(this.path);
     }
 
-    private static String normalizePath(final String rawPath) {
+    /**
+     * The canonical form of a path: forward slashes, no parent traversal, a leading slash, and a
+     * Windows drive letter kept where one was given.
+     *
+     * @param rawPath The path to normalise.
+     * @return The normalised path.
+     * @throws IllegalArgumentException If the path is empty, a root path, or traverses upwards.
+     */
+    static String normalizePath(final String rawPath) {
         if (rawPath == null || rawPath.trim().isEmpty()) {
             throw new IllegalArgumentException("Project files must include a non-empty path.");
         }

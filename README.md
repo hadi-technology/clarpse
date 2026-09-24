@@ -273,6 +273,36 @@ What an observer is and is not:
 `new ProjectFiles(archive)` without an observer keeps the files it always kept, and reads past the
 entries nothing asked for.
 
+### Asking whether a project holds source this library does not read
+
+Clarpse parses Java, C#, TypeScript and Python. A repository's Kotlin, Scala, Go or Rust is not
+parsed, and until it is asked for it is not held either, so `files()` answers a question about a
+`Foo.scala` the same way whether the repository has one or not.
+
+`unreadSourceFiles()` is what tells the two apart:
+
+```java
+final ProjectFiles projectFiles = new ProjectFiles("/path/to/repo.zip");
+final UnreadSourceFiles unread = projectFiles.unreadSourceFiles();
+
+unread.paths();                          // e.g. [/repo/src/Main.scala, /repo/src/Main.kt]
+unread.languages();                      // e.g. [scala, kotlin]
+unread.holdsFileNamed("Main.scala");     // YES
+unread.holdsPath("/repo/src/Main.kt");   // YES
+unread.holdsFileNamed("Other.kt");       // NO, or UNKNOWN when the record is partial
+```
+
+- It covers the extensions of the general-purpose languages a repository is written in but this
+  library does not read — Kotlin, Scala, Go, Rust, Swift, Ruby, PHP, C, C++, Objective-C,
+  JavaScript, Groovy, Clojure, F#, Visual Basic — and not every extension it does not parse, so a
+  query about a source file is not answered by images, lock files or vendored blobs.
+- It holds paths, never content, and it is filled from an archive, a directory and
+  `insertFile` alike.
+- The files it names are held nowhere else: they are not parsed, are absent from `files()` and
+  `files(Lang)`, do not count towards `size()`, and are not written to `projectDir()`.
+- `complete()` is false once a path could not be recorded, and a query against a partial record
+  answers `UNKNOWN` rather than `NO`.
+
 TypeScript usage follows the same API, but requires Node.js and a valid `tsconfig.json`:
 ```java
 final ProjectFiles projectFiles = new ProjectFiles("/path/to/typescript-project");

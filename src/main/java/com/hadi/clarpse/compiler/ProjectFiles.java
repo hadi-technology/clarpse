@@ -27,6 +27,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -67,11 +68,16 @@ public class ProjectFiles implements AutoCloseable {
             ClarpseProperties.getLong("clarpse.zip.maxTotalUncompressedBytes", 200L * 1024 * 1024);
     private static final long MAX_ENTRY_UNCOMPRESSED_BYTES =
             ClarpseProperties.getLong("clarpse.zip.maxEntryUncompressedBytes", 10L * 1024 * 1024);
+    /** How many unread source file paths one instance records before the record turns partial. */
+    private static final int MAX_UNREAD_SOURCE_PATHS =
+            ClarpseProperties.getInt("clarpse.unreadSourceFiles.maxPaths", 20000);
     private final Map<Lang, List<ProjectFile>> langToFilesMap = new HashMap<>();
     private int size = 0;
     private String projectDir;
     private boolean tempProjectDir = false;
     private final Map<String, String> configFiles = new HashMap<>();
+    private final Set<String> unreadSourcePaths = new LinkedHashSet<>();
+    private boolean unreadSourcePathsComplete = true;
 
     /**
      * Constructs a ProjectFiles instance from a path to a local directory or zip file.
@@ -160,6 +166,8 @@ public class ProjectFiles implements AutoCloseable {
         });
         // Deep copy configFiles
         this.configFiles.putAll(other.configFiles);
+        this.unreadSourcePaths.addAll(other.unreadSourcePaths);
+        this.unreadSourcePathsComplete = other.unreadSourcePathsComplete;
     }
 
     /**
@@ -202,6 +210,7 @@ public class ProjectFiles implements AutoCloseable {
         this.configFiles.forEach((path, content) -> shiftedConfigFiles.put(shiftConfigPath(path), content));
         this.configFiles.clear();
         this.configFiles.putAll(shiftedConfigFiles);
+        shiftUnreadSourcePaths();
         deleteTempDir();
     }
 
@@ -216,9 +225,13 @@ public class ProjectFiles implements AutoCloseable {
         Iterator<File> it = FileUtils.iterateFiles(projectFiles, null, true);
         while (it.hasNext()) {
             File nextFile = it.next();
-            if (nextFile.isFile() && shouldLoadPath(nextFile.getAbsolutePath())) {
-                String content = FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8);
-                this.insertFile(new ProjectFile(nextFile.getAbsolutePath(), content));
+            if (nextFile.isFile()) {
+                if (shouldLoadPath(nextFile.getAbsolutePath())) {
+                    String content = FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8);
+                    this.insertFile(new ProjectFile(nextFile.getAbsolutePath(), content));
+                } else {
+                    recordUnreadSourceFile(nextFile.getAbsolutePath());
+                }
             }
         }
         LOGGER.info("Read " + this.size + " files.");
@@ -241,6 +254,7 @@ public class ProjectFiles implements AutoCloseable {
                     if (!entry.isDirectory()) {
                         String safeName = sanitizeEntryName(entry.getName());
                         if (safeName == null) {
+                            noteUnrecordableEntry(entry.getName());
                             throw new IllegalArgumentException("Unsafe zip entry path: " + entry.getName());
                         }
                         String entryPath = safeName.replace('\\', '/');
@@ -248,6 +262,9 @@ public class ProjectFiles implements AutoCloseable {
                         Lang lang = Lang.langFromExtn(FilenameUtils.getExtension(fileName));
                         boolean configFile = isConfigFile(entryPath);
                         boolean kept = lang != null || configFile;
+                        if (!kept) {
+                            recordUnreadSourceFile(File.separator + safeName.replace(" ", "_"));
+                        }
                         boolean observed = !kept && observer != null && observesPath(observer, entryPath);
                         byte[] content = null;
                         if (kept || observed) {
@@ -422,6 +439,7 @@ public class ProjectFiles implements AutoCloseable {
         } else if (isConfigFile(file.path())) {
             this.insertConfigFile(file);
         } else {
+            recordUnreadSourceFile(file.path());
             LOGGER.debug("Skipping file: " + file.path() + ".");
         }
     }
@@ -444,12 +462,14 @@ public class ProjectFiles implements AutoCloseable {
     }
 
     /**
-     * Removes a file from this ProjectFiles instance by path.
+     * Removes a file from this ProjectFiles instance by path. An unread source file is dropped from
+     * the unread record, and was never a file this instance held, so removing one is not a removal.
      *
      * @param path the path of the file to remove
      * @return true if the file was found and removed, false otherwise
      */
     public boolean removeFile(final String path) {
+        forgetUnreadSourceFile(path);
         int removedCount = 0;
         for (Map.Entry<Lang, List<ProjectFile>> entry : this.langToFilesMap.entrySet()) {
             List<ProjectFile> files = entry.getValue();
@@ -662,6 +682,71 @@ public class ProjectFiles implements AutoCloseable {
         }
         return isConfigFile(path)
                 || Lang.langFromExtn(FilenameUtils.getExtension(path)) != null;
+    }
+
+    /**
+     * The source files this instance was given but does not hold, because no parser here reads
+     * their language.
+     *
+     * @return A record of their paths, which says so when it is too partial to answer.
+     */
+    public UnreadSourceFiles unreadSourceFiles() {
+        return new UnreadSourceFiles(this.unreadSourcePaths, this.unreadSourcePathsComplete);
+    }
+
+    /** Records a discarded path when it names a source file in a language no parser here reads. */
+    private void recordUnreadSourceFile(final String rawPath) {
+        if (UnreadLang.langFromPath(rawPath) == null) {
+            return;
+        }
+        if (this.unreadSourcePaths.size() >= MAX_UNREAD_SOURCE_PATHS) {
+            this.unreadSourcePathsComplete = false;
+            LOGGER.warn("Reached the cap of {} unread source file paths; the record is no longer "
+                    + "complete.", MAX_UNREAD_SOURCE_PATHS);
+            return;
+        }
+        try {
+            this.unreadSourcePaths.add(ProjectFile.normalizePath(rawPath));
+        } catch (final IllegalArgumentException e) {
+            this.unreadSourcePathsComplete = false;
+            LOGGER.warn("Cannot record the unread source file {}: {}", rawPath, e.getMessage());
+        }
+    }
+
+    /** Turns the record partial for an unread source file whose path cannot be kept. */
+    private void noteUnrecordableEntry(final String entryName) {
+        if (UnreadLang.langFromPath(entryName) != null) {
+            this.unreadSourcePathsComplete = false;
+            LOGGER.warn("Cannot record the unread source file at the unsafe entry path {}.", entryName);
+        }
+    }
+
+    /** Drops a path from the unread record, so the record does not outlive the file. */
+    private void forgetUnreadSourceFile(final String path) {
+        if (this.unreadSourcePaths.isEmpty() || UnreadLang.langFromPath(path) == null) {
+            return;
+        }
+        try {
+            this.unreadSourcePaths.remove(ProjectFile.normalizePath(path));
+        } catch (final IllegalArgumentException e) {
+            LOGGER.debug("Cannot match {} against the unread source files.", path);
+        }
+    }
+
+    /** Shifts the recorded paths, turning the record partial for any that cannot be shifted. */
+    private void shiftUnreadSourcePaths() {
+        final Set<String> shifted = new LinkedHashSet<>();
+        for (final String path : this.unreadSourcePaths) {
+            if (StringUtils.countMatches(path, "/") > 1) {
+                shifted.add(path.substring(StringUtils.ordinalIndexOf(path, "/", 2)));
+            } else {
+                this.unreadSourcePathsComplete = false;
+                LOGGER.warn("Cannot shift the unread source file {}; the record is no longer "
+                        + "complete.", path);
+            }
+        }
+        this.unreadSourcePaths.clear();
+        this.unreadSourcePaths.addAll(shifted);
     }
 
     private String normalizeConfigPath(String path) {
