@@ -35,15 +35,32 @@ public class TypeScriptFileNotInProgramTest {
             "com.hadi.clarpse.compiler.typescript.ClarpseTypeScriptCompiler";
 
     /**
-     * The fixture's tsconfig names `Included.ts` and nothing else, so `Ignored.ts` belongs to no
-     * program. It was skipped at DEBUG and recorded nowhere, which reaches a caller as a file that
-     * was parsed and declared nothing.
+     * The fixture's tsconfig names `Included.ts` and nothing else. `Ignored.ts` is a file no
+     * config names, and is read all the same, in a program of default options.
+     */
+    @Test
+    public void aFileNoConfigNamesIsModelled() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        ProjectFiles projectFiles = TypeScriptTestUtil.loadProject(FIXTURE);
+        CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+
+        OOPSourceCodeModel model = result.model();
+        assertTrue(model.copyOfComponent(
+                TypeScriptTestUtil.uniqueName("src", "Included", "Included")).isPresent());
+        assertTrue(model.copyOfComponent(
+                TypeScriptTestUtil.uniqueName("src", "Ignored", "Ignored")).isPresent());
+        assertTrue(result.failures().toString(), result.failures().isEmpty());
+    }
+
+    /**
+     * Asked to report such files, the compile records `Ignored.ts` as a failure. It was once
+     * skipped at DEBUG and recorded nowhere, which reaches a caller as a file that was parsed and
+     * declared nothing.
      */
     @Test
     public void aFileInNoProgramIsRecordedAsAFailure() throws Exception {
         Assume.assumeTrue(NodeRuntime.isNodeAvailable());
-        ProjectFiles projectFiles = TypeScriptTestUtil.loadProject(FIXTURE);
-        CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+        CompileResult result = TypeScriptTestUtil.compileReportingUnownedFiles(FIXTURE);
 
         OOPSourceCodeModel model = result.model();
         String includedName = TypeScriptTestUtil.uniqueName("src", "Included", "Included");
@@ -65,12 +82,11 @@ public class TypeScriptFileNotInProgramTest {
     @Test
     public void aFileInNoProgramIsLoggedWithoutAStackTrace() throws Exception {
         Assume.assumeTrue(NodeRuntime.isNodeAvailable());
-        ProjectFiles projectFiles = TypeScriptTestUtil.loadProject(FIXTURE);
         CapturingAppender captured = new CapturingAppender();
 
         CompileResult result;
         try (LogCapture ignored = new LogCapture(COMPILER_LOGGER, captured)) {
-            result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+            result = TypeScriptTestUtil.compileReportingUnownedFiles(FIXTURE);
         }
 
         assertEquals(1, result.failures().size());

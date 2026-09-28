@@ -37,6 +37,10 @@ public final class TypeScriptDaemon implements AutoCloseable {
     private static final String MAX_PROGRAMS_ENV = "CLARPSE_TS_MAX_PROGRAMS";
     private static final String MAX_PROGRAMS_PROP = "clarpse.typescript.maxPrograms";
     private static final int DEFAULT_MAX_PROGRAMS = 2;
+    private static final String UNOWNED_FILES_ENV = "CLARPSE_TS_UNOWNED_FILES";
+    private static final String UNOWNED_FILES_PROP = "clarpse.typescript.unownedFiles";
+    private static final String REPORT_UNOWNED_FILES = "report";
+    private static final int LOGGED_LINE_LENGTH = 200;
 
     /**
      * How many TypeScript programs the daemon may hold at once. A program retains every source file
@@ -58,6 +62,20 @@ public final class TypeScriptDaemon implements AutoCloseable {
             return fromEnv;
         }
         return ClarpseProperties.getInt(MAX_PROGRAMS_PROP, DEFAULT_MAX_PROGRAMS);
+    }
+
+    /**
+     * Whether a file no config names is modelled, in a program of default options, or reported
+     * as outside every program. Modelled unless the setting says {@code report}.
+     *
+     * @return {@code true} where such files are modelled.
+     */
+    private static boolean modelUnownedFiles() {
+        String setting = System.getProperty(UNOWNED_FILES_PROP);
+        if (setting == null || setting.trim().isEmpty()) {
+            setting = System.getenv(UNOWNED_FILES_ENV);
+        }
+        return setting == null || !REPORT_UNOWNED_FILES.equalsIgnoreCase(setting.trim());
     }
 
     private static Integer parsePositiveInt(final String raw) {
@@ -97,6 +115,7 @@ public final class TypeScriptDaemon implements AutoCloseable {
     private volatile BufferedWriter writer;
     private volatile BufferedReader reader;
     private int nextId = 1;
+    private boolean strayLineLogged;
     private Path tempDir;
     private boolean permitHeld;
 
@@ -145,6 +164,7 @@ public final class TypeScriptDaemon implements AutoCloseable {
         ObjectNode params = objectMapper.createObjectNode();
         params.put("repoRoot", repoRoot);
         params.put("maxPrograms", resolveMaxPrograms());
+        params.put("modelUnownedFiles", modelUnownedFiles());
         JsonNode result = request("initRepo", params);
         return new InitResult(
                 result.path("tsVersion").asText(""),
@@ -154,7 +174,9 @@ public final class TypeScriptDaemon implements AutoCloseable {
                 parseInvalidConfigs(result.path("invalidConfigs")),
                 result.path("residentProgramCount").asInt(0),
                 result.path("maxPrograms").asInt(DEFAULT_MAX_PROGRAMS)
-        );
+        ).withConfigDiagnostics(parseConfigDiagnostics(result.path("configDiagnostics")))
+                .withUnownedFiles(result.path("unownedProgramCount").asInt(0),
+                        result.path("unownedFileCount").asInt(0));
     }
 
     public TypeScriptFileModel getFileModel(final String filePath) throws TypeScriptDaemonException {
@@ -257,8 +279,8 @@ public final class TypeScriptDaemon implements AutoCloseable {
                 if (line.trim().isEmpty()) {
                     continue;
                 }
-                JsonNode response = objectMapper.readTree(line);
-                if (!response.has("id") || response.get("id").asInt() != id) {
+                final JsonNode response = replyIn(line);
+                if (response == null || !response.has("id") || response.get("id").asInt() != id) {
                     continue;
                 }
                 if (response.has("error")) {
@@ -281,6 +303,37 @@ public final class TypeScriptDaemon implements AutoCloseable {
         }
         throw new TypeScriptDaemonException("TypeScript daemon terminated unexpectedly.",
                 TypeScriptDaemonException.CODE_DAEMON_ERROR);
+    }
+
+    /**
+     * The reply a line holds, or {@code null} where the line is not one.
+     *
+     * <p>The channel carries one reply to a line. Anything else on it was written by something
+     * that is not the reply writer, and says nothing about the request: it is passed over, and
+     * the first such line is logged so that its source can be found.
+     *
+     * @param line A line read from the daemon.
+     * @return The reply, or {@code null}.
+     */
+    private JsonNode replyIn(final String line) {
+        JsonNode reply = null;
+        if (line.trim().startsWith("{")) {
+            try {
+                reply = objectMapper.readTree(line);
+            } catch (final IOException e) {
+                reply = null;
+            }
+        }
+        if ((reply == null || !reply.isObject()) && !strayLineLogged) {
+            strayLineLogged = true;
+            LOGGER.warn("The TypeScript daemon wrote a line that is not a reply, which is passed "
+                    + "over, as any more like it will be: {}",
+                    line.substring(0, Math.min(line.length(), LOGGED_LINE_LENGTH)));
+        }
+        if (reply == null || !reply.isObject()) {
+            return null;
+        }
+        return reply;
     }
 
     private void ensureStarted() throws TypeScriptDaemonException {
@@ -368,6 +421,9 @@ public final class TypeScriptDaemon implements AutoCloseable {
         private final List<InvalidConfig> invalidConfigs;
         private final int residentProgramCount;
         private final int maxPrograms;
+        private List<ConfigDiagnostic> configDiagnostics = Collections.emptyList();
+        private int unownedProgramCount;
+        private int unownedFileCount;
 
         public InitResult(final String tsVersion, final int configCount, final int fileCount,
                           final int invalidConfigCount, final List<InvalidConfig> invalidConfigs,
@@ -379,6 +435,45 @@ public final class TypeScriptDaemon implements AutoCloseable {
             this.invalidConfigs = invalidConfigs;
             this.residentProgramCount = residentProgramCount;
             this.maxPrograms = maxPrograms;
+        }
+
+        InitResult withConfigDiagnostics(final List<ConfigDiagnostic> diagnostics) {
+            this.configDiagnostics = diagnostics;
+            return this;
+        }
+
+        InitResult withUnownedFiles(final int programCount, final int fileCount) {
+            this.unownedProgramCount = programCount;
+            this.unownedFileCount = fileCount;
+            return this;
+        }
+
+        /**
+         * What the compiler said of the configs it read and used: an option it does not know, a
+         * value it could not take. Each config is used with the options the compiler could read.
+         *
+         * @return The diagnostics, empty where every config was read whole.
+         */
+        public List<ConfigDiagnostic> configDiagnostics() {
+            return configDiagnostics;
+        }
+
+        /**
+         * How many programs stand in for a config over the files no config names.
+         *
+         * @return The count, zero where every file is named by a config or such files are reported.
+         */
+        public int unownedProgramCount() {
+            return unownedProgramCount;
+        }
+
+        /**
+         * How many files no config names.
+         *
+         * @return The count, zero where such files are reported and not modelled.
+         */
+        public int unownedFileCount() {
+            return unownedFileCount;
         }
 
         /**
@@ -420,13 +515,70 @@ public final class TypeScriptDaemon implements AutoCloseable {
         }
     }
 
+    /** What the compiler said of a config it read. */
+    public static final class ConfigDiagnostic {
+        private final String configPath;
+        private final int code;
+        private final String message;
+
+        public ConfigDiagnostic(final String configPath, final int code, final String message) {
+            this.configPath = configPath;
+            this.code = code;
+            this.message = message;
+        }
+
+        public String configPath() {
+            return configPath;
+        }
+
+        /**
+         * The compiler's own number for the diagnostic.
+         *
+         * @return The number, zero where the compiler gave none.
+         */
+        public int code() {
+            return code;
+        }
+
+        public String message() {
+            return message;
+        }
+    }
+
     public static final class InvalidConfig {
         private final String configPath;
         private final String error;
+        private final int code;
+        private final String message;
 
         public InvalidConfig(final String configPath, final String error) {
+            this(configPath, error, 0, "");
+        }
+
+        public InvalidConfig(final String configPath, final String error, final int code,
+                             final String message) {
             this.configPath = configPath;
             this.error = error;
+            this.code = code;
+            this.message = message;
+        }
+
+        /**
+         * The compiler's own number for what was wrong with the config.
+         *
+         * @return The number, zero where the compiler gave none.
+         */
+        public int code() {
+            return code;
+        }
+
+        /**
+         * What the compiler said was wrong with the config.
+         *
+         * @return The text, empty where the compiler gave none.
+         */
+        public String message() {
+            return message;
         }
 
         public String configPath() {
@@ -446,8 +598,24 @@ public final class TypeScriptDaemon implements AutoCloseable {
         for (final JsonNode invalidConfigNode : invalidConfigsNode) {
             invalidConfigs.add(new InvalidConfig(
                     invalidConfigNode.path("configPath").asText(""),
-                    invalidConfigNode.path("error").asText("")));
+                    invalidConfigNode.path("error").asText(""),
+                    invalidConfigNode.path("code").asInt(0),
+                    invalidConfigNode.path("message").asText("")));
         }
         return Collections.unmodifiableList(invalidConfigs);
+    }
+
+    private static List<ConfigDiagnostic> parseConfigDiagnostics(final JsonNode diagnosticsNode) {
+        if (diagnosticsNode == null || !diagnosticsNode.isArray() || diagnosticsNode.isEmpty()) {
+            return Collections.emptyList();
+        }
+        final List<ConfigDiagnostic> diagnostics = new ArrayList<>();
+        for (final JsonNode diagnosticNode : diagnosticsNode) {
+            diagnostics.add(new ConfigDiagnostic(
+                    diagnosticNode.path("configPath").asText(""),
+                    diagnosticNode.path("code").asInt(0),
+                    diagnosticNode.path("message").asText("")));
+        }
+        return Collections.unmodifiableList(diagnostics);
     }
 }

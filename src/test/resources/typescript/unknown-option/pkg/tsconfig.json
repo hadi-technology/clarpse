@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "es2099",
+    "lib": ["es2099"],
+    "module": "commonjs",
+    "notAnOptionOfAnyCompiler": true
+  },
+  "include": ["src/**/*.ts"]
+}

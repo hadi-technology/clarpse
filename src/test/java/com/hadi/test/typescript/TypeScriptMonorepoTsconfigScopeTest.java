@@ -23,15 +23,15 @@ public class TypeScriptMonorepoTsconfigScopeTest {
 
     /**
      * Each app's tsconfig includes `src` and excludes its tests and scripts, so those files belong
-     * to no program. They are reported rather than dropped: a caller cannot otherwise tell a file
-     * its configuration left out from one that was analysed and declared nothing. Compilation still
-     * succeeds and the included sources are modelled.
+     * to no program. Asked to report such files, the compile reports them rather than dropping
+     * them: a caller cannot otherwise tell a file its configuration left out from one that was
+     * analysed and declared nothing. Compilation still succeeds and the included sources are
+     * modelled.
      */
     @Test
     public void filesExcludedByNestedTsconfigsAreReportedAndDoNotStopCompilation() throws Exception {
         Assume.assumeTrue(NodeRuntime.isNodeAvailable());
-        ProjectFiles projectFiles = TypeScriptTestUtil.loadProject(FIXTURE);
-        CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+        CompileResult result = TypeScriptTestUtil.compileReportingUnownedFiles(FIXTURE);
 
         OOPSourceCodeModel model = result.model();
         assertTrue(model.copyOfComponent(
@@ -49,5 +49,20 @@ public class TypeScriptMonorepoTsconfigScopeTest {
                 .map(path -> path.substring(path.lastIndexOf('/') + 1))
                 .collect(Collectors.toSet());
         assertEquals(Set.of("seed.ts", "service.test.ts", "app.test.ts"), reported);
+    }
+
+    /** Left to itself, the compile reads the files each config leaves out, and reports none. */
+    @Test
+    public void filesExcludedByNestedTsconfigsAreModelled() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        CompileResult result = TypeScriptTestUtil.compileFixture(FIXTURE);
+
+        assertTrue(result.failures().toString(), result.failures().isEmpty());
+        Set<String> modelled = result.model().components()
+                .map(component -> component.sourceFile())
+                .map(path -> path.substring(path.lastIndexOf('/') + 1))
+                .collect(Collectors.toSet());
+        assertTrue(modelled.toString(),
+                modelled.containsAll(Set.of("service.ts", "app.tsx", "seed.ts")));
     }
 }

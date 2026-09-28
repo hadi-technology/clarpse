@@ -409,13 +409,29 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
     private static void addInvalidConfigFailures(final TypeScriptDaemon.InitResult initResult,
                                                  final Set<CompileFailure> compileFailures,
                                                  final String persistDir) {
+        for (final TypeScriptDaemon.ConfigDiagnostic diagnostic : initResult.configDiagnostics()) {
+            LOGGER.info("{} is used with the options the compiler could read; it said TS{}: {}",
+                    relativeProjectPath(persistDir, diagnostic.configPath()), diagnostic.code(),
+                    diagnostic.message());
+        }
+        if (initResult.unownedFileCount() > 0) {
+            LOGGER.info("{} TypeScript file(s) are named by no config and are read in {} program(s) "
+                    + "of default options.", initResult.unownedFileCount(),
+                    initResult.unownedProgramCount());
+        }
         for (final TypeScriptDaemon.InvalidConfig invalidConfig : initResult.invalidConfigs()) {
             final String normalizedPath = relativeProjectPath(persistDir, invalidConfig.configPath());
-            final String message = switch (invalidConfig.error()) {
+            final String kind = switch (invalidConfig.error()) {
                 case "PROGRAM_CREATE_FAILED" -> "PROGRAM_CREATE_FAILED";
                 case "CONFIG_READ_FAILED", "CONFIG_PARSE_FAILED" -> "CONFIG_PARSE_FAILED";
                 default -> "CONFIG_INVALID";
             };
+            final String message;
+            if (invalidConfig.message().isEmpty()) {
+                message = kind;
+            } else {
+                message = kind + ": TS" + invalidConfig.code() + " " + invalidConfig.message();
+            }
             final Integer code = switch (invalidConfig.error()) {
                 case "PROGRAM_CREATE_FAILED" -> TypeScriptDaemonException.CODE_PROGRAM_CREATE_FAILED;
                 case "CONFIG_READ_FAILED", "CONFIG_PARSE_FAILED" -> TypeScriptDaemonException.CODE_CONFIG_PARSE_FAILED;

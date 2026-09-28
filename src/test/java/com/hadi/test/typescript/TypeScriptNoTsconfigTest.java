@@ -16,11 +16,19 @@ public class TypeScriptNoTsconfigTest {
 
     private static final String FIXTURE = "no-tsconfig";
 
+    /** A project run by a runtime that needs no config has none, and is read all the same. */
     @Test
-    public void missingTsconfigSkipsFiles() throws Exception {
+    public void aProjectWithNoTsconfigIsModelled() throws Exception {
         Assume.assumeTrue(NodeRuntime.isNodeAvailable());
-        ProjectFiles projectFiles = TypeScriptTestUtil.loadProject(FIXTURE);
-        CompileResult result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+        CompileResult result = TypeScriptTestUtil.compileFixture(FIXTURE);
+        assertTrue(result.failures().toString(), result.failures().isEmpty());
+        assertTrue(result.model().size() > 0);
+    }
+
+    @Test
+    public void missingTsconfigSkipsFilesWhereUnownedFilesAreReported() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        CompileResult result = TypeScriptTestUtil.compileReportingUnownedFiles(FIXTURE);
         assertEquals(0, result.model().size());
         assertEquals(1, result.failures().size());
         assertEquals(TypeScriptDaemonException.CODE_NO_TSCONFIG,

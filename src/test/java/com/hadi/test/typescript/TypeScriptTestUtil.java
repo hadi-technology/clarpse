@@ -46,6 +46,31 @@ public final class TypeScriptTestUtil {
         return result;
     }
 
+    /** The setting that decides what becomes of a file no config names. */
+    public static final String UNOWNED_FILES_PROPERTY = "clarpse.typescript.unownedFiles";
+
+    /**
+     * Compiles a fixture with files no config names reported and not modelled.
+     *
+     * @param fixtureName The fixture.
+     * @return The compile's result.
+     */
+    public static CompileResult compileReportingUnownedFiles(final String fixtureName)
+            throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        final String before = System.getProperty(UNOWNED_FILES_PROPERTY);
+        System.setProperty(UNOWNED_FILES_PROPERTY, "report");
+        try {
+            return new ClarpseProject(loadProject(fixtureName), Lang.TYPESCRIPT).result();
+        } finally {
+            if (before == null) {
+                System.clearProperty(UNOWNED_FILES_PROPERTY);
+            } else {
+                System.setProperty(UNOWNED_FILES_PROPERTY, before);
+            }
+        }
+    }
+
     public static String signature(final String name, final String... paramTypes) {
         if (paramTypes == null || paramTypes.length == 0) {
             return name + "()";
