@@ -57,6 +57,7 @@ public final class TypeScriptTestUtil {
      */
     public static CompileResult compileReportingUnownedFiles(final String fixtureName)
             throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
         final String before = System.getProperty(UNOWNED_FILES_PROPERTY);
         System.setProperty(UNOWNED_FILES_PROPERTY, "report");
         try {
