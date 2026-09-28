@@ -25,17 +25,17 @@ public class TypeScriptInvalidTsconfigTest {
 
     /**
      * A repository with one good and one unparseable config still yields the good project's model.
-     * The bad config is reported, and so is each source file it left in no program - those files
-     * used to be discarded along with their config, with nothing recorded to say they had not been
-     * analysed.
+     * The bad config is reported, with what the compiler said was wrong with it. Asked to report
+     * files no config names, the compile reports each source file the bad config left in no
+     * program - those files used to be discarded along with their config, with nothing recorded to
+     * say they had not been analysed.
      */
     @Test
     public void invalidTsconfigIsSkippedWhenValidConfigExists() throws Exception {
         Assume.assumeTrue(NodeRuntime.isNodeAvailable());
-        ProjectFiles projectFiles = TypeScriptTestUtil.loadProject(FIXTURE);
         CompileResult result;
         try {
-            result = new ClarpseProject(projectFiles, Lang.TYPESCRIPT).result();
+            result = TypeScriptTestUtil.compileReportingUnownedFiles(FIXTURE);
         } catch (CompileException e) {
             if (e.getMessage() != null && e.getMessage().contains("TYPESCRIPT_NOT_FOUND")) {
                 Assume.assumeTrue("TypeScript runtime unavailable.", false);
@@ -52,7 +52,8 @@ public class TypeScriptInvalidTsconfigTest {
                 .filter(failure -> Integer.valueOf(1003).equals(failure.errorCode()))
                 .collect(Collectors.toList());
         assertEquals(1, configFailures.size());
-        assertEquals("CONFIG_PARSE_FAILED", configFailures.get(0).message());
+        assertTrue(configFailures.get(0).message(),
+                configFailures.get(0).message().startsWith("CONFIG_PARSE_FAILED: TS"));
         assertTrue(configFailures.get(0).file().path().endsWith("bad/tsconfig.json"));
 
         List<CompileFailure> orphanedFiles = result.failures().stream()
@@ -65,5 +66,19 @@ public class TypeScriptInvalidTsconfigTest {
                     failure.errorCode());
             assertTrue(failure.file().path().replace('\\', '/').contains("/bad/"));
         }
+    }
+
+    /** A config that cannot be read owns nothing, and its sources are read without it. */
+    @Test
+    public void theSourcesOfAConfigThatCannotBeReadAreModelled() throws Exception {
+        Assume.assumeTrue(NodeRuntime.isNodeAvailable());
+        CompileResult result = TypeScriptTestUtil.compileFixture(FIXTURE);
+
+        assertTrue(result.model().copyOfComponent(
+                TypeScriptTestUtil.uniqueName("good/src", "Good", "Good")).isPresent());
+        assertTrue(result.model().components()
+                .anyMatch(component -> component.sourceFile().replace('\\', '/').contains("/bad/")));
+        assertEquals(1, result.failures().size());
+        assertEquals(Integer.valueOf(1003), result.failures().iterator().next().errorCode());
     }
 }

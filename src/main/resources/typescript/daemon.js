@@ -32,8 +32,15 @@ let state = {
   shallowBody: false
 };
 
+// Standard output carries replies and nothing else: the reader on the other end takes each line
+// for one. The compiler, and anything it loads, writes there too when a project's own options ask
+// it to report what it is doing, so every other write is sent to standard error and only the two
+// functions below hold the channel.
+const writeReply = process.stdout.write.bind(process.stdout);
+process.stdout.write = (chunk, encoding, callback) => process.stderr.write(chunk, encoding, callback);
+
 function writeResponse(id, result) {
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
+  writeReply(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
 }
 
 function writeError(id, code, message, data) {
@@ -41,7 +48,22 @@ function writeError(id, code, message, data) {
   if (data) {
     error.data = data;
   }
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error }) + "\n");
+  writeReply(JSON.stringify({ jsonrpc: "2.0", id, error }) + "\n");
+}
+
+// Compiler options that make the compiler report on its own work. A project sets them to debug
+// its build; none changes what a program holds, and each costs output nobody here reads.
+const REPORTING_OPTIONS = [
+  "traceResolution", "listFiles", "listFilesOnly", "listEmittedFiles", "explainFiles",
+  "extendedDiagnostics", "diagnostics", "generateTrace", "generateCpuProfile"
+];
+
+function withoutReporting(options) {
+  const quiet = Object.assign({}, options);
+  for (const name of REPORTING_OPTIONS) {
+    delete quiet[name];
+  }
+  return quiet;
 }
 
 function stableImplementationHash(text) {
@@ -73,12 +95,63 @@ function loadTypeScript(repoRoot) {
   // Use only the bundled TypeScript runtime that ships with Clarpse.
   const bundledResolved = tryResolve(() => require.resolve("typescript", { paths: [__dirname] }));
   if (bundledResolved) {
+    if (bundledResolved.sys) {
+      bundledResolved.sys.write = (text) => process.stderr.write(text);
+    }
     return bundledResolved;
   }
   return null;
 }
 
-function findTsconfigs(root) {
+/**
+ * The configs a repository is read from: every `tsconfig.json`, and, in a directory that has
+ * none, the `tsconfig.<name>.json` files that stand in for one. A repository that builds the same
+ * tree several ways keeps one such file per way and no `tsconfig.json`. A variant another config
+ * extends is a base for that config and owns nothing itself, and one another config references is
+ * reached through the reference.
+ */
+function findProjectConfigs(ts, root) {
+  const exact = findTsconfigs(root).sort();
+  const withExact = new Set(exact.map((configPath) => path.dirname(configPath)));
+  const variants = findTsconfigs(root, /^tsconfig\..+\.json$/)
+    .filter((configPath) => !withExact.has(path.dirname(configPath)))
+    .sort();
+  if (!variants.length) {
+    return exact;
+  }
+  const named = new Set();
+  for (const configPath of exact.concat(variants)) {
+    for (const other of referencedConfigPaths(ts, configPath).concat(extendedConfigPaths(ts, configPath))) {
+      named.add(normalizePath(ts, other));
+    }
+  }
+  return exact.concat(variants.filter((configPath) => !named.has(normalizePath(ts, configPath))));
+}
+
+/** The config files a config's `extends` names by path, resolved relative to the config. */
+function extendedConfigPaths(ts, configPath) {
+  let raw;
+  try {
+    raw = readNormalizedConfigFile(ts, configPath);
+  } catch (err) {
+    return [];
+  }
+  const named = raw && raw.config ? raw.config.extends : null;
+  const results = [];
+  for (const base of Array.isArray(named) ? named : [named]) {
+    if (typeof base !== "string" || !(base.startsWith(".") || path.isAbsolute(base))) {
+      continue;
+    }
+    const resolved = path.resolve(path.dirname(configPath), base);
+    results.push(resolved);
+    if (!resolved.toLowerCase().endsWith(".json")) {
+      results.push(resolved + ".json");
+    }
+  }
+  return results;
+}
+
+function findTsconfigs(root, named) {
   const results = [];
   const stack = [root];
   while (stack.length > 0) {
@@ -96,7 +169,7 @@ function findTsconfigs(root) {
       const fullPath = path.join(current, entry.name);
       if (entry.isDirectory()) {
         stack.push(fullPath);
-      } else if (entry.isFile() && entry.name === "tsconfig.json") {
+      } else if (entry.isFile() && (named ? named.test(entry.name) : entry.name === "tsconfig.json")) {
         results.push(fullPath);
       }
     }
@@ -258,6 +331,7 @@ function expandProjectReferences(ts, configPaths) {
 function parseConfigs(ts, repoRoot, configPaths) {
   const configs = [];
   const invalidConfigs = [];
+  const configDiagnostics = [];
 
   for (const configPath of configPaths) {
     let configFile;
@@ -268,13 +342,13 @@ function parseConfigs(ts, repoRoot, configPaths) {
         // The extends chain could not be read; fall through to minimal compiler options.
         configFile = null;
       } else {
-        invalidConfigs.push({ configPath, error: "CONFIG_READ_FAILED" });
+        invalidConfigs.push(invalidConfig(ts, configPath, "CONFIG_READ_FAILED", err));
         continue;
       }
     }
 
     if (configFile && configFile.error && !isExtendsError(configFile.error)) {
-      invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
+      invalidConfigs.push(invalidConfig(ts, configPath, "CONFIG_PARSE_FAILED", configFile.error));
       continue;
     }
 
@@ -295,20 +369,24 @@ function parseConfigs(ts, repoRoot, configPaths) {
           config = null;
         } else {
           // Failed for reasons other than extends - mark as invalid
-          invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
+          invalidConfigs.push(invalidConfig(ts, configPath, "CONFIG_PARSE_FAILED", err));
           continue;
         }
       }
     }
     if (!config && !hasExtendErrors) {
       // Completely failed to parse, not due to extends
-      invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
+      invalidConfigs.push(invalidConfig(ts, configPath, "CONFIG_PARSE_FAILED", null));
       continue;
     }
     if (config && config.errors && config.errors.length > 0 && !hasExtendErrors) {
-      // Has non-extends errors
-      invalidConfigs.push({ configPath, error: "CONFIG_PARSE_FAILED" });
-      continue;
+      // The config was read, and the compiler has said which files it names and which options
+      // it could make sense of. What it could not is reported and the rest is used: an option
+      // newer than this compiler, or a value it does not know, is a statement about one option
+      // and not about the project's files.
+      for (const diagnostic of config.errors) {
+        configDiagnostics.push(describeDiagnostic(ts, configPath, diagnostic));
+      }
     }
     let options, rootNames, projectReferences;
     if (hasExtendErrors) {
@@ -349,7 +427,7 @@ function parseConfigs(ts, repoRoot, configPaths) {
 
       rootNames = findTypeScriptFiles(configDir);
     } else {
-      options = Object.assign({}, config.options, { allowJs: false, checkJs: false });
+      options = withoutReporting(Object.assign({}, config.options, { allowJs: false, checkJs: false }));
       rootNames = filterTypeScriptRoots(config.fileNames);
       projectReferences = config.projectReferences || [];
     }
@@ -362,7 +440,108 @@ function parseConfigs(ts, repoRoot, configPaths) {
       programFailed: false
     });
   }
-  return { configs, invalidConfigs };
+  return { configs, invalidConfigs, configDiagnostics };
+}
+
+/** A diagnostic as a caller can log it: the config, the compiler's code for it, and its text. */
+function describeDiagnostic(ts, configPath, diagnostic) {
+  let message = "";
+  try {
+    message = diagnostic && diagnostic.messageText !== undefined
+      ? ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")
+      : String((diagnostic && diagnostic.message) || diagnostic || "");
+  } catch (err) {
+    message = String(diagnostic);
+  }
+  return {
+    configPath,
+    code: diagnostic && Number.isInteger(diagnostic.code) ? diagnostic.code : 0,
+    message: message.slice(0, 500)
+  };
+}
+
+function invalidConfig(ts, configPath, error, cause) {
+  const described = cause ? describeDiagnostic(ts, configPath, cause) : { code: 0, message: "" };
+  return { configPath, error, code: described.code, message: described.message };
+}
+
+/**
+ * The options a program is given where no config supplies any. They are the ones that read the
+ * most source without a project to say otherwise: the newest language level, imports resolved
+ * the way a bundler or a runtime that runs TypeScript directly resolves them, and an import
+ * allowed to name a file by its TypeScript extension.
+ */
+function optionsWithoutAConfig(ts) {
+  return {
+    allowJs: false,
+    checkJs: false,
+    strict: false,
+    noEmit: true,
+    esModuleInterop: true,
+    skipLibCheck: true,
+    resolveJsonModule: true,
+    allowImportingTsExtensions: true,
+    jsx: ts.JsxEmit.Preserve,
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    lib: []
+  };
+}
+
+/**
+ * A program for the files no config names, one for each top-level directory that holds any.
+ *
+ * A file no config names is not a file with nothing in it. A repository run by a runtime that
+ * needs no config has none at all, and one whose configs cover its packages leaves its scripts
+ * and tools outside them. Such a file is read with the options above. The top-level directory is
+ * the bound on a program's size: what a repository keeps apart at its root is as near to a
+ * project as a tree with no config states.
+ *
+ * Each is a config like any other, placed after every config the repository wrote, and tried
+ * only where none of those holds the file.
+ */
+function programsForUnownedFiles(ts, repoRoot, configs) {
+  const owned = new Set();
+  for (const config of configs) {
+    for (const rootName of config.rootNames) {
+      owned.add(normalizePath(ts, rootName));
+    }
+  }
+  const root = normalizePath(ts, repoRoot);
+  const groups = new Map();
+  for (const file of findTypeScriptFiles(repoRoot)) {
+    const normalized = normalizePath(ts, file);
+    if (owned.has(normalized)) {
+      continue;
+    }
+    const relative = path.relative(root, normalized).split(path.sep);
+    const dir = relative.length > 1 ? path.join(root, relative[0]) : root;
+    if (!groups.has(dir)) {
+      groups.set(dir, []);
+    }
+    groups.get(dir).push(normalized);
+  }
+  const options = optionsWithoutAConfig(ts);
+  return Array.from(groups.keys()).sort().map((dir) => ({
+    configPath: null,
+    dir,
+    options,
+    rootNames: groups.get(dir).sort(),
+    projectReferences: [],
+    programFailed: false,
+    unowned: true
+  }));
+}
+
+/** Nearest enclosing directory first, and a config the repository wrote before one it did not. */
+function nearestWrittenFirst(a, b) {
+  const left = state.configs[a];
+  const right = state.configs[b];
+  if (!!left.unowned !== !!right.unowned) {
+    return left.unowned ? 1 : -1;
+  }
+  return right.dir.length - left.dir.length;
 }
 
 function normalizePath(ts, filePath) {
@@ -399,12 +578,12 @@ function programFor(index) {
   try {
     program = state.ts.createProgram(programSpec(config));
   } catch (err) {
-    console.error("[clarpse] PROGRAM_CREATE_FAILED for", config.configPath, err.message);
+    console.error("[clarpse] PROGRAM_CREATE_FAILED for", config.configPath || config.dir, err.message);
     config.programFailed = true;
     return null;
   }
   const entry = {
-    configPath: config.configPath,
+    configPath: config.configPath || config.dir,
     program,
     options: config.options,
     checker: withPortableTypeText(program.getTypeChecker())
@@ -473,7 +652,7 @@ function configIndicesForFile(filePath) {
       candidates.push(i);
     }
   }
-  candidates.sort((a, b) => state.configs[b].dir.length - state.configs[a].dir.length);
+  candidates.sort(nearestWrittenFirst);
   return candidates;
 }
 
@@ -1578,32 +1757,41 @@ async function handleInitRepo(params) {
     err.code = ERROR_CODES.TYPESCRIPT_NOT_FOUND;
     throw err;
   }
-  const configs = expandProjectReferences(ts, findTsconfigs(repoRoot).sort());
-  if (!configs.length) {
-    const err = new Error("NO_TSCONFIG");
-    err.code = ERROR_CODES.NO_TSCONFIG;
-    throw err;
-  }
+  const configs = expandProjectReferences(ts, findProjectConfigs(ts, repoRoot));
   let parsedConfigs = [];
   let invalidConfigs = [];
+  let configDiagnostics = [];
   try {
     const result = parseConfigs(ts, repoRoot, configs);
     parsedConfigs = result.configs || [];
     invalidConfigs = result.invalidConfigs || [];
+    configDiagnostics = result.configDiagnostics || [];
   } catch (err) {
     const errObj = new Error("CONFIG_PARSE_FAILED");
     errObj.code = ERROR_CODES.CONFIG_PARSE_FAILED;
     errObj.data = err.message;
     throw errObj;
   }
+  const writtenConfigCount = parsedConfigs.length;
+  const unowned = params.modelUnownedFiles === false
+    ? []
+    : programsForUnownedFiles(ts, repoRoot, parsedConfigs);
+  parsedConfigs = parsedConfigs.concat(unowned);
   if (!parsedConfigs.length) {
-    const errObj = new Error("CONFIG_PARSE_FAILED");
-    errObj.code = ERROR_CODES.CONFIG_PARSE_FAILED;
-    errObj.data = invalidConfigs.map((entry) => entry.configPath);
+    const errObj = new Error(configs.length ? "CONFIG_PARSE_FAILED" : "NO_TSCONFIG");
+    errObj.code = configs.length ? ERROR_CODES.CONFIG_PARSE_FAILED : ERROR_CODES.NO_TSCONFIG;
+    if (configs.length) {
+      errObj.data = invalidConfigs.map((entry) => entry.configPath);
+    }
     throw errObj;
   }
   const fileMap = new Map();
   parsedConfigs.forEach((config, index) => {
+    if (config.unowned) {
+      // Found by the directory it sits under, after every config the repository wrote has been
+      // asked: a file none of them names may still be in one of their programs by an import.
+      return;
+    }
     for (const rootName of config.rootNames) {
       const normalized = normalizePath(ts, rootName);
       if (!isInternalFile(normalized, repoRoot)) {
@@ -1628,10 +1816,13 @@ async function handleInitRepo(params) {
   const fileCount = parsedConfigs.reduce((sum, config) => sum + config.rootNames.length, 0);
   return {
     tsVersion: ts.version || "",
-    configCount: parsedConfigs.length,
+    configCount: writtenConfigCount,
     fileCount,
     invalidConfigCount: invalidConfigs.length,
     invalidConfigs,
+    configDiagnostics,
+    unownedProgramCount: unowned.length,
+    unownedFileCount: unowned.reduce((sum, config) => sum + config.rootNames.length, 0),
     // Zero by construction: initialization reads configs and builds no programs. Reported so a
     // caller can tell that the daemon is not holding a program per config before any file is asked
     // for, which is what exhausted the heap on a large monorepo.
@@ -1767,7 +1958,7 @@ function owningConfigIndex(filePath) {
       candidates.push(i);
     }
   }
-  candidates.sort((a, b) => state.configs[b].dir.length - state.configs[a].dir.length);
+  candidates.sort(nearestWrittenFirst);
   if (candidates.length) {
     return candidates[0];
   }

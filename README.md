@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>11.8.0</version>
+  <version>11.10.0</version>
 </dependency>
 ```
 
@@ -41,7 +41,7 @@ The same three lines work for `Lang.CSHARP`, `Lang.TYPESCRIPT`, and `Lang.PYTHON
 |------------|---------------------------------|:----------------:|--------------------------------------------------------------------------------------------|
 | Java       | ANTLR, architecture-focused     | No               | Includes records.                                                                            |
 | C#         | JVM-based                       | No               | Partial type merging, namespace-aware indexing, fast in-repo symbol resolution.              |
-| TypeScript | Bundled TypeScript compiler     | Yes              | tsconfig-aware resolution, constructor parameter properties, monorepo support. Needs a valid `tsconfig.json`. |
+| TypeScript | Bundled TypeScript compiler     | Yes              | tsconfig-aware resolution, constructor parameter properties, monorepo support. Files no `tsconfig.json` names are read with default options. |
 | Python     | Bundled Pyright                 | Yes              | Nested classes, comment parsing, cyclomatic complexity, code hashing, visibility inference.  |
 
 Across every language you also get comment extraction, a clean object-oriented API over the AST, parallel parsing with configurable worker counts, and runtime configuration via environment variables, system properties, or a bundled properties file.
@@ -78,8 +78,13 @@ curl -s -X POST "http://localhost:8080/parse?lang=typescript" \
 ```
 
 Notes:
-- TypeScript parsing requires a valid `tsconfig.json` in the project input.
-- Python parsing uses bundled Pyright plus project imports/config for internal type linking.
+- TypeScript is read through the project's `tsconfig.json` files where it has them. See
+  [TypeScript projects](#typescript-projects) for a project that has none, or whose configs leave
+  files out.
+- Python parsing uses bundled Pyright plus project imports/config for internal type linking. An
+  import is resolved from the repository's root, from `src/`, from the `extraPaths` a
+  `pyrightconfig.json` or `pyproject.toml` names, and from every directory that holds the top of a
+  package: a package kept at `backend/app/` is imported as `app`.
 - TypeScript and Python daemons resolve only bundled compiler/type-checker runtimes.
 - Environment variables: `CLARPSE_PORT`, `CLARPSE_MAX_BYTES`, `CLARPSE_PARALLELISM`, `CLARPSE_PYTHON_PARALLELISM`, `CLARPSE_NODE_PATH`.
 - Node override system properties: `clarpse.node.path`, `clarpse.node.disabled`.
@@ -122,6 +127,9 @@ Entries handed to a `DiscardedEntryObserver` count against these limits like any
 - `CLARPSE_NODE_PATH` or `-Dclarpse.node.path=<path>` sets a custom Node.js executable path.
 - `CLARPSE_NODE_DISABLED` or `-Dclarpse.node.disabled=true` disables Node.js (TypeScript and Python parsing will fail).
 - `CLARPSE_NODE_HEAP_SIZE` or `-Dclarpse.node.heapSize=<MB>` sets Node.js heap size in MB (default: 4096). Increase for large TypeScript/Python projects.
+- `CLARPSE_TS_UNOWNED_FILES=report` or `-Dclarpse.typescript.unownedFiles=report` reports a
+  TypeScript file no config names as failure `2001` and does not model it. By default such a file
+  is modelled; see [TypeScript projects](#typescript-projects).
 - `CLARPSE_TS_MAX_PROGRAMS` or `-Dclarpse.typescript.maxPrograms=<n>` caps how many TypeScript
   programs the daemon holds at once (default: 2). A program retains every source file it reaches and
   a type checker over them, so this, rather than the heap size, is what bounds a repository with many
@@ -303,7 +311,7 @@ unread.holdsFileNamed("Other.kt");       // NO, or UNKNOWN when the record is pa
 - `complete()` is false once a path could not be recorded, and a query against a partial record
   answers `UNKNOWN` rather than `NO`.
 
-TypeScript usage follows the same API, but requires Node.js and a valid `tsconfig.json`:
+TypeScript usage follows the same API, and requires Node.js:
 ```java
 final ProjectFiles projectFiles = new ProjectFiles("/path/to/typescript-project");
 final ClarpseProject project = new ClarpseProject(projectFiles, Lang.TYPESCRIPT);
@@ -413,6 +421,31 @@ Nothing an analysis creates outlives it:
   another running JVM is never deleted, however old; a directory of an earlier process that had the
   same id, such as a restarted container's JVM, is. Run it at startup.
 
+## TypeScript projects
+
+A TypeScript file is read in a program, and a program is built from a config.
+
+- **Configs.** Every `tsconfig.json` is a project, and so is every config one of them references.
+  In a directory with no `tsconfig.json`, a `tsconfig.<name>.json` stands in for one, unless
+  another config extends or references it: a repository that builds one tree several ways keeps a
+  config for each way and no `tsconfig.json`.
+- **A config the compiler has something to say about.** A config is used with the options the
+  bundled compiler could read. An option newer than that compiler, or a value it does not know,
+  is reported in `InitResult.configDiagnostics()` with the compiler's own code and text, and the
+  config's files are read all the same. A config that cannot be read at all is failure `1003`,
+  and its message carries what the compiler said was wrong.
+- **Files no config names.** A project run by a runtime that needs no config has none, and a
+  repository whose configs cover its packages leaves its scripts and tools outside them. Such
+  files are read in a program of default options, one program for each top-level directory that
+  holds any: the newest language level, imports resolved as a bundler resolves them, and an import
+  allowed to name a file by its `.ts` extension. A file is tried in the programs of the configs
+  the repository wrote first. `InitResult.unownedFileCount()` says how many such files there are.
+  Set `clarpse.typescript.unownedFiles=report` to have them reported as failure `2001` and not
+  modelled, which is also what a project with no config then gets as failure `1002`.
+- **Options that make the compiler report.** `traceResolution`, `listFiles`, `explainFiles`,
+  `extendedDiagnostics` and the like are dropped from a config's options. They change nothing a
+  program holds.
+
 ## Failure Contract
 - Java/C#/TypeScript/Python all report recoverable issues in `CompileResult.failures()` using
   language-agnostic error codes.
@@ -421,7 +454,8 @@ Nothing an analysis creates outlives it:
 Standardized error codes:
 - `1000` Node runtime not available.
 - `1001` Language runtime bundle not available.
-- `1002` Required project config is missing (for example `tsconfig.json`).
+- `1002` Required project config is missing (for example `tsconfig.json`, where files no config
+  names are reported and not modelled).
 - `1003` Project config parse/validation failed.
 - `1004` Program/repository initialization failed.
 - `2001` File is outside active program/repository scope.

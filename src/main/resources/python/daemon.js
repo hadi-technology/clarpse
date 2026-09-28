@@ -104,6 +104,40 @@ function scanRepo(root) {
   return results;
 }
 
+/**
+ * The directories imports are written from, read off the packages themselves.
+ *
+ * A package is imported by its name from the directory that holds it. A repository that keeps
+ * its code under a directory of its own, `backend/` or `services/api/`, runs with that directory
+ * on the import path, and writes `from app.models import User` for `backend/app/models.py`. The
+ * directory is the parent of the outermost directory that has an `__init__.py`, which is what
+ * makes it the top of a package and not a part of one.
+ *
+ * Shallowest first, so that where two directories hold a package of one name the one nearer the
+ * root supplies it, as it would were both on the import path in the order a project lists them.
+ */
+function inferImportRoots(repoRoot, files, known) {
+  const packageDirs = new Set();
+  for (const filePath of files) {
+    if (path.basename(filePath).toLowerCase() === '__init__.py') {
+      packageDirs.add(path.dirname(filePath));
+    }
+  }
+  const taken = new Set((known || []).map((root) => path.resolve(root)));
+  const roots = new Set();
+  for (const dir of packageDirs) {
+    if (packageDirs.has(path.dirname(dir))) {
+      continue;
+    }
+    const root = path.dirname(dir);
+    if (root !== repoRoot && root.startsWith(repoRoot + path.sep) && !taken.has(root)) {
+      roots.add(root);
+    }
+  }
+  const depth = (dir) => dir.split(path.sep).length;
+  return Array.from(roots).sort((a, b) => depth(a) - depth(b) || a.localeCompare(b));
+}
+
 function moduleNameForPath(filePath, root) {
   let rel;
   try {
@@ -160,6 +194,19 @@ function buildModuleIndex(repoRoot, extraRoots, filesToIndex) {
           index.set(extraModule, filePath);
         }
         collectPackageAlias(packageAliases, extraModule, filePath);
+      }
+    }
+  }
+  // The directories the packages themselves show imports to be written from, after the ones the
+  // project names, and each only for a name nothing before it supplies.
+  for (const root of inferImportRoots(repoRoot, files, [repoRoot].concat(extraList))) {
+    for (const filePath of files) {
+      const inferredModule = moduleNameForPath(filePath, root);
+      if (inferredModule) {
+        if (!index.has(inferredModule)) {
+          index.set(inferredModule, filePath);
+        }
+        collectPackageAlias(packageAliases, inferredModule, filePath);
       }
     }
   }
@@ -2893,8 +2940,9 @@ async function handleInitRepo(params) {
   state.pythonVersion = versionInfo.version || DEFAULT_PYTHON_VERSION;
   state.configSource = versionInfo.source || 'default';
   const extraPaths = resolveExtraPaths(normalized, versionInfo.extraPaths);
-  state.extraModuleRoots = extraPaths;
   const scannedFiles = scanRepo(normalized);
+  const importRoots = extraPaths.concat(inferImportRoots(normalized, scannedFiles, extraPaths));
+  state.extraModuleRoots = importRoots;
   state.moduleIndex = buildModuleIndex(normalized, extraPaths, scannedFiles);
   state.fileUriMap = new Map();
   state.moduleDeclarations = new Map();
@@ -2905,7 +2953,7 @@ async function handleInitRepo(params) {
   state.fileSystem = null;
 
   try {
-    ensureProgram(state.pythonVersion, extraPaths);
+    ensureProgram(state.pythonVersion, importRoots);
   } catch (err) {
     return { error: { code: ERROR_CODES.DAEMON_ERROR, message: err && err.message ? err.message : 'Python daemon error' } };
   }
