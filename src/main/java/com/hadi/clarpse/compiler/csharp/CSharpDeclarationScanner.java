@@ -13,7 +13,8 @@ import java.util.Set;
  * <p>The scanner skips comments, string literals (regular, verbatim, raw and interpolated, with
  * nested holes), character literals and preprocessor lines; tracks brace scopes; and records each
  * namespace, block-scoped or file-scoped, and each type declared in it, nested types included, with
- * the unique name the C# assembler gives the same type. A leading byte-order mark is ignored.
+ * its arity and its metadata name (see {@link CSharpTypeNames}), from which the unique name the C#
+ * assembler gives the same type is derived. A leading byte-order mark is ignored.
  *
  * <p>It is a lexical approximation: it does not evaluate preprocessor conditionals, and a construct
  * it does not recognise yields no declaration rather than a wrong one.
@@ -23,15 +24,26 @@ final class CSharpDeclarationScanner {
     /**
      * One declared type.
      *
-     * @param kind          the kind, spelled as the C# parser spells it
-     * @param name          the simple name
-     * @param namespaceName the enclosing namespace, empty for none
-     * @param componentName the name within the namespace, outer types first
-     * @param uniqueName    the namespace and component name
-     * @param partial       whether the declaration is marked {@code partial}
+     * @param kind                  the kind, spelled as the C# parser spells it
+     * @param name                  the simple name, without type parameters
+     * @param arity                 the number of type parameters
+     * @param namespaceName         the enclosing namespace, empty for none
+     * @param componentName         the name within the namespace, outer types first, without arities
+     * @param metadataComponentName the name within the namespace with each generic type's arity
+     * @param partial               whether the declaration is marked {@code partial}
      */
-    record Declaration(String kind, String name, String namespaceName, String componentName,
-                       String uniqueName, boolean partial) {
+    record Declaration(String kind, String name, int arity, String namespaceName, String componentName,
+                       String metadataComponentName, boolean partial) {
+
+        /** The namespace and component name, without arities. */
+        String uniqueName() {
+            return CSharpTypeNames.qualify(namespaceName, componentName);
+        }
+
+        /** The namespace and metadata component name. */
+        String metadataName() {
+            return CSharpTypeNames.qualify(namespaceName, metadataComponentName);
+        }
     }
 
     private static final Set<String> TYPE_KEYWORDS = Set.of("class", "struct", "interface", "enum", "record");
@@ -40,7 +52,14 @@ final class CSharpDeclarationScanner {
 
     private enum ScopeKind { OTHER, NAMESPACE, TYPE }
 
-    private record Scope(ScopeKind kind, String name) {
+    /**
+     * A brace scope.
+     *
+     * @param kind    what the scope is
+     * @param name    a namespace's name, or a type's simple name
+     * @param segment a type's metadata segment, its arity included; a namespace's name
+     */
+    private record Scope(ScopeKind kind, String name, String segment) {
     }
 
     private final String text;
@@ -92,7 +111,7 @@ final class CSharpDeclarationScanner {
         return builder.toString();
     }
 
-    private String enclosingTypes() {
+    private String enclosingTypes(final boolean withArity) {
         final StringBuilder builder = new StringBuilder();
         final Iterator<Scope> outermostFirst = scopes.descendingIterator();
         while (outermostFirst.hasNext()) {
@@ -101,7 +120,11 @@ final class CSharpDeclarationScanner {
                 if (builder.length() > 0) {
                     builder.append('.');
                 }
-                builder.append(scope.name());
+                if (withArity) {
+                    builder.append(scope.segment());
+                } else {
+                    builder.append(scope.name());
+                }
             }
         }
         return builder.toString();
@@ -167,7 +190,7 @@ final class CSharpDeclarationScanner {
                     scopes.push(pending);
                     pending = null;
                 } else {
-                    scopes.push(new Scope(ScopeKind.OTHER, ""));
+                    scopes.push(new Scope(ScopeKind.OTHER, "", ""));
                 }
                 recent.clear();
                 break;
@@ -235,7 +258,7 @@ final class CSharpDeclarationScanner {
             if (next < text.length() && text.charAt(next) == ';') {
                 fileScopedNamespace = name;
             } else {
-                pending = new Scope(ScopeKind.NAMESPACE, name);
+                pending = new Scope(ScopeKind.NAMESPACE, name, name);
             }
             previous = name;
             return;
@@ -278,21 +301,31 @@ final class CSharpDeclarationScanner {
             recent.add(keyword);
             return;
         }
-        declare(kind, next);
+        int arity = 0;
+        if (followingChar == '<') {
+            arity = Math.max(0, CSharpTypeNames.typeArgumentCount(text, follower));
+        }
+        declare(kind, next, arity);
     }
 
     /** {@code delegate <return type> Name<...>(...);} declares a type; an anonymous delegate does not. */
     private void onDelegate() {
         int index = position;
         String last = null;
+        int lastArity = 0;
         int identifiers = 0;
         int angle = 0;
         while (index < text.length()) {
             final char c = text.charAt(index);
             if (c == '<') {
+                if (angle == 0) {
+                    lastArity = 1;
+                }
                 angle++;
             } else if (c == '>') {
                 angle--;
+            } else if (c == ',' && angle == 1) {
+                lastArity++;
             } else if (angle == 0 && (c == '(' || c == '{' || c == ';')) {
                 break;
             } else if (angle == 0 && (Character.isLetter(c) || c == '_')) {
@@ -301,35 +334,29 @@ final class CSharpDeclarationScanner {
                     index++;
                 }
                 last = text.substring(start, index);
+                lastArity = 0;
                 identifiers++;
                 continue;
             }
             index++;
         }
         if (identifiers >= 2 && last != null) {
-            record("delegate", last);
+            record("delegate", last, lastArity);
         }
     }
 
-    private void declare(final String kind, final String name) {
-        record(kind, name);
-        pending = new Scope(ScopeKind.TYPE, name);
+    private void declare(final String kind, final String name, final int arity) {
+        record(kind, name, arity);
+        pending = new Scope(ScopeKind.TYPE, name, CSharpTypeNames.metadataSegment(name, arity));
         recent.clear();
     }
 
-    private void record(final String kind, final String name) {
-        final String owner = enclosingTypes();
-        final String namespace = currentNamespace();
-        String componentName = name;
-        if (!owner.isEmpty()) {
-            componentName = owner + "." + name;
-        }
-        String uniqueName = componentName;
-        if (!namespace.isEmpty()) {
-            uniqueName = namespace + "." + componentName;
-        }
-        declarations.add(new Declaration(kind, name, namespace, componentName, uniqueName,
-                recent.contains("partial")));
+    private void record(final String kind, final String name, final int arity) {
+        final String componentName = CSharpTypeNames.qualify(enclosingTypes(false), name);
+        final String metadataComponentName = CSharpTypeNames.qualify(enclosingTypes(true),
+                CSharpTypeNames.metadataSegment(name, arity));
+        declarations.add(new Declaration(kind, name, arity, currentNamespace(), componentName,
+                metadataComponentName, recent.contains("partial")));
     }
 
     private String peekIdentifier() {

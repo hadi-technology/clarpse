@@ -16,7 +16,8 @@ import java.util.Set;
  */
 public enum UnreadLang {
 
-    KOTLIN("kotlin", "kt", "kts"),
+    /** Kotlin script; Kotlin source ({@code .kt}) is {@link Lang#KOTLIN}. */
+    KOTLIN("kotlin", "kts"),
     SCALA("scala", "scala", "sc"),
     GO("go", "go"),
     RUST("rust", "rs"),

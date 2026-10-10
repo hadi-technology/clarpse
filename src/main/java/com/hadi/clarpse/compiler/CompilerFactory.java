@@ -3,6 +3,7 @@ package com.hadi.clarpse.compiler;
 import com.hadi.clarpse.compiler.typescript.ClarpseTypeScriptCompiler;
 import com.hadi.clarpse.compiler.python.ClarpsePythonCompiler;
 import com.hadi.clarpse.compiler.csharp.ClarpseCSharpCompiler;
+import com.hadi.clarpse.compiler.kotlin.ClarpseKotlinCompiler;
 
 /**
  * Factory to retrieve appropriate parsing tool for our projects.
@@ -20,6 +21,8 @@ public class CompilerFactory {
             return new ClarpseTypeScriptCompiler();
             case PYTHON:
             return new ClarpsePythonCompiler();
+            case KOTLIN:
+            return new ClarpseKotlinCompiler();
         default:
             throw new CompileException("Could not find parsing tool for: " + language.value());
         }

@@ -3,7 +3,7 @@
 
 	<groupId>io.github.hadi-technology</groupId>
 	<artifactId>clarpse</artifactId>
-	<version>11.10.0</version>
+	<version>11.11.0</version>
 	<packaging>jar</packaging>
 
 	<name>${project.groupId}:${project.artifactId}</name>
@@ -93,6 +93,11 @@
 		<dependency>
 			<groupId>org.jetbrains</groupId>
 			<artifactId>csharp-parser</artifactId>
+			<version>0.3.355</version>
+		</dependency>
+		<dependency>
+			<groupId>org.jetbrains</groupId>
+			<artifactId>kotlin-parser</artifactId>
 			<version>0.3.355</version>
 		</dependency>
 		<dependency>

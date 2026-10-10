@@ -3,12 +3,15 @@ package com.hadi.clarpse.compiler.java;
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
 
+import java.util.function.Predicate;
+
 /**
  * Thread-local context holding parser and type solver for Java parsing.
  */
 public class ParserContext {
     private final CombinedTypeSolver typeSolver;
     private final JavaParser parser;
+    private Predicate<String> otherLanguageTypes = name -> false;
 
     public ParserContext(final String persistDir) {
         this(persistDir, java.util.List.of());
@@ -37,5 +40,30 @@ public class ParserContext {
 
     public JavaParser parser() {
         return parser;
+    }
+
+    /**
+     * The types the project's files in other JVM languages declare, which the type solver cannot
+     * see.
+     *
+     * @return Whether a fully qualified name is such a type; never null.
+     */
+    public Predicate<String> otherLanguageTypes() {
+        return otherLanguageTypes;
+    }
+
+    /**
+     * This context, resolving on-demand imports against the given other-language types too.
+     *
+     * @param types Whether a fully qualified name is a type another JVM language declares; null for none.
+     * @return This context.
+     */
+    public ParserContext withOtherLanguageTypes(final Predicate<String> types) {
+        if (types == null) {
+            this.otherLanguageTypes = name -> false;
+        } else {
+            this.otherLanguageTypes = types;
+        }
+        return this;
     }
 }

@@ -85,6 +85,22 @@ public class CSharpDeclarationScannerTest {
     }
 
     @Test
+    public void genericDeclarationsCarryTheirArityInTheirMetadataNames() {
+        final List<String> declared = CSharpDeclarationScanner.scan("namespace A {\n"
+                        + "public class Converter { }\n"
+                        + "public class Converter<T> : Converter { public class Node { } }\n"
+                        + "public interface IMap<TKey, TValue> where TKey : notnull { }\n"
+                        + "public delegate Task<int> Factory<TIn, TOut>(TIn value);\n"
+                        + "}\n").stream()
+                .map(declaration -> declaration.metadataName() + "/" + declaration.arity() + "/"
+                        + declaration.uniqueName())
+                .collect(Collectors.toList());
+        assertEquals(List.of("A.Converter/0/A.Converter", "A.Converter`1/1/A.Converter",
+                "A.Converter`1.Node/0/A.Converter.Node", "A.IMap`2/2/A.IMap", "A.Factory`2/2/A.Factory"),
+                declared);
+    }
+
+    @Test
     public void unterminatedTextEndsTheScanWithoutFailing() {
         assertTrue(declared("namespace U { class A { string s = \"never closed").contains("class U.A"));
         assertTrue(declared("namespace U { class B { /* never closed").contains("class U.B"));

@@ -17,6 +17,8 @@ import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.Package;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -45,11 +47,28 @@ final class PythonModelAssembler {
     private PythonModelAssembler() {
     }
 
-    static boolean shouldSkipPath(final String filePath) {
+    /**
+     * Whether a file lies under an excluded directory of the project. Only the part of the path
+     * within the project root is examined, so a project that itself sits under a directory named
+     * like an excluded one is still read.
+     *
+     * @param projectRoot The project root on disk; {@code null} examines the whole path.
+     * @param filePath    The file's path on disk.
+     * @return Whether the file is excluded.
+     */
+    static boolean shouldSkipPath(final String projectRoot, final String filePath) {
         if (filePath == null || filePath.isEmpty()) {
             return false;
         }
-        String normalized = filePath.replace('\\', '/');
+        String withinProject = filePath;
+        if (projectRoot != null && !projectRoot.isEmpty()) {
+            final Path root = Paths.get(projectRoot).toAbsolutePath().normalize();
+            final Path file = Paths.get(filePath).toAbsolutePath().normalize();
+            if (file.startsWith(root)) {
+                withinProject = root.relativize(file).toString();
+            }
+        }
+        final String normalized = withinProject.replace('\\', '/');
         String[] segments = normalized.split("/");
         for (String segment : segments) {
             if (EXCLUDED_DIRS.contains(segment)) {

@@ -5,10 +5,16 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import com.hadi.clarpse.reference.ComponentReference;
+
 import java.io.Serializable;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.stream.Stream;
 
@@ -30,6 +36,13 @@ public class OOPSourceCodeModel implements Serializable {
      */
     @JsonIgnore
     private transient StringPool stringPool;
+    /**
+     * The extensions of the source files this model's components come from, which stand for the
+     * languages it holds. Derived from the components, so neither serialized nor required: a model
+     * without it recomputes it on first use.
+     */
+    @JsonIgnore
+    private transient Set<String> sourceExtensions;
 
     public OOPSourceCodeModel() {
         this(new StringPool());
@@ -79,8 +92,103 @@ public class OOPSourceCodeModel implements Serializable {
         return components;
     }
 
+    /**
+     * Inserts every component of another model into this one, and makes the references of the merged
+     * model internal wherever it now holds their target.
+     *
+     * <p>A reference is internal when the model holds a component by its name, and a compile can
+     * only judge that against its own model. Each language is compiled on its own, so a Java
+     * reference to a Kotlin type, or a Kotlin reference to a Java type, leaves its compile external
+     * (or, in a one-level compile, not loaded) although it names the other compile's component
+     * exactly. Merging the two models is where both components first meet, so the merge settles it:
+     * an external or not-loaded reference whose target the merged model holds becomes internal. No
+     * reference is ever demoted, and a reference whose target is still missing keeps its state.
+     *
+     * <p>The incoming components are always checked. This model's own components are checked too
+     * when the two models do not hold the same single language, since only then can a reference
+     * already here name a component arriving now; merging the files of one language one by one stays
+     * linear.
+     *
+     * @param sourceModel The model whose components to insert.
+     */
     public void merge(final OOPSourceCodeModel sourceModel) {
+        final Set<String> incomingExtensions = sourceModel.sourceExtensions();
+        final Set<String> ownExtensions = new HashSet<>(sourceExtensions());
         insertComponents(sourceModel.getComponents());
+        final boolean sameSingleLanguage = ownExtensions.size() == 1 && ownExtensions.equals(incomingExtensions);
+        if (ownExtensions.isEmpty() || sameSingleLanguage) {
+            promoteReferences(sourceModel.getComponents().keySet());
+        } else {
+            promoteReferences(new HashSet<>(this.components.keySet()));
+        }
+    }
+
+    /** Makes internal the external and not-loaded references of the named components that this model can satisfy. */
+    private void promoteReferences(final Set<String> componentNames) {
+        int sinceCheck = 0;
+        for (final String name : componentNames) {
+            if (++sinceCheck >= INTERRUPT_CHECK_INTERVAL) {
+                sinceCheck = 0;
+                throwIfCancelled();
+            }
+            final Component component = this.components.get(name);
+            if (component != null) {
+                promoteReferences(component);
+            }
+        }
+    }
+
+    private void promoteReferences(final Component component) {
+        if (component.externalDependencies().isEmpty() && component.notLoadedDependencies().isEmpty()) {
+            return;
+        }
+        final Set<ComponentReference> internal = new LinkedHashSet<>(component.internalDependencies());
+        final Set<ComponentReference> external = new LinkedHashSet<>();
+        final Set<ComponentReference> notLoaded = new LinkedHashSet<>();
+        boolean promoted = false;
+        for (final ComponentReference reference : component.externalDependencies()) {
+            if (this.components.containsKey(reference.invokedComponent())) {
+                internal.add(reference);
+                promoted = true;
+            } else {
+                external.add(reference);
+            }
+        }
+        for (final ComponentReference reference : component.notLoadedDependencies()) {
+            if (this.components.containsKey(reference.invokedComponent())) {
+                internal.add(reference);
+                promoted = true;
+            } else {
+                notLoaded.add(reference);
+            }
+        }
+        if (promoted) {
+            component.setReferenceClassification(internal, external, notLoaded);
+        }
+    }
+
+    /** The extensions of this model's source files, lower-cased. */
+    private Set<String> sourceExtensions() {
+        Set<String> extensions = this.sourceExtensions;
+        if (extensions == null) {
+            extensions = new HashSet<>();
+            for (final Component component : this.components.values()) {
+                addSourceExtension(extensions, component);
+            }
+            this.sourceExtensions = extensions;
+        }
+        return extensions;
+    }
+
+    private static void addSourceExtension(final Set<String> extensions, final Component component) {
+        final String sourceFile = component.sourceFile();
+        if (sourceFile == null) {
+            return;
+        }
+        final int dot = sourceFile.lastIndexOf('.');
+        if (dot >= 0 && dot > sourceFile.lastIndexOf('/')) {
+            extensions.add(sourceFile.substring(dot + 1).toLowerCase(Locale.ROOT));
+        }
     }
 
     public int size() {
@@ -93,6 +201,9 @@ public class OOPSourceCodeModel implements Serializable {
         }
         final Component cloned = new Component(component, stringPool());
         components.put(cloned.uniqueName(), cloned);
+        if (this.sourceExtensions != null) {
+            addSourceExtension(this.sourceExtensions, cloned);
+        }
     }
 
     public boolean containsComponent(final String componentName) {
@@ -185,6 +296,7 @@ public class OOPSourceCodeModel implements Serializable {
 
     public void removeComponent(String cmpUniqueName) {
         this.components.remove(cmpUniqueName);
+        this.sourceExtensions = null;
         if (LOGGER.isDebugEnabled()) {
             LOGGER.debug("Removed component {}.", cmpUniqueName);
         }

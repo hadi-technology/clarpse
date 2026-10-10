@@ -98,7 +98,10 @@ final class CSharpModel {
 
     static final class CSharpTypeModel {
         String kind;
+        /** The simple name, without type parameters. */
         String name;
+        /** The number of type parameters. */
+        int arity;
         String namespaceName;
         String moduleName;
         String sourcePath;
@@ -126,6 +129,7 @@ final class CSharpModel {
             final CSharpTypeModel copy = new CSharpTypeModel();
             copy.kind = kind;
             copy.name = name;
+            copy.arity = arity;
             copy.namespaceName = namespaceName;
             copy.moduleName = moduleName;
             copy.sourcePath = sourcePath;

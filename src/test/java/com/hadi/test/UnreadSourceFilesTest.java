@@ -34,39 +34,54 @@ public class UnreadSourceFilesTest {
     private static final String JAVA_SOURCE = "package repo; public class Main { void run() { } }";
     private static final String SCALA_SOURCE = "package repo\nclass Main { def run(): Unit = () }\n";
     private static final String KOTLIN_SOURCE = "package repo\nclass Main { fun run() { } }\n";
+    private static final String KOTLIN_SCRIPT = "plugins { kotlin(\"jvm\") }\n";
     private static final String GO_SOURCE = "package repo\n\nfunc Run() {}\n";
     private static final String README = "# Repo\n\nThe architecture lives here.\n";
     private static final byte[] LOGO = {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
 
     @Test
-    public void anArchivesScalaAndKotlinAreReachableThroughTheRecord() throws Exception {
+    public void anArchivesScalaAndGoAreReachableThroughTheRecord() throws Exception {
         ProjectFiles projectFiles = zipOf(
                 entry("repo/src/Main.java", JAVA_SOURCE),
                 entry("repo/src/Main.scala", SCALA_SOURCE),
-                entry("repo/src/Main.kt", KOTLIN_SOURCE));
+                entry("repo/src/main.go", GO_SOURCE));
 
         UnreadSourceFiles unread = projectFiles.unreadSourceFiles();
 
         assertTrue(unread.complete());
-        assertEquals(List.of("/repo/src/Main.scala", "/repo/src/Main.kt"),
+        assertEquals(List.of("/repo/src/Main.scala", "/repo/src/main.go"),
                 new ArrayList<>(unread.paths()));
         assertEquals(Answer.YES, unread.holdsFileNamed("Main.scala"));
-        assertEquals(Answer.YES, unread.holdsPath("/repo/src/Main.kt"));
-        assertEquals(List.of("scala", "kotlin"), new ArrayList<>(unread.languages()));
+        assertEquals(Answer.YES, unread.holdsPath("/repo/src/main.go"));
+        assertEquals(List.of("scala", "go"), new ArrayList<>(unread.languages()));
     }
 
     @Test
-    public void anArchivesScalaAndKotlinAreAbsentFromEverythingElse() throws Exception {
+    public void anArchivesScalaAndGoAreAbsentFromEverythingElse() throws Exception {
         ProjectFiles projectFiles = zipOf(
                 entry("repo/src/Main.java", JAVA_SOURCE),
                 entry("repo/src/Main.scala", SCALA_SOURCE),
-                entry("repo/src/Main.kt", KOTLIN_SOURCE));
+                entry("repo/src/main.go", GO_SOURCE));
 
         assertEquals(1, projectFiles.size());
         assertEquals(List.of("/repo/src/Main.java"), pathsOf(projectFiles));
         assertEquals(1, projectFiles.files(Lang.JAVA).size());
         assertTrue(projectFiles.matchingFilesByName("Main.scala").isEmpty());
-        assertTrue(projectFiles.matchingFilesByName("Main.kt").isEmpty());
+        assertTrue(projectFiles.matchingFilesByName("main.go").isEmpty());
+    }
+
+    @Test
+    public void kotlinSourceIsReadAndOnlyKotlinScriptIsRecordedAsUnread() throws Exception {
+        ProjectFiles projectFiles = zipOf(
+                entry("repo/src/Main.kt", KOTLIN_SOURCE),
+                entry("repo/build.gradle.kts", KOTLIN_SCRIPT));
+
+        assertEquals(List.of("/repo/src/Main.kt"), pathsOf(projectFiles));
+        assertEquals(1, projectFiles.files(Lang.KOTLIN).size());
+        UnreadSourceFiles unread = projectFiles.unreadSourceFiles();
+        assertEquals(List.of("/repo/build.gradle.kts"), new ArrayList<>(unread.paths()));
+        assertEquals(Answer.NO, unread.holdsFileNamed("Main.kt"));
+        assertEquals(List.of("kotlin"), new ArrayList<>(unread.languages()));
     }
 
     @Test
@@ -201,7 +216,7 @@ public class UnreadSourceFilesTest {
         assertFalse(unread.complete());
         assertTrue(unread.paths().isEmpty());
         assertEquals(Answer.UNKNOWN, unread.holdsFileNamed("Main.scala"));
-        assertEquals(Answer.UNKNOWN, unread.holdsFileNamed("Other.kt"));
+        assertEquals(Answer.UNKNOWN, unread.holdsFileNamed("other.go"));
         assertEquals(Answer.NO, unread.holdsFileNamed("Main.java"));
     }
 
@@ -231,12 +246,12 @@ public class UnreadSourceFilesTest {
     public void anEntryTooLargeToReadIsStillRecorded() throws Exception {
         byte[] oversized = new byte[10 * 1024 * 1024 + 1];
         ProjectFiles projectFiles = zipOf(
-                entry("repo/src/Huge.kt", oversized),
+                entry("repo/src/huge.go", oversized),
                 entry("repo/src/Main.java", JAVA_SOURCE));
 
         assertEquals(1, projectFiles.size());
         assertTrue(projectFiles.unreadSourceFiles().complete());
-        assertEquals(Answer.YES, projectFiles.unreadSourceFiles().holdsFileNamed("Huge.kt"));
+        assertEquals(Answer.YES, projectFiles.unreadSourceFiles().holdsFileNamed("huge.go"));
     }
 
     @Test

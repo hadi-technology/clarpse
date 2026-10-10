@@ -49,6 +49,10 @@ public class OneLevelExtendTest {
     private static final String CS_B = "/Lib/B.cs";
     private static final String CS_UNRELATED = "/Unrelated.cs";
 
+    private static final String KT_A = "/app/A.kt";
+    private static final String KT_B = "/lib/B.kt";
+    private static final String KT_UNRELATED = "/app/Unrelated.kt";
+
     /** One language's fixture: its repository and three of its files. */
     private record Fixture(Lang lang, Map<String, String> repository, String analysed, String levelOne,
                            String unrelated) {
@@ -58,6 +62,7 @@ public class OneLevelExtendTest {
         final List<Fixture> fixtures = new ArrayList<>();
         fixtures.add(new Fixture(Lang.JAVA, JavaOneLevelTest.repository(), JAVA_A, JAVA_B, JAVA_UNRELATED));
         fixtures.add(new Fixture(Lang.CSHARP, CSharpOneLevelTest.repository(), CS_A, CS_B, CS_UNRELATED));
+        fixtures.add(new Fixture(Lang.KOTLIN, KotlinOneLevelTest.repository(), KT_A, KT_B, KT_UNRELATED));
         if (NodeRuntime.isNodeAvailable()) {
             fixtures.add(new Fixture(Lang.PYTHON, PythonOneLevelTest.repository(), PY_A, PY_B, PY_UNRELATED));
             fixtures.add(new Fixture(Lang.TYPESCRIPT, TypeScriptOneLevelTest.repository(), TS_A, TS_B,
@@ -286,6 +291,6 @@ public class OneLevelExtendTest {
     @Test
     public void everyLanguageHasAFixture() {
         Assume.assumeTrue(NodeRuntime.isNodeAvailable());
-        assertEquals(4, fixtures().size());
+        assertEquals(Lang.supportedLanguages().size(), fixtures().size());
     }
 }

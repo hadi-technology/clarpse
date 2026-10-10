@@ -21,9 +21,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.Set;
 import java.util.Stack;
+import java.util.TreeMap;
 
 /**
  * Builds the final {@link OOPSourceCodeModel} from parsed C# file models.
@@ -164,14 +166,23 @@ final class CSharpModelAssembler {
         }
     }
 
+    /**
+     * Gives every declared type its unique name and merges the declarations that share one, kind
+     * and arity: the parts of a partial type. A type and its namesake of another arity
+     * ({@code Foo} and {@code Foo<T>}) have distinct unique names (see {@link CSharpTypeNames}),
+     * so they stay two types.
+     */
     private static List<CSharpModel.CSharpTypeModel> mergePartials(final Collection<CSharpModel.CSharpFileModel> fileModels) {
         final List<CSharpModel.CSharpTypeModel> flattened = new ArrayList<>();
+        final List<String> metadataNames = new ArrayList<>();
         for (final CSharpModel.CSharpFileModel fileModel : fileModels) {
             for (final CSharpModel.CSharpTypeModel typeModel : fileModel.types) {
-                assignIdentity(typeModel, "");
-                flattened.add(typeModel);
-                flattened.addAll(flattenNested(typeModel));
+                flatten(typeModel, namespaceOf(typeModel), flattened, metadataNames);
             }
+        }
+        final Map<String, String> uniqueNames = CSharpTypeNames.uniqueNames(metadataNames);
+        for (int i = 0; i < flattened.size(); i++) {
+            assignIdentity(flattened.get(i), uniqueNames.get(metadataNames.get(i)));
         }
         final Map<String, CSharpModel.CSharpTypeModel> merged = new LinkedHashMap<>();
         for (final CSharpModel.CSharpTypeModel typeModel : flattened) {
@@ -234,34 +245,38 @@ final class CSharpModelAssembler {
         }
     }
 
-    private static List<CSharpModel.CSharpTypeModel> flattenNested(final CSharpModel.CSharpTypeModel typeModel) {
-        final List<CSharpModel.CSharpTypeModel> result = new ArrayList<>();
+    /** Lists a type and the types nested in it, each beside its metadata name. */
+    private static void flatten(final CSharpModel.CSharpTypeModel typeModel, final String scopeMetadataName,
+                                final List<CSharpModel.CSharpTypeModel> flattened,
+                                final List<String> metadataNames) {
+        final String metadataName = CSharpTypeNames.qualify(scopeMetadataName,
+                CSharpTypeNames.metadataSegment(typeModel.name, typeModel.arity));
+        flattened.add(typeModel);
+        metadataNames.add(metadataName);
         for (final CSharpModel.CSharpTypeModel nested : typeModel.nestedTypes) {
-            assignIdentity(nested, typeModel.componentName);
-            result.add(nested);
-            result.addAll(flattenNested(nested));
+            flatten(nested, metadataName, flattened, metadataNames);
         }
-        return result;
     }
 
-    private static void assignIdentity(final CSharpModel.CSharpTypeModel typeModel, final String parentComponentName) {
-        if (parentComponentName == null || parentComponentName.isEmpty()) {
-            typeModel.componentName = typeModel.name;
-        } else {
-            typeModel.componentName = parentComponentName + "." + typeModel.name;
+    private static String namespaceOf(final CSharpModel.CSharpTypeModel typeModel) {
+        if (typeModel.namespaceName == null) {
+            return "";
         }
-        if (typeModel.namespaceName == null || typeModel.namespaceName.isEmpty()) {
-            typeModel.uniqueName = typeModel.componentName;
+        return typeModel.namespaceName;
+    }
+
+    private static void assignIdentity(final CSharpModel.CSharpTypeModel typeModel, final String uniqueName) {
+        typeModel.uniqueName = uniqueName;
+        final String namespace = namespaceOf(typeModel);
+        if (namespace.isEmpty()) {
+            typeModel.componentName = uniqueName;
         } else {
-            typeModel.uniqueName = typeModel.namespaceName + "." + typeModel.componentName;
-        }
-        for (final CSharpModel.CSharpTypeModel nested : typeModel.nestedTypes) {
-            assignIdentity(nested, typeModel.componentName);
+            typeModel.componentName = uniqueName.substring(namespace.length() + 1);
         }
     }
 
     private static String typeKey(final CSharpModel.CSharpTypeModel typeModel) {
-        return typeModel.kind + "|" + typeModel.uniqueName;
+        return typeModel.kind + "|" + typeModel.uniqueName + "|" + typeModel.arity;
     }
 
     private static void insertType(final CSharpModel.CSharpTypeModel typeModel,
@@ -273,8 +288,9 @@ final class CSharpModelAssembler {
         attachAnnotationReferences(typeComponent, typeModel.annotations, typeIndex, typeModel);
         stack.push(typeComponent);
         for (final String baseType : typeModel.baseTypes) {
-            for (final String rawToken : CSharpFileParser.extractTypeTokens(baseType)) {
-                final Resolution resolved = typeIndex.resolveType(rawToken, typeModel, null);
+            for (final CSharpFileParser.TypeToken token : CSharpFileParser.extractTypeReferences(baseType)) {
+                final String rawToken = token.name();
+                final Resolution resolved = typeIndex.resolveType(rawToken, token.arity(), typeModel, null);
                 if (resolved == null || resolved.name().equals(typeComponent.uniqueName())) {
                     continue;
                 }
@@ -511,8 +527,8 @@ final class CSharpModelAssembler {
             if (applyMemberAccessFilter && isLikelyMemberAccess(rawType, ownerType, memberModel)) {
                 continue;
             }
-            for (final String token : CSharpFileParser.extractTypeTokens(rawType)) {
-                final Resolution resolved = typeIndex.resolveType(token, ownerType, memberModel);
+            for (final CSharpFileParser.TypeToken token : CSharpFileParser.extractTypeReferences(rawType)) {
+                final Resolution resolved = typeIndex.resolveType(token.name(), token.arity(), ownerType, memberModel);
                 if (resolved == null || resolved.name().equals(component.uniqueName())
                         || !seen.add(resolved.name())) {
                     continue;
@@ -718,16 +734,32 @@ final class CSharpModelAssembler {
         }
     }
 
+    /**
+     * The repository's types, looked up by the names source can reach them by.
+     *
+     * <p>Source names a type without its arity in the name: {@code Converter} and
+     * {@code Converter<int>} both spell {@code Converter}, and differ in the number of type
+     * arguments written after it. Every lookup therefore takes that number. A name that only one
+     * type carries in a scope resolves to it whatever the number, as it did before arity was read.
+     * A name several types of different arities carry resolves to the one whose arity matches, and
+     * to none of them when none matches, so lookup moves on to the next scope. When the number is
+     * unknown it resolves to the one with the fewest type parameters, which is the non-generic type
+     * when there is one: the type a reference with no type arguments names.
+     */
     private static final class TypeIndex {
-        private final Map<String, CSharpModel.CSharpTypeModel> typesByUniqueName = new LinkedHashMap<>();
-        private final Map<String, List<String>> typesBySimpleName = new HashMap<>();
+        /** Unique names by lookup name ({@link CSharpTypeNames#lookupName}), then by arity. */
+        private final Map<String, NavigableMap<Integer, String>> typesByLookupName = new HashMap<>();
+        /** Lookup names by simple name. */
+        private final Map<String, Set<String>> typesBySimpleName = new HashMap<>();
         private final Map<String, String> memberByTypeAndName = new HashMap<>();
         private final Set<String> interfaceTypes = new LinkedHashSet<>();
 
         private TypeIndex(final List<CSharpModel.CSharpTypeModel> types) {
             for (final CSharpModel.CSharpTypeModel type : types) {
-                typesByUniqueName.put(type.uniqueName, type);
-                typesBySimpleName.computeIfAbsent(type.name, ignored -> new ArrayList<>()).add(type.uniqueName);
+                final String lookupName = CSharpTypeNames.lookupName(type.uniqueName);
+                typesByLookupName.computeIfAbsent(lookupName, ignored -> new TreeMap<>())
+                        .putIfAbsent(type.arity, type.uniqueName);
+                typesBySimpleName.computeIfAbsent(type.name, ignored -> new LinkedHashSet<>()).add(lookupName);
                 if ("interface".equals(type.kind)) {
                     interfaceTypes.add(type.uniqueName);
                 }
@@ -750,6 +782,23 @@ final class CSharpModelAssembler {
         private Resolution resolveType(final String rawToken,
                                        final CSharpModel.CSharpTypeModel ownerType,
                                        final CSharpModel.CSharpMemberModel memberModel) {
+            return resolveType(rawToken, CSharpTypeNames.UNKNOWN_ARITY, ownerType, memberModel);
+        }
+
+        /**
+         * The type a name written in source denotes.
+         *
+         * @param rawToken    The name as written, possibly qualified.
+         * @param arity       The number of type arguments written with it, or
+         *                    {@link CSharpTypeNames#UNKNOWN_ARITY}.
+         * @param ownerType   The type the name is written in.
+         * @param memberModel The member the name is written in, if any.
+         * @return The resolution, or {@code null} for no name.
+         */
+        private Resolution resolveType(final String rawToken,
+                                       final int arity,
+                                       final CSharpModel.CSharpTypeModel ownerType,
+                                       final CSharpModel.CSharpMemberModel memberModel) {
             if (rawToken == null || rawToken.isBlank()) {
                 return null;
             }
@@ -762,14 +811,15 @@ final class CSharpModelAssembler {
             if (aliasTarget != null && !aliasTarget.isEmpty()) {
                 return new Resolution(aliasTarget, ResolutionKind.EXACT);
             }
-            if (typesByUniqueName.containsKey(cleaned)) {
-                return new Resolution(cleaned, ResolutionKind.EXACT);
+            final String exact = lookup(cleaned, arity);
+            if (exact != null) {
+                return new Resolution(exact, ResolutionKind.EXACT);
             }
-            final String nestedCandidate = resolveNested(cleaned, ownerType);
+            final String nestedCandidate = resolveNested(cleaned, arity, ownerType);
             if (nestedCandidate != null) {
                 return new Resolution(nestedCandidate, ResolutionKind.EXACT);
             }
-            final String namespaceCandidate = resolveNamespace(cleaned, ownerType.namespaceName);
+            final String namespaceCandidate = resolveNamespace(cleaned, arity, ownerType.namespaceName);
             if (namespaceCandidate != null) {
                 return new Resolution(namespaceCandidate, ResolutionKind.EXACT);
             }
@@ -778,11 +828,11 @@ final class CSharpModelAssembler {
             // `using ...Modules.Meetings.Application.Contracts;` and extending `CommandBase<Unit>`
             // bound to Administration's `CommandBase` -- one of five identically named types, chosen
             // by insertion order. A `using` is evidence; a name match across the repository is not.
-            final String usingCandidate = resolveUsing(cleaned, ownerType.imports);
+            final String usingCandidate = resolveUsing(cleaned, arity, ownerType.imports);
             if (usingCandidate != null) {
                 return new Resolution(usingCandidate, ResolutionKind.EXACT);
             }
-            final String soleCandidate = soleTypeNamed(cleaned);
+            final String soleCandidate = soleTypeNamed(cleaned, arity);
             if (soleCandidate != null) {
                 return new Resolution(soleCandidate, ResolutionKind.UNIQUE_SIMPLE_NAME);
             }
@@ -791,7 +841,7 @@ final class CSharpModelAssembler {
             // Silence costs a missing edge; a guess costs a fabricated one, and a fabricated edge
             // reads as a fact. Which of the two this is -- several types carry the name and none was
             // chosen, or none does -- is reported rather than left for the consumer to infer.
-            final List<String> sharingTheName = typesBySimpleName.get(cleaned);
+            final Set<String> sharingTheName = typesBySimpleName.get(cleaned);
             if (sharingTheName != null && sharingTheName.size() > 1) {
                 return new Resolution(cleaned, ResolutionKind.AMBIGUOUS);
             }
@@ -809,15 +859,34 @@ final class CSharpModelAssembler {
          * type genuinely named `List` still resolves through exact name, nesting, namespace or
          * import; only the last-resort guess is refused.
          */
-        private String soleTypeNamed(final String simpleName) {
+        private String soleTypeNamed(final String simpleName, final int arity) {
             if (FRAMEWORK_TYPE_NAMES.contains(simpleName)) {
                 return null;
             }
-            final List<String> matches = typesBySimpleName.get(simpleName);
+            final Set<String> matches = typesBySimpleName.get(simpleName);
             if (matches == null || matches.size() != 1) {
                 return null;
             }
-            return matches.get(0);
+            return lookup(matches.iterator().next(), arity);
+        }
+
+        /**
+         * The type a lookup name denotes given the number of type arguments written with it, as
+         * {@link TypeIndex} describes.
+         *
+         * @param lookupName A scope's unique name followed by a simple name, or a name as written.
+         * @param arity      The number of type arguments, or {@link CSharpTypeNames#UNKNOWN_ARITY}.
+         * @return The type's unique name, or {@code null} when no type of that name and arity exists.
+         */
+        private String lookup(final String lookupName, final int arity) {
+            final NavigableMap<Integer, String> byArity = typesByLookupName.get(lookupName);
+            if (byArity == null) {
+                return null;
+            }
+            if (byArity.size() == 1 || arity == CSharpTypeNames.UNKNOWN_ARITY) {
+                return byArity.firstEntry().getValue();
+            }
+            return byArity.get(arity);
         }
 
         private String resolveMember(final String ownerTypeUniqueName, final String memberName) {
@@ -839,14 +908,15 @@ final class CSharpModelAssembler {
             return null;
         }
 
-        private String resolveNested(final String simpleName, final CSharpModel.CSharpTypeModel ownerType) {
+        private String resolveNested(final String simpleName, final int arity,
+                                     final CSharpModel.CSharpTypeModel ownerType) {
             if (ownerType == null) {
                 return null;
             }
             String current = ownerType.uniqueName;
             while (current != null && !current.isEmpty()) {
-                final String candidate = current + "." + simpleName;
-                if (typesByUniqueName.containsKey(candidate)) {
+                final String candidate = lookup(current + "." + simpleName, arity);
+                if (candidate != null) {
                     return candidate;
                 }
                 final int lastDot = current.lastIndexOf('.');
@@ -865,12 +935,12 @@ final class CSharpModelAssembler {
         // ambiguous short name were resolved to the wrong type (15%, and 57% on
         // ardalis/CleanArchitecture, 34% on kgrzybek/modular-monolith-with-ddd -- the repositories
         // that duplicate a type per module, which is the pattern module-boundary rules exist for).
-        private String resolveNamespace(final String simpleName, final String namespaceName) {
+        private String resolveNamespace(final String simpleName, final int arity, final String namespaceName) {
             if (namespaceName == null || namespaceName.isEmpty()) {
                 return null;
             }
-            final String candidate = namespaceName + "." + simpleName;
-            if (typesByUniqueName.containsKey(candidate)) {
+            final String candidate = lookup(namespaceName + "." + simpleName, arity);
+            if (candidate != null) {
                 return candidate;
             }
             // Enclosing namespaces, as C# lookup does: a type in `A.B` is visible from `A.B.C`.
@@ -881,14 +951,14 @@ final class CSharpModelAssembler {
                     return null;
                 }
                 enclosing = enclosing.substring(0, lastDot);
-                final String outer = enclosing + "." + simpleName;
-                if (typesByUniqueName.containsKey(outer)) {
+                final String outer = lookup(enclosing + "." + simpleName, arity);
+                if (outer != null) {
                     return outer;
                 }
             }
         }
 
-        private String resolveUsing(final String simpleName, final Set<String> imports) {
+        private String resolveUsing(final String simpleName, final int arity, final Set<String> imports) {
             if (imports == null) {
                 return null;
             }
@@ -896,11 +966,14 @@ final class CSharpModelAssembler {
                 if (importTarget == null || importTarget.isBlank()) {
                     continue;
                 }
-                if (typesByUniqueName.containsKey(importTarget) && importTarget.endsWith("." + simpleName)) {
-                    return importTarget;
+                if (importTarget.endsWith("." + simpleName)) {
+                    final String imported = lookup(importTarget, arity);
+                    if (imported != null) {
+                        return imported;
+                    }
                 }
-                final String candidate = importTarget + "." + simpleName;
-                if (typesByUniqueName.containsKey(candidate)) {
+                final String candidate = lookup(importTarget + "." + simpleName, arity);
+                if (candidate != null) {
                     return candidate;
                 }
             }

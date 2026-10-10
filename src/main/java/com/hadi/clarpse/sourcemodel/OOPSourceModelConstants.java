@@ -227,6 +227,21 @@ public final class OOPSourceModelConstants {
         ACCESS_MODIFIER_MAP.put(AccessModifiers.VAR, "var");
         ACCESS_MODIFIER_MAP.put(AccessModifiers.GET, "get");
         ACCESS_MODIFIER_MAP.put(AccessModifiers.SET, "set");
+        // Kotlin
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.OPEN, "open");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.DATA, "data");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.INNER, "inner");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.COMPANION, "companion");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.VALUE, "value");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.LATEINIT, "lateinit");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.SUSPEND, "suspend");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.INLINE, "inline");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.OPERATOR, "operator");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.INFIX, "infix");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.TAILREC, "tailrec");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.EXTERNAL, "external");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.EXPECT, "expect");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.ACTUAL, "actual");
     }
 
     static {
@@ -293,7 +308,9 @@ public final class OOPSourceModelConstants {
                 ""), STRICTFP(""), SYNCHRONIZED(""), TRANSIENT(""), NONE("~"), VOLATILE(""),
         DEFAULT(""), SEALED(""), NON_SEALED(""), TRANSITIVE(""),
         INTERNAL("~"), PARTIAL(""), READONLY(""), VIRTUAL(""), OVERRIDE(""), UNSAFE(""),
-        ASYNC(""), CONST(""), EXPORT(""), DECLARE(""), LET(""), VAR(""), GET(""), SET("");
+        ASYNC(""), CONST(""), EXPORT(""), DECLARE(""), LET(""), VAR(""), GET(""), SET(""),
+        OPEN(""), DATA(""), INNER(""), COMPANION(""), VALUE(""), LATEINIT(""), SUSPEND(""), INLINE(""),
+        OPERATOR(""), INFIX(""), TAILREC(""), EXTERNAL(""), EXPECT(""), ACTUAL("");
 
         private String umlClassDigramSymbol = null;
 

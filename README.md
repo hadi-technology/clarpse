@@ -1,12 +1,12 @@
 # :rocket: Clarpse
 
-**Parse Java, C#, TypeScript and Python into one language-agnostic model of your codebase.**
+**Parse Java, C#, TypeScript, Python and Kotlin into one language-agnostic model of your codebase.**
 
-[![Maven Central](https://img.shields.io/maven-central/v/io.github.hadi-technology/clarpse?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.hadi-technology/clarpse) [![Java CI](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml/badge.svg?branch=master)](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml) [![codecov](https://codecov.io/github/hadi-technology/clarpse/graph/badge.svg?token=7uf2jQMlH1)](https://codecov.io/github/hadi-technology/clarpse) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![maintained-by](https://img.shields.io/badge/Maintained%20by-Hadi%20Technology-violet.svg)](https://haditechnology.com) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.hadi-technology/clarpse?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.hadi-technology/clarpse) [![Java CI](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml/badge.svg?branch=master)](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml) [![codecov](https://codecov.io/github/hadi-technology/clarpse/graph/badge.svg?token=7uf2jQMlH1)](https://codecov.io/github/hadi-technology/clarpse) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![maintained-by](https://img.shields.io/badge/Maintained%20by-Hadi%20Technology-violet.svg)](https://haditechnology.com) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com) [![Striff](https://striff.io/badge/hadi-technology/clarpse.svg)](https://striff.io/hadi-technology/clarpse?ref=badge)
 
-Writing a tool that reasons about code means writing four different AST walkers, one per language, and maintaining them forever. Clarpse gives you one instead: point it at a directory, a zip, or in-memory files, and get back classes, methods, fields, and the references between them, with the same API no matter what language the source was written in.
+Writing a tool that reasons about code means writing five different AST walkers, one per language, and maintaining them forever. Clarpse gives you one instead: point it at a directory, a zip, or in-memory files, and get back classes, methods, fields, and the references between them, with the same API no matter what language the source was written in.
 
-It is deliberately architecture-level. Clarpse tells you that `OrderService` calls `PaymentGateway` and lives in package `com.acme.billing`; it does not hand you a statement-level syntax tree. That tradeoff is what makes one model work across four languages.
+It is deliberately architecture-level. Clarpse tells you that `OrderService` calls `PaymentGateway` and lives in package `com.acme.billing`; it does not hand you a statement-level syntax tree. That tradeoff is what makes one model work across five languages.
 
 Clarpse powers [striff-lib](https://github.com/hadi-technology/striff-lib), which turns pull request diffs into architectural diagrams.
 
@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>11.10.0</version>
+  <version>11.11.0</version>
 </dependency>
 ```
 
@@ -33,7 +33,7 @@ model.components().forEach(cmp ->
         System.out.println(cmp.componentType() + " " + cmp.uniqueName()));
 ```
 
-The same three lines work for `Lang.CSHARP`, `Lang.TYPESCRIPT`, and `Lang.PYTHON`. See [Using The API](#using-the-api) for the full surface.
+The same three lines work for `Lang.CSHARP`, `Lang.TYPESCRIPT`, `Lang.PYTHON`, and `Lang.KOTLIN`. See [Using The API](#using-the-api) for the full surface.
 
 ## Language Support
 
@@ -43,6 +43,67 @@ The same three lines work for `Lang.CSHARP`, `Lang.TYPESCRIPT`, and `Lang.PYTHON
 | C#         | JVM-based                       | No               | Partial type merging, namespace-aware indexing, fast in-repo symbol resolution.              |
 | TypeScript | Bundled TypeScript compiler     | Yes              | tsconfig-aware resolution, constructor parameter properties, monorepo support. Files no `tsconfig.json` names are read with default options. |
 | Python     | Bundled Pyright                 | Yes              | Nested classes, comment parsing, cyclomatic complexity, code hashing, visibility inference.  |
+| Kotlin     | JetBrains standalone parser     | No               | `.kt` files (not `.kts` scripts). Java-compatible unique names, file classes for top-level functions, resolution against the project's Java types. See [Kotlin](#kotlin). |
+
+### Kotlin
+
+Kotlin is modelled the way the JVM sees it, so its components line up with Java's:
+
+- A `class`, `interface`, `object`, `enum class`, `annotation class` or `data class` gets the unique
+  name a Java type of the same package and name gets (`package com.x` plus `class Foo` is
+  `com.x.Foo`), nested types joined with a dot. A companion object is the nested type `Companion`,
+  or the name it is given.
+- Top-level functions and properties, extension functions included, are members of a class named
+  as the one they compile into: `<File>Kt`, or the name `@file:JvmName` gives. It exists only for a
+  file that declares one. An extension function is a member of its file's class, not of its
+  receiver, and its receiver is its first parameter (`greet(Person, String)`).
+- A property, and a primary constructor parameter declared `val` or `var`, is a field. A function
+  is a method named by its parameter types, and constructors, parameters and locals are modelled as
+  in Java.
+- Every type and member carries its visibility: `public`, `internal`, `protected` or `private`, and
+  `public` when none is written. `open`, `data`, `sealed`, `abstract`, `override`, `const`,
+  `lateinit`, `suspend` and the like are kept as written, and a `val` is `final`.
+- In `class A : B(), C`, the entry with a constructor call is extended and the rest implemented; an
+  interface extends its supertypes.
+- Names resolve in Kotlin's order: enclosing types, explicit imports and import aliases
+  (`import a.B as C`), the file's own package, star imports, and last Kotlin's default imports
+  (`kotlin.*`, `kotlin.collections.*`, …), so `List` is `kotlin.collections.List` unless something
+  in scope declares a `List`. Type aliases resolve to what they alias. A name in a type position that
+  nothing in scope declares is kept as written and marked `ResolutionKind.UNRESOLVED`; a name in an
+  expression counts only when it resolves to a type. A call to a top-level function references the
+  class holding it.
+- An `object` or companion object named on its own as a value (`add(Defaults)`, `return Defaults`)
+  is referenced when it is a repository type and no parameter, local, member or top-level function
+  or property in scope has that name.
+- In a multiplatform project the `expect` and `actual` declarations of one name are one component,
+  and a call to an `expect` function binds to the declaring file first in path order, so the model
+  does not depend on the order the files are read in.
+- Not modelled yet: the return type of a call on a variable (`order.lines().first()` references
+  `Order`, not `List`), which a Java compile gets from its type solver; locals declared by
+  destructuring (`val (a, b) = pair`); and a library object named on its own as a value (`Unit`),
+  which a name-only reader cannot tell from an imported property.
+
+#### Mixed Java and Kotlin projects
+
+Compile each language from the same `ProjectFiles` and merge the models:
+
+```java
+final ProjectFiles files = new ProjectFiles("/path/to/repo");
+final OOPSourceCodeModel model = new OOPSourceCodeModel();
+model.merge(new ClarpseProject(files, Lang.JAVA).result().model());
+model.merge(new ClarpseProject(files, Lang.KOTLIN).result().model());
+```
+
+- Each compile reads the other language's declarations, without parsing them in full, so it names
+  the other language's types exactly: a Kotlin file resolves a Java type of its package or of a
+  package it star-imports, and a Java file resolves a Kotlin type through an import, its package or
+  an on-demand import, and a top-level Kotlin function through its `<File>Kt` class.
+- A Java compile reads a Kotlin package's declarations only when a name it is resolving could be
+  declared there, so Java files that never name a Kotlin type cost nothing extra, and every answer
+  is the one reading all of them up front would give.
+- Each compile alone still classifies those references as external, because its model does not hold
+  the other language's components. `merge` settles them: a reference whose target the merged model
+  holds becomes internal, in either merge order. A one-level compile classifies them as not loaded.
 
 Across every language you also get comment extraction, a clean object-oriented API over the AST, parallel parsing with configurable worker counts, and runtime configuration via environment variables, system properties, or a bundled properties file.
 
@@ -149,6 +210,8 @@ Key areas of the repository:
 - `src/main/java/com/hadi/clarpse/compiler` - Language compilers, project file handling, and orchestration.
 - `src/main/java/com/hadi/clarpse/compiler/typescript` - TypeScript compiler bridge and models.
 - `src/main/java/com/hadi/clarpse/compiler/python` - Python compiler bridge and models.
+- `src/main/java/com/hadi/clarpse/compiler/csharp` - C# compiler on the JetBrains standalone parser.
+- `src/main/java/com/hadi/clarpse/compiler/kotlin` - Kotlin compiler on the JetBrains standalone parser.
 - `src/main/java/com/hadi/clarpse/compiler/ClarpseProperties.java` - Runtime properties loader.
 - `src/main/java/com/hadi/clarpse/listener` - Parse tree listeners that build the source model (Java).
 - `src/main/java/com/hadi/clarpse/sourcemodel` - Component and package models.
@@ -193,7 +256,7 @@ Core classes and where they live:
 - Project inputs: `src/main/java/com/hadi/clarpse/compiler/ProjectFiles.java`, `src/main/java/com/hadi/clarpse/compiler/ProjectFile.java`
 - Runtime properties: `src/main/java/com/hadi/clarpse/compiler/ClarpseProperties.java`, `src/main/resources/clarpse.properties`
 - Compiler selection and results: `src/main/java/com/hadi/clarpse/compiler/CompilerFactory.java`, `src/main/java/com/hadi/clarpse/compiler/ClarpseCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/CompileResult.java`
-- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/typescript/ClarpseTypeScriptCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/python/ClarpsePythonCompiler.java`
+- Language compilers: `src/main/java/com/hadi/clarpse/compiler/ClarpseJavaCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/typescript/ClarpseTypeScriptCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/python/ClarpsePythonCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/csharp/ClarpseCSharpCompiler.java`, `src/main/java/com/hadi/clarpse/compiler/kotlin/ClarpseKotlinCompiler.java`
 - Parse listeners: `src/main/java/com/hadi/clarpse/listener/JavaTreeListener.java`
 - Source model: `src/main/java/com/hadi/clarpse/sourcemodel/OOPSourceCodeModel.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Component.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Package.java`
 - References: `src/main/java/com/hadi/clarpse/reference/ComponentReference.java` and related types in `src/main/java/com/hadi/clarpse/reference`
@@ -283,7 +346,7 @@ entries nothing asked for.
 
 ### Asking whether a project holds source this library does not read
 
-Clarpse parses Java, C#, TypeScript and Python. A repository's Kotlin, Scala, Go or Rust is not
+Clarpse parses Java, C#, TypeScript, Python and Kotlin. A repository's Scala, Go or Rust is not
 parsed, and until it is asked for it is not held either, so `files()` answers a question about a
 `Foo.scala` the same way whether the repository has one or not.
 
@@ -293,17 +356,17 @@ parsed, and until it is asked for it is not held either, so `files()` answers a 
 final ProjectFiles projectFiles = new ProjectFiles("/path/to/repo.zip");
 final UnreadSourceFiles unread = projectFiles.unreadSourceFiles();
 
-unread.paths();                          // e.g. [/repo/src/Main.scala, /repo/src/Main.kt]
-unread.languages();                      // e.g. [scala, kotlin]
+unread.paths();                          // e.g. [/repo/src/Main.scala, /repo/src/main.go]
+unread.languages();                      // e.g. [scala, go]
 unread.holdsFileNamed("Main.scala");     // YES
-unread.holdsPath("/repo/src/Main.kt");   // YES
-unread.holdsFileNamed("Other.kt");       // NO, or UNKNOWN when the record is partial
+unread.holdsPath("/repo/src/main.go");   // YES
+unread.holdsFileNamed("other.go");       // NO, or UNKNOWN when the record is partial
 ```
 
 - It covers the extensions of the general-purpose languages a repository is written in but this
-  library does not read — Kotlin, Scala, Go, Rust, Swift, Ruby, PHP, C, C++, Objective-C,
-  JavaScript, Groovy, Clojure, F#, Visual Basic — and not every extension it does not parse, so a
-  query about a source file is not answered by images, lock files or vendored blobs.
+  library does not read — Kotlin scripts (`.kts`), Scala, Go, Rust, Swift, Ruby, PHP, C, C++,
+  Objective-C, JavaScript, Groovy, Clojure, F#, Visual Basic — and not every extension it does not
+  parse, so a query about a source file is not answered by images, lock files or vendored blobs.
 - It holds paths, never content, and it is filled from an archive, a directory and
   `insertFile` alike.
 - The files it names are held nowhere else: they are not parsed, are absent from `files()` and
@@ -344,6 +407,13 @@ Component methodComponent = codeModel.copyOfComponent(childUniqueName).orElseThr
 System.out.println(methodComponent.name());
 System.out.println(methodComponent.codeFragment());
 ```
+
+In C#, a generic type's unique name is its name without type parameters (`Acme.Repo` for `Repo<T>`),
+unless a type of another arity shares its name in the same namespace or enclosing type (`Converter`
+and `Converter<T>`). The two are then separate components, and the generic one carries its arity in
+CLR metadata form: `Acme.Converter` and ``Acme.Converter`1``. A reference binds to the type whose
+arity matches the type arguments written with it; where those cannot be read, it binds to the type
+with the fewest type parameters.
 
 ## One-Level Analysis
 To model a few files of a large repository together with the repository files they reference,
@@ -447,7 +517,7 @@ A TypeScript file is read in a program, and a program is built from a config.
   program holds.
 
 ## Failure Contract
-- Java/C#/TypeScript/Python all report recoverable issues in `CompileResult.failures()` using
+- Java/C#/TypeScript/Python/Kotlin all report recoverable issues in `CompileResult.failures()` using
   language-agnostic error codes.
 - `CompileException` is reserved for non-recoverable compiler errors.
 
@@ -462,12 +532,14 @@ Standardized error codes:
 - `2002` File not found on disk.
 - `2003` File parse/model extraction failed.
 - `2004` Daemon transport/runtime error.
-- `2005` File skipped due to excluded path rules.
+- `2005` File under an excluded directory and not analysed (Python: `.venv`, `venv`, `build`,
+  `dist`, `node_modules` and the like, judged on the path within the project). Logged at debug,
+  as an expected outcome.
 
 ## Cancellation
 Clarpse honors `Thread.interrupt()` cooperatively, so a caller enforcing a time budget can abort a
 runaway parse without killing the JVM. When the parsing thread is interrupted:
-- **Java and C#** (in-process): queued per-file tasks stop draining and outstanding tasks are
+- **Java, C# and Kotlin** (in-process): queued per-file tasks stop draining and outstanding tasks are
   cancelled.
 - **Python and TypeScript** (out-of-process Node daemon): the daemon process is destroyed, which
   unblocks the transport read that `Thread.interrupt()` alone cannot — the daemon computes in a

@@ -492,7 +492,9 @@ final class CSharpFileParser {
                 typeModel.kind = "recordStruct";
             }
         }
-        typeModel.name = eraseTypeParameterList(firstIdentifier(node));
+        final String declaredIdentifier = firstIdentifier(node);
+        typeModel.name = eraseTypeParameterList(declaredIdentifier);
+        typeModel.arity = CSharpTypeNames.declaredArity(declaredIdentifier);
         if (namespaceName == null) {
             typeModel.namespaceName = "";
         } else {
@@ -1114,6 +1116,24 @@ final class CSharpFileParser {
 
     static List<String> extractTypeTokens(final String rawType) {
         final List<String> results = new ArrayList<>();
+        for (final TypeToken token : extractTypeReferences(rawType)) {
+            results.add(token.name());
+        }
+        return results;
+    }
+
+    /**
+     * The type names a piece of type or expression text mentions, each with the number of type
+     * arguments written after it: {@code Dictionary<string, Converter<int>>} mentions
+     * {@code Dictionary} with two, {@code string} with none and {@code Converter} with one. A name
+     * followed by text that is not a type-argument list has an unknown arity
+     * ({@link CSharpTypeNames#UNKNOWN_ARITY}).
+     *
+     * @param rawType The text.
+     * @return The names, in order.
+     */
+    static List<TypeToken> extractTypeReferences(final String rawType) {
+        final List<TypeToken> results = new ArrayList<>();
         if (rawType == null || rawType.isBlank()) {
             return results;
         }
@@ -1128,9 +1148,31 @@ final class CSharpFileParser {
                     continue;
                 }
             }
-            results.add(token);
+            results.add(new TypeToken(token, writtenArity(rawType, matcher.end())));
         }
         return results;
+    }
+
+    /** The number of type arguments written at {@code from}, after any whitespace. */
+    private static int writtenArity(final String text, final int from) {
+        int index = from;
+        while (index < text.length() && Character.isWhitespace(text.charAt(index))) {
+            index += 1;
+        }
+        if (index >= text.length() || text.charAt(index) != '<') {
+            return 0;
+        }
+        return CSharpTypeNames.typeArgumentCount(text, index);
+    }
+
+    /**
+     * A type name mentioned in source.
+     *
+     * @param name  The name as written, possibly qualified.
+     * @param arity The number of type arguments written with it, or
+     *              {@link CSharpTypeNames#UNKNOWN_ARITY}.
+     */
+    record TypeToken(String name, int arity) {
     }
 
     static boolean isBuiltinType(final String token) {
@@ -1145,13 +1187,10 @@ final class CSharpFileParser {
     }
 
     /**
-     * Generic type declarations carry their type-parameter list in the identifier text
-     * ("Repo&lt;T&gt;"), but references are resolved against the erased name ("Repo").
-     * Register declarations under the erased name so generic types are reachable as
-     * reference targets; without this every generic class or interface is an orphan
-     * component with zero afferent coupling. C#'s arity-overloaded types (IFoo and
-     * IFoo&lt;T&gt;) collapse onto one component, which matches how references, which
-     * carry no arity, are resolved anyway.
+     * The name of a type declaration without its type-parameter list: generic declarations carry
+     * the list in the identifier text ("Repo&lt;T&gt;"). The arity is kept beside the name, and a
+     * type's unique name carries it only when another type of the same name and a different arity
+     * shares its scope (see {@link CSharpTypeNames}).
      */
     private static String eraseTypeParameterList(final String identifier) {
         if (identifier == null) {

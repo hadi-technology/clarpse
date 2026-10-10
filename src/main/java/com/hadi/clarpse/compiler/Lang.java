@@ -21,7 +21,8 @@ public enum Lang {
     JAVA("java", new HashSet<>(List.of("java")), Collections.emptySet()),
     CSHARP("csharp", new HashSet<>(List.of("cs")), Collections.emptySet()),
     TYPESCRIPT("typescript", new HashSet<>(List.of("ts", "tsx")), Collections.emptySet()),
-    PYTHON("python", new HashSet<>(List.of("py")), Collections.emptySet());
+    PYTHON("python", new HashSet<>(List.of("py")), Collections.emptySet()),
+    KOTLIN("kotlin", new HashSet<>(List.of("kt")), Collections.emptySet());
 
     private static final Map<String, Lang> NAMES_MAP = new LinkedHashMap<>();
 
@@ -30,6 +31,7 @@ public enum Lang {
         NAMES_MAP.put(CSHARP.value, CSHARP);
         NAMES_MAP.put(TYPESCRIPT.value, TYPESCRIPT);
         NAMES_MAP.put(PYTHON.value, PYTHON);
+        NAMES_MAP.put(KOTLIN.value, KOTLIN);
     }
 
     private final String value;
