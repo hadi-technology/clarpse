@@ -137,7 +137,7 @@ Common codes:
 - `2002` File missing/not in analyzed repo.
 - `2003` Parse/type extraction failed.
 - `2004` Daemon transport/runtime failure.
-- `2005` File skipped due to excluded directories.
+- `2005` File under an excluded directory, not analysed (see Excludes).
 
 # External Type Policy
 If a type annotation does not resolve to an internal declaration:
@@ -158,6 +158,12 @@ still displays that while depending on `str`.
 # Excludes
 Default excluded directories:
 - .venv, venv, __pycache__, .tox, build, dist, node_modules, .mypy_cache, .pytest_cache
+
+A file is excluded when a directory on its path within the project has one of these names; the
+directories above the project root do not count, so a project checked out under `build/` is read.
+An excluded file is not analysed, and is recorded in `CompileResult.failures()` with code `2005`
+so a caller can tell it from a file that was analysed and declared nothing. Exclusion is expected
+rather than a fault, so it is logged as one line at debug naming the file, with no stack trace.
 
 # Additional Features
 ## Comment Extraction

@@ -47,6 +47,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
     private static final String PARALLELISM_PROP = "clarpse.python.parallelism";
     private static final int DEFAULT_MAX_PARALLELISM = 4;
     private static final int MIN_FILES_FOR_PARALLEL = 8;
+    private static final String FILE_EXCLUDED_MESSAGE = "FILE_EXCLUDED";
 
     @Override
     public CompileResult compile(final ProjectFiles projectFiles,
@@ -349,15 +350,15 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
         CompileFailure failure = null;
         final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
-        if (PythonModelAssembler.shouldSkipPath(diskPath)) {
-            return new ParseOutcome(index, localModel, null);
+        if (PythonModelAssembler.shouldSkipPath(persistDir, diskPath)) {
+            return new ParseOutcome(index, localModel, excluded(file));
         }
         final PythonFileModel fileModel;
         try {
             fileModel = daemon.getFileModel(diskPath);
         } catch (final PythonDaemonException e) {
             if (e.code() == PythonDaemonException.CODE_FILE_EXCLUDED) {
-                return new ParseOutcome(index, localModel, null);
+                return new ParseOutcome(index, localModel, excluded(file));
             }
             if (isFileLevelFailure(e)) {
                 failure = new CompileFailure(file, e.getMessage(), e.code());
@@ -379,6 +380,23 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         }
         PythonModelAssembler.insertFileModel(pkg, moduleName, file.path(), fileModel, localModel);
         return new ParseOutcome(index, localModel, failure);
+    }
+
+    /**
+     * The failure recorded for a file under an excluded directory, which is not analysed.
+     *
+     * <p>It is recorded because a caller cannot otherwise tell a file that was never analysed from
+     * one that was analysed and declared nothing. Exclusion is an expected outcome rather than a
+     * fault, and a dependency directory yields one for every file in it, so it is logged as a
+     * single line naming the file, below warning and without a stack trace.
+     *
+     * @param file The excluded file.
+     * @return Its failure, coded {@link PythonDaemonException#CODE_FILE_EXCLUDED}.
+     */
+    private static CompileFailure excluded(final ProjectFile file) {
+        LOGGER.debug("Python file {} is under an excluded directory and was not analysed (code={}).",
+                file.path(), PythonDaemonException.CODE_FILE_EXCLUDED);
+        return new CompileFailure(file, FILE_EXCLUDED_MESSAGE, PythonDaemonException.CODE_FILE_EXCLUDED);
     }
 
     private int resolveParallelism(final int fileCount) {

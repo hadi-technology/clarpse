@@ -1,7 +1,9 @@
 package com.hadi.test.python;
 
 import com.hadi.clarpse.compiler.ClarpseProject;
+import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
+import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.compiler.typescript.NodeRuntime;
@@ -58,7 +60,11 @@ public class PythonLargeDirExcludeTest {
             String ignoredName = PythonTestUtil.uniqueName(".venv/lib/site-packages", "ignored0", "Ignored0");
             Assert.assertTrue(model.containsComponent(appName));
             Assert.assertFalse(model.containsComponent(ignoredName));
-            Assert.assertTrue(result.failures().isEmpty());
+            Assert.assertEquals(300, result.failures().size());
+            for (CompileFailure failure : result.failures()) {
+                Assert.assertEquals(failure.toString(), Integer.valueOf(FailureCode.FILE_EXCLUDED),
+                        failure.errorCode());
+            }
         } finally {
             FileUtils.deleteQuietly(root.toFile());
         }

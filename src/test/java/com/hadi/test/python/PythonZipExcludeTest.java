@@ -1,7 +1,9 @@
 package com.hadi.test.python;
 
 import com.hadi.clarpse.compiler.ClarpseProject;
+import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
+import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.compiler.typescript.NodeRuntime;
@@ -42,6 +44,9 @@ public class PythonZipExcludeTest {
         String ignoredName = PythonTestUtil.uniqueName("project/.venv/lib/site-packages", "ignored", "Ignored");
         Assert.assertTrue(model.containsComponent(mainName));
         Assert.assertFalse(model.containsComponent(ignoredName));
-        Assert.assertTrue(result.failures().isEmpty());
+        Assert.assertEquals(result.failures().toString(), 1, result.failures().size());
+        CompileFailure failure = result.failures().iterator().next();
+        Assert.assertEquals(Integer.valueOf(FailureCode.FILE_EXCLUDED), failure.errorCode());
+        Assert.assertTrue(failure.file().path(), failure.file().path().endsWith("/ignored.py"));
     }
 }

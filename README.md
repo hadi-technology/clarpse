@@ -462,7 +462,9 @@ Standardized error codes:
 - `2002` File not found on disk.
 - `2003` File parse/model extraction failed.
 - `2004` Daemon transport/runtime error.
-- `2005` File skipped due to excluded path rules.
+- `2005` File under an excluded directory and not analysed (Python: `.venv`, `venv`, `build`,
+  `dist`, `node_modules` and the like, judged on the path within the project). Logged at debug,
+  as an expected outcome.
 
 ## Cancellation
 Clarpse honors `Thread.interrupt()` cooperatively, so a caller enforcing a time budget can abort a

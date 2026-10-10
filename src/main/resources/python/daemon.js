@@ -61,11 +61,24 @@ function normalizePath(p) {
   return path.resolve(p);
 }
 
+/**
+ * Whether a path lies under an excluded directory of the repository. Only the part of the path
+ * within the repository root is examined, so a repository that itself sits under a directory named
+ * like an excluded one is still read.
+ */
 function shouldSkipPath(filePath) {
   if (!filePath) {
     return false;
   }
-  const parts = filePath.replace(/\\/g, '/').split('/');
+  let withinRepo = filePath;
+  if (state.repoRoot) {
+    const rel = path.relative(state.repoRoot, path.resolve(filePath));
+    const outside = rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel);
+    if (!outside) {
+      withinRepo = rel;
+    }
+  }
+  const parts = withinRepo.replace(/\\/g, '/').split('/');
   for (const part of parts) {
     if (EXCLUDED_DIRS.has(part)) {
       return true;
