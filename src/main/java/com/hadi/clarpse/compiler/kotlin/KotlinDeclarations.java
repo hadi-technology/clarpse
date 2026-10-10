@@ -99,8 +99,10 @@ public final class KotlinDeclarations {
     Set<String> packagesRead() {
         final Set<String> read = new HashSet<>();
         groups.forEach((packageName, group) -> {
-            if (group.isRead()) {
-                read.add(UNREAD_HEADERS.equals(packageName) ? null : packageName);
+            if (group.isRead() && UNREAD_HEADERS.equals(packageName)) {
+                read.add(null);
+            } else if (group.isRead()) {
+                read.add(packageName);
             }
         });
         return read;
