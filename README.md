@@ -2,7 +2,7 @@
 
 **Parse Java, C#, TypeScript, Python and Kotlin into one language-agnostic model of your codebase.**
 
-[![Maven Central](https://img.shields.io/maven-central/v/io.github.hadi-technology/clarpse?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.hadi-technology/clarpse) [![Java CI](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml/badge.svg?branch=master)](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml) [![codecov](https://codecov.io/github/hadi-technology/clarpse/graph/badge.svg?token=7uf2jQMlH1)](https://codecov.io/github/hadi-technology/clarpse) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![maintained-by](https://img.shields.io/badge/Maintained%20by-Hadi%20Technology-violet.svg)](https://haditechnology.com) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.hadi-technology/clarpse?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.hadi-technology/clarpse) [![Java CI](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml/badge.svg?branch=master)](https://github.com/hadi-technology/clarpse/actions/workflows/ci-cd.yml) [![codecov](https://codecov.io/github/hadi-technology/clarpse/graph/badge.svg?token=7uf2jQMlH1)](https://codecov.io/github/hadi-technology/clarpse) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![maintained-by](https://img.shields.io/badge/Maintained%20by-Hadi%20Technology-violet.svg)](https://haditechnology.com) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com) [![Striff](https://striff.io/badge/hadi-technology/clarpse.svg)](https://striff.io/hadi-technology/clarpse?ref=badge)
 
 Writing a tool that reasons about code means writing five different AST walkers, one per language, and maintaining them forever. Clarpse gives you one instead: point it at a directory, a zip, or in-memory files, and get back classes, methods, fields, and the references between them, with the same API no matter what language the source was written in.
 
@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>11.10.0</version>
+  <version>11.11.0</version>
 </dependency>
 ```
 
@@ -88,6 +88,9 @@ model.merge(new ClarpseProject(files, Lang.KOTLIN).result().model());
   the other language's types exactly: a Kotlin file resolves a Java type of its package or of a
   package it star-imports, and a Java file resolves a Kotlin type through an import, its package or
   an on-demand import, and a top-level Kotlin function through its `<File>Kt` class.
+- A Java compile reads a Kotlin package's declarations only when a name it is resolving could be
+  declared there, so Java files that never name a Kotlin type cost nothing extra, and every answer
+  is the one reading all of them up front would give.
 - Each compile alone still classifies those references as external, because its model does not hold
   the other language's components. `merge` settles them: a reference whose target the merged model
   holds becomes internal, in either merge order. A one-level compile classifies them as not loaded.
