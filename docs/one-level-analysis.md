@@ -100,6 +100,7 @@ A `PreparedAnalysis` holds what completing the compile reuses:
 | TypeScript | the discovered level-one set |
 | Python | the analysed files' model and the module index |
 | C# | the declaration index and the parsed file models |
+| Kotlin | the declaration index and the parsed file models |
 
 It never holds a resolver process between calls. TypeScript and Python take a daemon session for
 each phase and end it with the phase, so several prepared analyses may be open at once however few
@@ -124,7 +125,8 @@ ignored.
   units read to resolve names, and the analysed files' model, and resolves the added files against
   the same index and unit cache. C# keeps its declaration index and every parsed file model, parses only the added
   files and the other parts of their partial types, and assembles the analysed files again from
-  copies. Python keeps the module index and the analysed files' model, and models the added files in
+  copies. Kotlin keeps its declaration index and every parsed file model, and parses only the
+  added files. Python keeps the module index and the analysed files' model, and models the added files in
   a daemon session of their own. TypeScript discovers level one again, over every analysed file, in
   a daemon session of its own; discovery resolves module specifiers without building a program, and
   programs are built by each `compile` for the configs that own its files, so nothing held needs
@@ -163,8 +165,8 @@ Nothing an analysis creates outlives it.
   compile of the same `ProjectFiles` reuses that copy. When preparing a one-level analysis caused
   the copy, the analysis owns it: the copy is deleted if preparing fails, and when the analysis is
   closed, whether the compile succeeded, failed or was interrupted. A copy that existed before is
-  left to the `ProjectFiles`, whose `close()` deletes it. Java and C# one-level compiles work from
-  the files in memory and write nothing to disk.
+  left to the `ProjectFiles`, whose `close()` deletes it. Java, C# and Kotlin one-level compiles work
+  from the files in memory and write nothing to disk.
 - **Temporary directories.** Every temporary directory Clarpse creates is named
   `clarpse-<kind>-<pid>-<start>-<random>` under `java.io.tmpdir`, where `pid` and `start` are the
   owning process's id and start time in epoch milliseconds. The kinds are `src` for copies of
@@ -190,6 +192,7 @@ Level one is always found without compiling the repository.
 | Java | the files declaring the types the analysed components' references name | `JavaDeclarationIndex`: every file's package plus its file name and the types declared at the start of a line, read without parsing. A reference's fully qualified name is looked up by its longest indexed prefix, so a nested type leads to its top-level type's file. | Types resolve only through `IndexedTypeSolver`, which reads the files the index names and never scans a directory. Level-one files are parsed with method calls attributed from the names the source writes, without resolving the call or its receiver. |
 | TypeScript | the files the analysed files' module specifiers resolve to, closed over the re-exports of those files | `ts.preProcessFile` and `ts.resolveModuleName` with the options of the config owning each file, so `paths` and `baseUrl` apply. Re-exports (`export * from`, `export {…} from`) are followed with a syntax-only parse, since a name imported through a barrel is declared in the file the barrel re-exports. | Programs are built from the planned files only, with `noResolve` and without project references. Level-one files are modelled without reading their bodies. |
 | Python | the modules declaring the names the analysed components' references resolve to, including names re-exported through a package's `__init__.py`, module-level functions, and names imported inside function bodies | The resolver names a repository symbol by its declaring module's dotted path, so `PythonModuleIndex` recovers the module from the name. | The resolver already reads a referenced module only for what it declares, and caches it. |
+| Kotlin | the Kotlin files declaring the types the analysed components' references name, and the files whose file classes hold the top-level functions they call | `KotlinDeclarationIndex`: every Kotlin file parsed without its function bodies, which yields its package, its types and nested types, its file class and top-level functions, and its type aliases, beside the `JavaDeclarationIndex` of the Java files. | Only the analysed and level-one files are parsed in full. A reference to a type a Java file declares is not loaded. |
 | C# | the files declaring the types the analysed components' references name, with every part of their partial types | `CSharpDeclarationScanner` reads each file's namespaces and type declarations, with their arities, lexically. From it `CSharpDeclarationIndex` builds declaration-only stub file models, through which the assembler resolves names against the whole repository with its usual rules. | Only the analysed, level-one and `global using` files are parsed; the rest are stubs. |
 
 Some files are always handled with the analysed files:
@@ -344,9 +347,13 @@ These rules hold of the implementation. A change that breaks one changes what th
   type.
 - **C# extension methods.** An extension method's link onto the type it extends is made by the file
   declaring the extension. An extension declared in a file that is not modelled links nothing.
+- **Across languages.** Level one stays within the compile's language. A Kotlin file's reference to
+  a Java type, and a Java file's reference to a Kotlin type, is left not loaded rather than followed
+  into the other language's files, and becomes internal only when the other language's compile
+  models that type and the two models are merged.
 - **C# preprocessor conditionals** are not evaluated by the declaration scanner, which, like the
   parser, sees every branch.
 - **Disk.** TypeScript and Python resolve against the files on disk, so a one-level compile in those
   languages writes the whole `ProjectFiles` to a temporary directory, as an ordinary compile does, for
-  the lifetime of the analysis (see *Cleanup*). Java and C# read the files from memory and write
-  nothing.
+  the lifetime of the analysis (see *Cleanup*). Java, C# and Kotlin read the files from memory and
+  write nothing.
