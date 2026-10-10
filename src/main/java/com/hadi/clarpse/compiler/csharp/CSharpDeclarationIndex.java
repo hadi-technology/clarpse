@@ -38,10 +38,12 @@ final class CSharpDeclarationIndex {
     private final Map<String, ProjectFile> filesByPath = new LinkedHashMap<>();
     private final Map<String, List<CSharpDeclarationScanner.Declaration>> declarationsByFile = new HashMap<>();
     private final Map<String, Set<String>> filesByUniqueName = new HashMap<>();
+    private final Map<String, String> uniqueNamesByMetadataName;
     private final Set<String> generatedFiles = new TreeSet<>();
     private final Set<String> globalUsingFiles = new TreeSet<>();
 
     CSharpDeclarationIndex(final Collection<ProjectFile> files) {
+        final List<String> metadataNames = new ArrayList<>();
         for (final ProjectFile file : files) {
             if (file.path() == null) {
                 continue;
@@ -51,7 +53,7 @@ final class CSharpDeclarationIndex {
             final List<CSharpDeclarationScanner.Declaration> declarations = CSharpDeclarationScanner.scan(content);
             declarationsByFile.put(file.path(), declarations);
             for (final CSharpDeclarationScanner.Declaration declaration : declarations) {
-                filesByUniqueName.computeIfAbsent(declaration.uniqueName(), key -> new TreeSet<>()).add(file.path());
+                metadataNames.add(declaration.metadataName());
             }
             if (content != null) {
                 if (content.substring(0, Math.min(content.length(), GENERATED_MARKER_WINDOW))
@@ -63,6 +65,19 @@ final class CSharpDeclarationIndex {
                 }
             }
         }
+        uniqueNamesByMetadataName = CSharpTypeNames.uniqueNames(metadataNames);
+        for (final Map.Entry<String, List<CSharpDeclarationScanner.Declaration>> entry
+                : declarationsByFile.entrySet()) {
+            for (final CSharpDeclarationScanner.Declaration declaration : entry.getValue()) {
+                filesByUniqueName.computeIfAbsent(uniqueName(declaration), key -> new TreeSet<>())
+                        .add(entry.getKey());
+            }
+        }
+    }
+
+    /** The unique name the C# assembler gives a declared type. */
+    private String uniqueName(final CSharpDeclarationScanner.Declaration declaration) {
+        return uniqueNamesByMetadataName.get(declaration.metadataName());
     }
 
     /**
@@ -128,7 +143,7 @@ final class CSharpDeclarationIndex {
         for (final CSharpDeclarationScanner.Declaration declaration
                 : declarationsByFile.getOrDefault(path, List.of())) {
             if (declaration.partial()) {
-                parts.addAll(preferHandWritten(filesByUniqueName.get(declaration.uniqueName())));
+                parts.addAll(preferHandWritten(filesByUniqueName.get(uniqueName(declaration))));
             }
         }
         parts.remove(path);
@@ -183,27 +198,30 @@ final class CSharpDeclarationIndex {
         final Map<String, CSharpModel.CSharpTypeModel> byComponentName = new HashMap<>();
         final List<CSharpDeclarationScanner.Declaration> outermostFirst = new ArrayList<>(declarations);
         outermostFirst.sort(Comparator.comparingInt(declaration -> declaration.componentName().split("\\.").length));
+        // Nested types are attached by metadata name, so the types inside `Outer` and `Outer<T>` stay apart.
         for (final CSharpDeclarationScanner.Declaration declaration : outermostFirst) {
             final CSharpModel.CSharpTypeModel typeModel = new CSharpModel.CSharpTypeModel();
             typeModel.kind = declaration.kind();
             typeModel.name = declaration.name();
+            typeModel.arity = declaration.arity();
             typeModel.namespaceName = declaration.namespaceName();
             typeModel.moduleName = fileModel.moduleName;
             typeModel.sourcePath = file.path();
             typeModel.partial = declaration.partial();
             typeModel.componentName = declaration.componentName();
-            final int dot = declaration.componentName().lastIndexOf('.');
+            final String metadataComponentName = declaration.metadataComponentName();
+            final int dot = metadataComponentName.lastIndexOf('.');
             if (dot < 0) {
                 fileModel.types.add(typeModel);
             } else {
                 final CSharpModel.CSharpTypeModel parent =
-                        byComponentName.get(declaration.componentName().substring(0, dot));
+                        byComponentName.get(metadataComponentName.substring(0, dot));
                 if (parent == null) {
                     continue;
                 }
                 parent.nestedTypes.add(typeModel);
             }
-            byComponentName.putIfAbsent(declaration.componentName(), typeModel);
+            byComponentName.putIfAbsent(metadataComponentName, typeModel);
         }
         return fileModel;
     }

@@ -345,6 +345,13 @@ System.out.println(methodComponent.name());
 System.out.println(methodComponent.codeFragment());
 ```
 
+In C#, a generic type's unique name is its name without type parameters (`Acme.Repo` for `Repo<T>`),
+unless a type of another arity shares its name in the same namespace or enclosing type (`Converter`
+and `Converter<T>`). The two are then separate components, and the generic one carries its arity in
+CLR metadata form: `Acme.Converter` and ``Acme.Converter`1``. A reference binds to the type whose
+arity matches the type arguments written with it; where those cannot be read, it binds to the type
+with the fewest type parameters.
+
 ## One-Level Analysis
 To model a few files of a large repository together with the repository files they reference,
 without compiling the rest of it, give the files to analyse and a depth of 1. The referenced files

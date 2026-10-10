@@ -7,6 +7,7 @@ import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -121,9 +122,9 @@ public class CSharpModernPatternsResolutionTest {
     }
 
     @Test
-    public void arityOverloadedTypesDoNotBreakTheModel() throws Exception {
-        // IFoo and IFoo<T> legally coexist; after erasure they collapse onto one component.
-        // The model must stay consistent and keep the type reachable as a reference target.
+    public void arityOverloadedTypesAreTwoComponents() throws Exception {
+        // IFoo and IFoo<T> legally coexist and are distinct types. The generic one carries its arity
+        // in its unique name, and each reference binds to the type of the arity it was written with.
         OOPSourceCodeModel arity = CSharpTestUtil.compileInline(
                 new ProjectFile("/A.cs", """
                         namespace Demo;
@@ -136,9 +137,12 @@ public class CSharpModernPatternsResolutionTest {
                         """)
         ).model();
         assertTrue(arity.copyOfComponent("Demo.IFoo").isPresent());
+        assertTrue(arity.copyOfComponent("Demo.IFoo`1").isPresent());
         assertTrue(arity.copyOfComponent("Demo.User.Plain").get().references().stream()
                 .anyMatch(r -> r.invokedComponent().equals("Demo.IFoo")));
         assertTrue(arity.copyOfComponent("Demo.User.Generic").get().references().stream()
+                .anyMatch(r -> r.invokedComponent().equals("Demo.IFoo`1")));
+        assertFalse(arity.copyOfComponent("Demo.User.Generic").get().references().stream()
                 .anyMatch(r -> r.invokedComponent().equals("Demo.IFoo")));
     }
 }
