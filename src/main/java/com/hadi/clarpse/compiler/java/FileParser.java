@@ -59,7 +59,7 @@ public final class FileParser {
             final int index,
             final boolean shallow) {
         return walk(file, index, () -> parser.parse(ParseStart.COMPILATION_UNIT,
-                new StringProvider(file.content())).getResult(), typeSolver, shallow);
+                new StringProvider(file.content())).getResult(), typeSolver, shallow, name -> false);
     }
 
     /**
@@ -73,12 +73,16 @@ public final class FileParser {
      */
     public static ParseOutcome parseFile(final ParserContext context, final ProjectFile file, final int index,
                                          final boolean shallow) {
-        return parseFile(context.parser(), context.typeSolver(), file, index, shallow);
+        final JavaParser parser = context.parser();
+        return walk(file, index, () -> parser.parse(ParseStart.COMPILATION_UNIT,
+                new StringProvider(file.content())).getResult(), context.typeSolver(), shallow,
+                context.otherLanguageTypes());
     }
 
     private static ParseOutcome walk(final ProjectFile file, final int index,
                                      final java.util.function.Supplier<java.util.Optional<CompilationUnit>> unit,
-                                     final CombinedTypeSolver typeSolver, final boolean shallow) {
+                                     final CombinedTypeSolver typeSolver, final boolean shallow,
+                                     final java.util.function.Predicate<String> otherLanguageTypes) {
         final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
         CompileFailure failure = null;
         try {
@@ -92,7 +96,7 @@ public final class FileParser {
                     LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
                     failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
                 } else {
-                    new JavaTreeListener(localModel, file, typeSolver, shallow).visit(cu, null);
+                    new JavaTreeListener(localModel, file, typeSolver, shallow, otherLanguageTypes).visit(cu, null);
                 }
             }
         } catch (final Throwable e) {

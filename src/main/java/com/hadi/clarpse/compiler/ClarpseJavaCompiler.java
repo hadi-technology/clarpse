@@ -10,6 +10,7 @@ import com.hadi.clarpse.compiler.java.ParseOutcome;
 import com.hadi.clarpse.compiler.java.ParseResults;
 import com.hadi.clarpse.compiler.java.ParseTask;
 import com.hadi.clarpse.compiler.java.ParserContext;
+import com.hadi.clarpse.compiler.kotlin.KotlinDeclarations;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -26,6 +27,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -53,8 +55,10 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                 persistDir = projectFiles.projectDir();
                 final String projectDir = persistDir;
                 final Set<String> sourceRoots = sourceRoots(javaFiles, projectDir);
+                final KotlinDeclarations kotlin = kotlinDeclarations(projectFiles);
                 final ParseResults parseResults = parseJavaFiles(javaFiles,
-                        () -> new ParserContext(projectDir, sourceRoots), false);
+                        () -> new ParserContext(projectDir, sourceRoots).withOtherLanguageTypes(
+                                kotlinTypes(kotlin)), false);
                 srcModel.merge(parseResults.model());
                 compileFailures.addAll(parseResults.failures());
             } catch (Exception e) {
@@ -67,6 +71,25 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             CompilerSupport.classifyReferences(srcModel);
         }
         return new CompileResult(srcModel, compileFailures);
+    }
+
+    /**
+     * The types the project's Kotlin files declare, which a Java file may import by name or on
+     * demand, or null when the project has no Kotlin files.
+     */
+    private static KotlinDeclarations kotlinDeclarations(final ProjectFiles projectFiles) throws CompileException {
+        final Collection<ProjectFile> kotlinFiles = projectFiles.files(Lang.KOTLIN);
+        if (kotlinFiles.isEmpty()) {
+            return null;
+        }
+        return KotlinDeclarations.of(kotlinFiles);
+    }
+
+    private static Predicate<String> kotlinTypes(final KotlinDeclarations kotlin) {
+        if (kotlin == null) {
+            return null;
+        }
+        return kotlin::declaresType;
     }
 
     /**
@@ -126,7 +149,8 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                                                      final AnalysisOptions options) throws CompileException {
         final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.JAVA));
         final List<ProjectFile> focusFiles = ClarpseCompiler.analyzedFiles(projectFiles, Lang.JAVA, analyzedFilePaths);
-        final OneLevelResolution resolution = new OneLevelResolution(allFiles, options);
+        final OneLevelResolution resolution = new OneLevelResolution(allFiles, options,
+                kotlinDeclarations(projectFiles));
         try {
             ParseResults focusResults = new ParseResults(new OOPSourceCodeModel(), new HashSet<>());
             if (!focusFiles.isEmpty()) {
@@ -170,7 +194,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             final Set<CompileFailure> compileFailures = new HashSet<>(focusResults.failures());
             compileFailures.addAll(levelOneResults.failures());
             CompilerSupport.classifyReferences(srcModel,
-                    reference -> resolution.index().declares(reference.invokedComponent()));
+                    reference -> resolution.declares(reference.invokedComponent()));
             CompilerSupport.markBoundary(srcModel, selection.modelledPaths());
             final Set<String> beyond = resolution.tracker().loaded();
             focusFiles.forEach(file -> beyond.remove(file.path()));
@@ -244,10 +268,13 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
         private static final int MIN_LOAD_CAP = 1000;
 
         private final JavaDeclarationIndex index;
+        private final KotlinDeclarations kotlin;
         private final JavaLoadTracker tracker;
         private final JavaUnitCache units;
 
-        OneLevelResolution(final List<ProjectFile> allFiles, final AnalysisOptions options) {
+        OneLevelResolution(final List<ProjectFile> allFiles, final AnalysisOptions options,
+                           final KotlinDeclarations kotlin) {
+            this.kotlin = kotlin;
             this.index = JavaDeclarationIndex.of(allFiles);
             final Map<String, String> contentByPath = new HashMap<>();
             for (final ProjectFile file : allFiles) {
@@ -262,7 +289,12 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
         ParserContext newContext() {
             return new ParserContext(JavaParserFactory.setupIndexedTypeSolver(
-                    new IndexedTypeSolver(index, units)));
+                    new IndexedTypeSolver(index, units))).withOtherLanguageTypes(kotlinTypes(kotlin));
+        }
+
+        /** Whether the repository declares the named type, in a Java file or a Kotlin one. */
+        boolean declares(final String uniqueName) {
+            return index.declares(uniqueName) || (kotlin != null && kotlin.declares(uniqueName));
         }
 
         JavaDeclarationIndex index() {

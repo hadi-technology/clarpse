@@ -72,6 +72,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
+import java.util.function.Predicate;
 
 /**
  * As the parse tree is developed by JavaParser, we add listener methods to
@@ -121,10 +122,36 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      */
     public JavaTreeListener(final OOPSourceCodeModel srcModel, final ProjectFile file,
             final TypeSolver typeSolver, final boolean shallow) {
+        this(srcModel, file, typeSolver, shallow, name -> false);
+    }
+
+    /**
+     * Types the project declares in another JVM language, such as Kotlin, which the type solver does
+     * not read. An on-demand import is searched for them as well as for Java types.
+     */
+    private final Predicate<String> otherLanguageTypes;
+
+    /**
+     * A listener that also resolves on-demand imports to types declared in another JVM language.
+     *
+     * @param srcModel           Source model to populate.
+     * @param file               The source file being parsed.
+     * @param typeSolver         Resolves type names.
+     * @param shallow            Whether to attribute method calls from written names only.
+     * @param otherLanguageTypes Whether a fully qualified name is a type another JVM language of the
+     *                           project declares; null for none.
+     */
+    public JavaTreeListener(final OOPSourceCodeModel srcModel, final ProjectFile file,
+            final TypeSolver typeSolver, final boolean shallow, final Predicate<String> otherLanguageTypes) {
         this.srcModel = srcModel;
         this.file = file;
         this.typeSolver = typeSolver;
         this.shallow = shallow;
+        if (otherLanguageTypes == null) {
+            this.otherLanguageTypes = name -> false;
+        } else {
+            this.otherLanguageTypes = otherLanguageTypes;
+        }
     }
 
     private void completeComponent() {
@@ -1202,7 +1229,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             // any -- the same rule the `assumeCurrentPackage` note below is about.
             for (final String wildcardPackage : currentWildcardImports) {
                 final String candidate = wildcardPackage + "." + type;
-                if (typeSolver.tryToSolveType(candidate).isSolved()) {
+                if (typeSolver.tryToSolveType(candidate).isSolved() || otherLanguageTypes.test(candidate)) {
                     resolvedType = candidate;
                     break;
                 }
