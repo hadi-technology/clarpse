@@ -350,7 +350,10 @@ These rules hold of the implementation. A change that breaks one changes what th
 - **Across languages.** Level one stays within the compile's language. A Kotlin file's reference to
   a Java type, and a Java file's reference to a Kotlin type, is left not loaded rather than followed
   into the other language's files, and becomes internal only when the other language's compile
-  models that type and the two models are merged.
+  models that type and the two models are merged. A Java compile tells a Kotlin type from a library
+  one by reading the declarations of the Kotlin packages the name could be in, each the first time a
+  name falls under it, with the files whose package header cannot be read lexically read on the
+  first question of any kind.
 - **C# preprocessor conditionals** are not evaluated by the declaration scanner, which, like the
   parser, sees every branch.
 - **Disk.** TypeScript and Python resolve against the files on disk, so a one-level compile in those

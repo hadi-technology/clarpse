@@ -59,6 +59,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                 final ParseResults parseResults = parseJavaFiles(javaFiles,
                         () -> new ParserContext(projectDir, sourceRoots).withOtherLanguageTypes(
                                 kotlinTypes(kotlin)), false);
+                requireKotlinRead(kotlin);
                 srcModel.merge(parseResults.model());
                 compileFailures.addAll(parseResults.failures());
             } catch (Exception e) {
@@ -77,12 +78,23 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
      * The types the project's Kotlin files declare, which a Java file may import by name or on
      * demand, or null when the project has no Kotlin files.
      */
-    private static KotlinDeclarations kotlinDeclarations(final ProjectFiles projectFiles) throws CompileException {
+    private static KotlinDeclarations kotlinDeclarations(final ProjectFiles projectFiles) {
         final Collection<ProjectFile> kotlinFiles = projectFiles.files(Lang.KOTLIN);
         if (kotlinFiles.isEmpty()) {
             return null;
         }
         return KotlinDeclarations.of(kotlinFiles);
+    }
+
+    /**
+     * Fails the compile when the Kotlin declarations a Java file asked about could not be read, which
+     * the file's parse records only as its own failure.
+     */
+    private static void requireKotlinRead(final KotlinDeclarations kotlin) throws CompileException {
+        if (kotlin != null && kotlin.failure() != null) {
+            throw new CompileException("Could not read the declarations of the project's Kotlin files.",
+                    kotlin.failure());
+        }
     }
 
     private static Predicate<String> kotlinTypes(final KotlinDeclarations kotlin) {
@@ -156,11 +168,15 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             if (!focusFiles.isEmpty()) {
                 focusResults = parseJavaFiles(focusFiles, resolution::newContext, false);
             }
+            requireKotlinRead(resolution.kotlin());
             return new JavaPreparedAnalysis(options, focusFiles, allFiles, resolution, focusResults,
                     discoverLevelOne(focusResults.model(), focusFiles, resolution.index()));
         } catch (final IllegalStateException e) {
             resolution.release();
             throw new CompileException("An error occurred while parsing!", e);
+        } catch (final CompileException e) {
+            resolution.release();
+            throw e;
         }
     }
 
@@ -193,8 +209,13 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             srcModel.merge(levelOneResults.model());
             final Set<CompileFailure> compileFailures = new HashSet<>(focusResults.failures());
             compileFailures.addAll(levelOneResults.failures());
-            CompilerSupport.classifyReferences(srcModel,
-                    reference -> resolution.declares(reference.invokedComponent()));
+            try {
+                CompilerSupport.classifyReferences(srcModel,
+                        reference -> resolution.declares(reference.invokedComponent()));
+            } catch (final IllegalStateException e) {
+                throw new CompileException("An error occurred while classifying references!", e);
+            }
+            requireKotlinRead(resolution.kotlin());
             CompilerSupport.markBoundary(srcModel, selection.modelledPaths());
             final Set<String> beyond = resolution.tracker().loaded();
             focusFiles.forEach(file -> beyond.remove(file.path()));
@@ -217,6 +238,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             } catch (final IllegalStateException e) {
                 throw new CompileException("An error occurred while parsing!", e);
             }
+            requireKotlinRead(resolution.kotlin());
             final OOPSourceCodeModel model = new OOPSourceCodeModel();
             model.merge(focusResults.model());
             model.merge(addedResults.model());
@@ -299,6 +321,10 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
         JavaDeclarationIndex index() {
             return index;
+        }
+
+        KotlinDeclarations kotlin() {
+            return kotlin;
         }
 
         JavaLoadTracker tracker() {
