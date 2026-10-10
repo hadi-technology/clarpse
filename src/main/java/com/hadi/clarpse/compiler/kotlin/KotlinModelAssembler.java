@@ -134,7 +134,7 @@ final class KotlinModelAssembler {
         for (final KotlinSuperType superType : type.superTypes) {
             addSuperTypeReference(component, type, superType, scope);
         }
-        addTypeReferences(component, type.ownUsages, scope);
+        addTypeReferences(component, type.ownUsages, scope, memberNames);
 
         final List<Object> declarations = new ArrayList<>(type.members);
         declarations.addAll(type.nestedTypes);
@@ -224,16 +224,17 @@ final class KotlinModelAssembler {
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
         addAnnotationReferences(component, member.annotations, scope);
+        final Set<String> closer = closerNames(member, context);
         if (componentType.isMethodComponent()) {
             for (final KotlinParameterModel parameter : member.parameters) {
-                addParameter(file, parameter, member, component, scope);
+                addParameter(file, parameter, member, component, scope, closer);
             }
             for (final KotlinMemberModel local : member.locals) {
-                addLocal(file, local, component, scope);
+                addLocal(file, local, component, scope, closer);
             }
             component.setCyclo(member.cyclo);
         }
-        addTypeReferences(component, member.typeUsages, scope);
+        addTypeReferences(component, member.typeUsages, scope, closer);
         addFileClassReferences(component, member, context, scope);
         model.insertComponent(component);
         stack.pop();
@@ -241,7 +242,8 @@ final class KotlinModelAssembler {
     }
 
     private void addParameter(final KotlinFileModel file, final KotlinParameterModel parameter,
-                              final KotlinMemberModel member, final Component owner, final Scope scope) {
+                              final KotlinMemberModel member, final Component owner, final Scope scope,
+                              final Set<String> closer) {
         final Component component = new Component();
         component.setPkg(owner.pkg());
         component.setModule(file.moduleName);
@@ -259,14 +261,14 @@ final class KotlinModelAssembler {
         component.setCodeHash(nonZeroHash(parameter.implementationHash, component.componentName()));
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
-        addTypeReferences(component, parameter.typeUsages, scope);
+        addTypeReferences(component, parameter.typeUsages, scope, closer);
         model.insertComponent(component);
         stack.pop();
         ParseUtil.copyRefsToParents(component, stack);
     }
 
     private void addLocal(final KotlinFileModel file, final KotlinMemberModel local, final Component owner,
-                          final Scope scope) {
+                          final Scope scope, final Set<String> closer) {
         if (local.name == null || local.name.isEmpty()) {
             return;
         }
@@ -281,7 +283,7 @@ final class KotlinModelAssembler {
         component.setCodeHash(nonZeroHash(local.implementationHash, component.componentName()));
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
-        addTypeReferences(component, local.typeUsages, scope);
+        addTypeReferences(component, local.typeUsages, scope, closer);
         model.insertComponent(component);
         stack.pop();
         ParseUtil.copyRefsToParents(component, stack);
@@ -368,9 +370,26 @@ final class KotlinModelAssembler {
     }
 
     private void addTypeReferences(final Component component, final Collection<TypeUsage> usages, final Scope scope) {
+        addTypeReferences(component, usages, scope, Set.of());
+    }
+
+    /**
+     * References to the types the usages resolve to. A name used as a value on its own counts only
+     * when it reads as a type name, resolves to a repository type, and nothing closer in scope -- a
+     * parameter, a local, a member, a top-level property or function of the package -- may be what
+     * it names.
+     */
+    private void addTypeReferences(final Component component, final Collection<TypeUsage> usages, final Scope scope,
+                                   final Set<String> closer) {
         final Set<String> seen = new HashSet<>();
         for (final TypeUsage usage : usages) {
-            if (seen.add(usage.name() + "|" + usage.expression())) {
+            if (usage.value() && (closer.contains(usage.name())
+                    || !KotlinDeclarationIndex.readsAsTypeName(usage.name())
+                    || resolver.index().fileClassOf(KotlinDeclarationIndex.qualify(
+                            scope.file().packageName, usage.name())) != null)) {
+                continue;
+            }
+            if (seen.add(usage.name() + "|" + usage.expression() + "|" + usage.value())) {
                 addTypeReference(component, usage, scope);
             }
         }
@@ -381,9 +400,24 @@ final class KotlinModelAssembler {
         if (resolved == null || resolved.name().isEmpty()) {
             return;
         }
+        if (usage.value() && !resolver.index().isType(resolved.name())) {
+            return;
+        }
         final SimpleTypeReference reference = new SimpleTypeReference(resolved.name());
         reference.setResolutionKind(resolved.kind());
         ParseUtil.insertCmpRef(component, reference, stack);
+    }
+
+    /** The names closer in scope than a type for code in a member: its parameters, locals and fellow members. */
+    private static Set<String> closerNames(final KotlinMemberModel member, final MemberContext context) {
+        final Set<String> closer = new HashSet<>(context.memberNames);
+        for (final KotlinParameterModel parameter : member.parameters) {
+            closer.add(parameter.name);
+        }
+        for (final KotlinMemberModel local : member.locals) {
+            closer.add(local.name);
+        }
+        return closer;
     }
 
     /** References to the file classes of the top-level functions a member calls. */
@@ -392,13 +426,7 @@ final class KotlinModelAssembler {
         if (member.calledNames.isEmpty()) {
             return;
         }
-        final Set<String> closer = new HashSet<>(context.memberNames);
-        for (final KotlinParameterModel parameter : member.parameters) {
-            closer.add(parameter.name);
-        }
-        for (final KotlinMemberModel local : member.locals) {
-            closer.add(local.name);
-        }
+        final Set<String> closer = closerNames(member, context);
         final boolean implicitReceiver = member.receiverType != null || context.inheritsMembers;
         for (final String called : member.calledNames) {
             final String fileClass = resolver.fileClassOfCall(called, scope,

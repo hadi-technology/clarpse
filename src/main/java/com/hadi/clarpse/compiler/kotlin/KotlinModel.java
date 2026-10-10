@@ -93,8 +93,14 @@ final class KotlinModel {
      * @param name       The name as written, qualifier included and type arguments excluded.
      * @param expression Whether it is named in an expression (a call, a receiver, a class literal)
      *                   rather than in a type position.
+     * @param value      Whether it is a name used as a value on its own, such as an object passed as
+     *                   an argument, which counts only when it names a repository type.
      */
-    record TypeUsage(String name, boolean expression) {
+    record TypeUsage(String name, boolean expression, boolean value) {
+
+        TypeUsage(final String name, final boolean expression) {
+            this(name, expression, false);
+        }
     }
 
     /** One supertype entry. */

@@ -10,6 +10,7 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeKind;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +48,11 @@ final class KotlinDeclarationIndex {
      */
     KotlinDeclarationIndex(final Collection<KotlinFileModel> kotlinFiles, final JavaDeclarationIndex javaIndex) {
         this.javaIndex = javaIndex;
-        for (final KotlinFileModel file : kotlinFiles) {
+        // In path order, so that when several files declare one name -- an expect function and its
+        // actuals -- the same file wins whatever order the files were read in.
+        final List<KotlinFileModel> ordered = new ArrayList<>(kotlinFiles);
+        ordered.sort(Comparator.comparing(KotlinFileModel::path));
+        for (final KotlinFileModel file : ordered) {
             for (final KotlinTypeModel type : file.types) {
                 addType(type, qualify(file.packageName, type.name), file.path());
             }

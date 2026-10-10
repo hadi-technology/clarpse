@@ -48,6 +48,14 @@ final class KotlinFileParser {
     private static final Set<String> QUALIFIED_EXPRESSIONS = Set.of("DOT_QUALIFIED_EXPRESSION",
             "SAFE_ACCESS_EXPRESSION");
 
+    /**
+     * Nodes a simple name can stand in as a value on its own: an argument, a statement, an
+     * initializer, a returned or compared value, a branch. There a name that resolves to a type can
+     * only be an object or a companion object.
+     */
+    private static final Set<String> VALUE_POSITIONS = Set.of("VALUE_ARGUMENT", "BLOCK", PROPERTY, FUN,
+            "RETURN", "WHEN_CONDITION_EXPRESSION", "BINARY_EXPRESSION", "PARENTHESIZED", "THEN", "ELSE");
+
     /** Declarations nested in a body that are modelled, or skipped, on their own. */
     private static final Set<String> NESTED_DECLARATIONS = Set.of(CLASS, OBJECT_DECLARATION, FUN);
 
@@ -561,8 +569,9 @@ final class KotlinFileParser {
         /**
          * Every type name written under {@code node}: the types in type positions, and the names an
          * expression uses as a type -- the callee of a call, the receiver of a qualified expression,
-         * the subject of a class literal or callable reference. Expression names are candidates;
-         * the assembler keeps only those that resolve to a type.
+         * the subject of a class literal or callable reference, and a name used as a value on its
+         * own. Expression names are candidates; the assembler keeps only those that resolve to a type,
+         * and of the names used as values only those that resolve to a repository type.
          */
         private List<TypeUsage> typeUsagesIn(final KotlinSyntaxNode node, final KotlinMemberModel member) {
             final List<TypeUsage> usages = new ArrayList<>();
@@ -583,6 +592,12 @@ final class KotlinFileParser {
                     addCallUsage(current, usages, member);
                 } else if (current.is("CLASS_LITERAL_EXPRESSION") || current.is("CALLABLE_REFERENCE_EXPRESSION")) {
                     addReferenceUsage(current, usages, member);
+                } else if (current.is(REFERENCE_EXPRESSION) && current.parent != null
+                        && VALUE_POSITIONS.contains(current.parent.type)) {
+                    final String name = referenceName(current);
+                    if (!name.isEmpty()) {
+                        usages.add(new TypeUsage(name, true, true));
+                    }
                 }
             }
             return withoutTypeParameters(usages, nodes);
