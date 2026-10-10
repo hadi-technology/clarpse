@@ -90,6 +90,14 @@ jobs:
           java-version: '17'
           distribution: 'microsoft'
           cache: 'maven'
+      # The runner's Maven 3.10 names the staging metadata maven-metadata-local.xml, which the
+      # central-publishing plugin does not remove before bundling, and Central rejects a bundle
+      # holding it. Maven 3.9 names it the way the plugin expects.
+      - name: Use Maven 3.9 for publishing
+        run: |
+          curl -sSfL https://repo1.maven.org/maven2/org/apache/maven/apache-maven/3.9.16/apache-maven-3.9.16-bin.tar.gz \
+            | tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.9.16/bin" >> "$GITHUB_PATH"
       - name: Configure Maven settings
         run: |
           mkdir -p ~/.m2
@@ -122,4 +130,4 @@ jobs:
           fi
           echo "GPG_KEYNAME=$GPG_KEYNAME" >> $GITHUB_ENV
       - name: Deploy to Maven Central
-        run: mvn -P release -DskipTests -Dgpg.keyname="$GPG_KEYNAME" -Dgpg.passphrase="$GPG_PASSPHRASE" deploy
+        run: mvn -v && mvn -P release -DskipTests -Dgpg.keyname="$GPG_KEYNAME" -Dgpg.passphrase="$GPG_PASSPHRASE" deploy
