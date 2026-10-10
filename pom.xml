@@ -97,6 +97,11 @@
 		</dependency>
 		<dependency>
 			<groupId>org.jetbrains</groupId>
+			<artifactId>kotlin-parser</artifactId>
+			<version>0.3.355</version>
+		</dependency>
+		<dependency>
+			<groupId>org.jetbrains</groupId>
 			<artifactId>ij-parsing-core</artifactId>
 			<version>0.3.355</version>
 		</dependency>
