@@ -72,6 +72,16 @@ Kotlin is modelled the way the JVM sees it, so its components line up with Java'
   nothing in scope declares is kept as written and marked `ResolutionKind.UNRESOLVED`; a name in an
   expression counts only when it resolves to a type. A call to a top-level function references the
   class holding it.
+- An `object` or companion object named on its own as a value (`add(Defaults)`, `return Defaults`)
+  is referenced when it is a repository type and no parameter, local, member or top-level function
+  or property in scope has that name.
+- In a multiplatform project the `expect` and `actual` declarations of one name are one component,
+  and a call to an `expect` function binds to the declaring file first in path order, so the model
+  does not depend on the order the files are read in.
+- Not modelled yet: the return type of a call on a variable (`order.lines().first()` references
+  `Order`, not `List`), which a Java compile gets from its type solver; locals declared by
+  destructuring (`val (a, b) = pair`); and a library object named on its own as a value (`Unit`),
+  which a name-only reader cannot tell from an imported property.
 
 #### Mixed Java and Kotlin projects
 
