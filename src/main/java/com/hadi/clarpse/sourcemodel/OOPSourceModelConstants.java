@@ -355,6 +355,9 @@ public final class OOPSourceModelConstants {
                 false), FUNCTION("function", false, true, false), CONSTRUCTOR("method", false, true, false),
                 ENUM_CONSTANT("enum_constant", false, false, true), FIELD("field_variable", false, false, true),
                 MODULE_FIELD("module_field", false, false, true),
+                // A name given to a type expression (TypeScript `type X = ...`). It names a type but
+                // declares no members of its own, so it is not a base component.
+                TYPE_ALIAS("type_alias", false, false, false),
                 METHOD_PARAMETER_COMPONENT("method_parameter", false, false, true),
                 CONSTRUCTOR_PARAMETER_COMPONENT("constructor_parameter", false, false, true),
                 LOCAL("local_variable", false, false, true);

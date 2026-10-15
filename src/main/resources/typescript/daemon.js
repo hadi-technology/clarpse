@@ -1711,6 +1711,70 @@ function buildFunctionModel(node, checker) {
   return buildMethodModel(node, checker, "function");
 }
 
+/** A reference to the repository type alias a type reference names, or null where it names none. */
+function typeAliasReference(node, checker) {
+  const nameNode = state.ts.isTypeReferenceNode(node) ? node.typeName : node.expression;
+  let symbol;
+  try {
+    symbol = nameNode ? checker.getSymbolAtLocation(nameNode) : null;
+    if (symbol && (symbol.flags & state.ts.SymbolFlags.Alias)) {
+      symbol = checker.getAliasedSymbol(symbol);
+    }
+  } catch (err) {
+    return null;
+  }
+  if (!symbol || !(symbol.flags & state.ts.SymbolFlags.TypeAlias)) {
+    return null;
+  }
+  const declaration = symbol.declarations && symbol.declarations.length ? symbol.declarations[0] : null;
+  const fileName = declaration && declaration.getSourceFile ? declaration.getSourceFile().fileName : null;
+  if (!fileName || !isInternalFile(fileName) || !declaration.parent
+    || !state.ts.isSourceFile(declaration.parent)) {
+    return null;
+  }
+  return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: symbol.getName() } };
+}
+
+/**
+ * A type alias: the name a module gives a type expression. Its references are the named types the
+ * expression is written with, read from the expression itself so that a type nested inside an
+ * object literal, a mapped type or a function type is found as well.
+ */
+function buildTypeAliasModel(node, checker) {
+  const references = [];
+  function visit(child) {
+    if (state.ts.isTypeReferenceNode(child) || state.ts.isExpressionWithTypeArguments(child)) {
+      const named = typeAliasReference(child, checker);
+      const referenced = checker.getTypeAtLocation(child);
+      if (named) {
+        // Another alias, named as written: resolving its type would expand a union or literal
+        // alias into its members and lose the name the code was written against.
+        references.push(named);
+      } else if (!(referenced.flags & state.ts.TypeFlags.TypeParameter)) {
+        // The alias's own type parameters name no declaration a consumer could look up.
+        references.push(...buildReferenceModelsFromType(referenced, checker, "type"));
+      }
+    }
+    state.ts.forEachChild(child, visit);
+  }
+  if (node.type) {
+    visit(node.type);
+  }
+  const typeParameters = node.typeParameters && node.typeParameters.length
+    ? "<" + node.typeParameters.map((parameter) => parameter.name.text).join(", ") + ">"
+    : "";
+  return {
+    kind: "typeAlias",
+    name: node.name.text,
+    signature: node.name.text + typeParameters,
+    implementationHash: stableImplementationHash(node.getText()),
+    modifiers: collectModifiers(state.ts, node),
+    jsDoc: getJsDoc(node),
+    members: [],
+    references: mergeReferences(references)
+  };
+}
+
 function collectTopLevelDeclarations(ts, sourceFile, checker, unresolvedBases) {
   const declarations = [];
   sourceFile.forEachChild((node) => {
@@ -1724,6 +1788,10 @@ function collectTopLevelDeclarations(ts, sourceFile, checker, unresolvedBases) {
     }
     if (ts.isEnumDeclaration(node)) {
       declarations.push(buildEnumModel(node));
+      return;
+    }
+    if (ts.isTypeAliasDeclaration(node)) {
+      declarations.push(buildTypeAliasModel(node, checker));
       return;
     }
     if (ts.isFunctionDeclaration(node)) {
@@ -1743,7 +1811,17 @@ function collectTopLevelDeclarations(ts, sourceFile, checker, unresolvedBases) {
       }
     }
   });
-  return declarations.filter(Boolean);
+  return withoutShadowedAliases(declarations.filter(Boolean));
+}
+
+/**
+ * A module may declare a value and a type alias of one name (`const Kind = 0; type Kind = typeof
+ * Kind;`), which TypeScript keeps apart and a component model cannot: both would take the module's
+ * one name for it. The value stands for the name, and the alias is left out.
+ */
+function withoutShadowedAliases(declarations) {
+  const values = new Set(declarations.filter((d) => d.kind !== "typeAlias").map((d) => d.name));
+  return declarations.filter((d) => d.kind !== "typeAlias" || !values.has(d.name));
 }
 
 async function handleInitRepo(params) {

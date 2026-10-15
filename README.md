@@ -18,7 +18,7 @@ Add the dependency (check the badge above for the latest version):
 <dependency>
   <groupId>io.github.hadi-technology</groupId>
   <artifactId>clarpse</artifactId>
-  <version>11.11.0</version>
+  <version>11.12.0</version>
 </dependency>
 ```
 
@@ -41,7 +41,7 @@ The same three lines work for `Lang.CSHARP`, `Lang.TYPESCRIPT`, `Lang.PYTHON`, a
 |------------|---------------------------------|:----------------:|--------------------------------------------------------------------------------------------|
 | Java       | ANTLR, architecture-focused     | No               | Includes records.                                                                            |
 | C#         | JVM-based                       | No               | Partial type merging, namespace-aware indexing, fast in-repo symbol resolution.              |
-| TypeScript | Bundled TypeScript compiler     | Yes              | tsconfig-aware resolution, constructor parameter properties, monorepo support. Files no `tsconfig.json` names are read with default options. |
+| TypeScript | Bundled TypeScript compiler     | Yes              | tsconfig-aware resolution, constructor parameter properties, monorepo support. Module-level functions, bindings and type aliases are components of their module. Files no `tsconfig.json` names are read with default options. |
 | Python     | Bundled Pyright                 | Yes              | Nested classes, comment parsing, cyclomatic complexity, code hashing, visibility inference.  |
 | Kotlin     | JetBrains standalone parser     | No               | `.kt` files (not `.kts` scripts). Java-compatible unique names, file classes for top-level functions, resolution against the project's Java types. See [Kotlin](#kotlin). |
 
