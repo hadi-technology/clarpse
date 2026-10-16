@@ -66,11 +66,12 @@ final class TypeScriptModelAssembler {
     }
 
     /**
-     * Attaches the file's imports to the types it declares, and to nothing else.
+     * Attaches the file's imports to the types it declares, and to nothing else; or, for a file
+     * declaring no type, to its module-level functions, constants and type aliases.
      *
-     * <p>Only type components carry them, matching Java: a field or method reporting its file's
-     * import list as its own is what made {@code imports()} mean a different thing in each language
-     * (issue #156). An import the TypeScript compiler resolved inside the repository is recorded as
+     * <p>Only type components carry them where there are types, matching Java: a field or method
+     * reporting its file's import list as its own is what made {@code imports()} mean a different
+     * thing in each language (issue #156). Members never carry them. An import the TypeScript compiler resolved inside the repository is recorded as
      * the component name it refers to, so it lines up with the rest of the model; anything else
      * keeps its specifier verbatim rather than being guessed into a path.
      */
@@ -103,10 +104,31 @@ final class TypeScriptModelAssembler {
         if (imports.isEmpty()) {
             return;
         }
-        srcModel.components()
-                .filter(component -> component.componentType().isBaseComponent())
+        final java.util.List<Component> declared = srcModel.components()
                 .filter(component -> sourcePath.equals(component.sourceFile()))
+                .toList();
+        final boolean declaresAType = declared.stream()
+                .anyMatch(component -> component.componentType().isBaseComponent());
+        // A module of functions, constants and type aliases declares no type to carry its imports,
+        // and left them nowhere: what such a file imports is held by each of its module-level
+        // declarations instead, the same way a type of a file holds the file's imports.
+        declared.stream()
+                .filter(component -> carriesFileImports(component, declaresAType))
                 .forEach(component -> component.setImports(imports));
+    }
+
+    private static boolean carriesFileImports(final Component component, final boolean fileDeclaresAType) {
+        if (fileDeclaresAType) {
+            return component.componentType().isBaseComponent();
+        }
+        return isModuleLevelDeclaration(component);
+    }
+
+    private static boolean isModuleLevelDeclaration(final Component component) {
+        final OOPSourceModelConstants.ComponentType type = component.componentType();
+        return type == OOPSourceModelConstants.ComponentType.FUNCTION
+                || type == OOPSourceModelConstants.ComponentType.MODULE_FIELD
+                || type == OOPSourceModelConstants.ComponentType.TYPE_ALIAS;
     }
 
     /**
@@ -239,7 +261,8 @@ final class TypeScriptModelAssembler {
             return declaration.type;
         }
         if ((componentType == OOPSourceModelConstants.ComponentType.CLASS
-                || componentType == OOPSourceModelConstants.ComponentType.INTERFACE)
+                || componentType == OOPSourceModelConstants.ComponentType.INTERFACE
+                || componentType == OOPSourceModelConstants.ComponentType.TYPE_ALIAS)
                 && declaration.signature != null) {
             return declaration.signature;
         }
@@ -268,6 +291,8 @@ final class TypeScriptModelAssembler {
                 return OOPSourceModelConstants.ComponentType.FIELD;
             case "moduleField":
                 return OOPSourceModelConstants.ComponentType.MODULE_FIELD;
+            case "typeAlias":
+                return OOPSourceModelConstants.ComponentType.TYPE_ALIAS;
             case "enumMember":
                 return OOPSourceModelConstants.ComponentType.ENUM_CONSTANT;
             case "parameter":
