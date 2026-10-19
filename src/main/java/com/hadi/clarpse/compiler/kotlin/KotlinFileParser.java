@@ -4,6 +4,10 @@ import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompilerSupport;
 import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.ProjectFile;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationArgument;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationUse;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationValue;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationValueKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinFileModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinImport;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinMemberModel;
@@ -231,7 +235,7 @@ final class KotlinFileParser {
         private KotlinTypeModel readType(final KotlinSyntaxNode node) {
             final KotlinTypeModel type = new KotlinTypeModel();
             final List<String> modifiers = modifierKeywords(node);
-            type.annotations.addAll(annotationNames(node));
+            type.annotations.addAll(annotationUses(node));
             final List<Token> tokens = tree.directTokens(node);
             boolean isInterface = false;
             for (final Token token : tokens) {
@@ -460,7 +464,7 @@ final class KotlinFileParser {
             member.comment = tree.leadingComment(node.startOffset);
             member.implementationHash = implementationHash(tree.text(node));
             member.modifiers.addAll(supportedModifiers(modifierKeywords(node)));
-            member.annotations.addAll(annotationNames(node));
+            member.annotations.addAll(annotationUses(node));
             return member;
         }
 
@@ -831,21 +835,238 @@ final class KotlinFileParser {
             return keywords;
         }
 
-        private List<String> annotationNames(final KotlinSyntaxNode declaration) {
-            final List<String> names = new ArrayList<>();
+        private List<KotlinAnnotationUse> annotationUses(final KotlinSyntaxNode declaration) {
+            final List<KotlinAnnotationUse> uses = new ArrayList<>();
             final KotlinSyntaxNode list = declaration.child(MODIFIER_LIST);
             if (list == null) {
-                return names;
+                return uses;
             }
             for (final KotlinSyntaxNode node : list.descendants()) {
                 if (node.is("ANNOTATION_ENTRY")) {
                     final String name = annotationName(node);
                     if (name != null && !name.isEmpty()) {
-                        names.add(name);
+                        uses.add(new KotlinAnnotationUse(name, annotationArguments(node)));
                     }
                 }
             }
-            return names;
+            return uses;
+        }
+
+        private List<KotlinAnnotationArgument> annotationArguments(final KotlinSyntaxNode entry) {
+            final List<KotlinAnnotationArgument> arguments = new ArrayList<>();
+            final KotlinSyntaxNode list = entry.child("VALUE_ARGUMENT_LIST");
+            if (list == null) {
+                return arguments;
+            }
+            for (final KotlinSyntaxNode argument : list.children("VALUE_ARGUMENT")) {
+                String name = null;
+                KotlinSyntaxNode expression = null;
+                for (final KotlinSyntaxNode child : argument.children) {
+                    if (child.is("VALUE_ARGUMENT_NAME")) {
+                        name = tree.text(child).trim();
+                    } else if (expression == null) {
+                        expression = child;
+                    }
+                }
+                arguments.add(new KotlinAnnotationArgument(name, annotationValue(expression)));
+            }
+            return arguments;
+        }
+
+        private KotlinAnnotationValue annotationValue(final KotlinSyntaxNode node) {
+            if (node == null) {
+                return otherValue();
+            }
+            switch (node.type) {
+                case "PARENTHESIZED":
+                    return parenthesized(node);
+                case "STRING_TEMPLATE":
+                    return stringValue(stringTemplateText(node));
+                case "CHARACTER_CONSTANT":
+                    return characterValue(node);
+                case "BOOLEAN_CONSTANT":
+                    return new KotlinAnnotationValue(KotlinAnnotationValueKind.BOOLEAN, tree.text(node).trim(), List.of());
+                case "INTEGER_CONSTANT":
+                case "FLOAT_CONSTANT":
+                    return new KotlinAnnotationValue(KotlinAnnotationValueKind.NUMBER, tree.text(node).trim(), List.of());
+                case "PREFIX_EXPRESSION":
+                    return signedNumber(node);
+                case "BINARY_EXPRESSION":
+                    return concatenation(node);
+                case "CLASS_LITERAL_EXPRESSION":
+                    return classLiteral(node);
+                case "DOT_QUALIFIED_EXPRESSION":
+                    return qualifiedName(node);
+                case "COLLECTION_LITERAL_EXPRESSION":
+                    return collectionLiteral(node);
+                case "CALL_EXPRESSION":
+                    return arrayOfCall(node);
+                default:
+                    return otherValue();
+            }
+        }
+
+        private KotlinAnnotationValue parenthesized(final KotlinSyntaxNode node) {
+            if (node.children.size() == 1) {
+                return annotationValue(node.children.get(0));
+            }
+            return otherValue();
+        }
+
+        private KotlinAnnotationValue stringValue(final String text) {
+            if (text == null) {
+                return otherValue();
+            }
+            return new KotlinAnnotationValue(KotlinAnnotationValueKind.STRING, text, List.of());
+        }
+
+        private KotlinAnnotationValue characterValue(final KotlinSyntaxNode node) {
+            final String written = tree.text(node).trim();
+            if (written.length() < 3) {
+                return otherValue();
+            }
+            return stringValue(unescape(written.substring(1, written.length() - 1)));
+        }
+
+        private KotlinAnnotationValue classLiteral(final KotlinSyntaxNode node) {
+            if (node.children.isEmpty() || !isNameChain(node.children.get(0))) {
+                return otherValue();
+            }
+            return new KotlinAnnotationValue(KotlinAnnotationValueKind.CLASS,
+                    nameChain(node.children.get(0)), List.of());
+        }
+
+        private KotlinAnnotationValue qualifiedName(final KotlinSyntaxNode node) {
+            if (!isNameChain(node)) {
+                return otherValue();
+            }
+            return new KotlinAnnotationValue(KotlinAnnotationValueKind.QUALIFIED, nameChain(node), List.of());
+        }
+
+        private KotlinAnnotationValue collectionLiteral(final KotlinSyntaxNode node) {
+            final List<KotlinAnnotationValue> elements = new ArrayList<>();
+            for (final KotlinSyntaxNode element : node.children) {
+                elements.add(annotationValue(element));
+            }
+            return new KotlinAnnotationValue(KotlinAnnotationValueKind.ARRAY, null, elements);
+        }
+
+        private KotlinAnnotationValue otherValue() {
+            return new KotlinAnnotationValue(KotlinAnnotationValueKind.OTHER, null, List.of());
+        }
+
+        /** The stdlib factories that build an array from the values they are given. */
+        private static final Set<String> ARRAY_FACTORIES = Set.of("arrayOf", "intArrayOf", "longArrayOf",
+                "shortArrayOf", "byteArrayOf", "floatArrayOf", "doubleArrayOf", "booleanArrayOf", "charArrayOf");
+
+        private KotlinAnnotationValue arrayOfCall(final KotlinSyntaxNode call) {
+            final KotlinSyntaxNode callee = call.child("REFERENCE_EXPRESSION");
+            final KotlinSyntaxNode arguments = call.child("VALUE_ARGUMENT_LIST");
+            if (callee == null || arguments == null || !ARRAY_FACTORIES.contains(tree.text(callee).trim())) {
+                return otherValue();
+            }
+            final List<KotlinAnnotationValue> elements = new ArrayList<>();
+            for (final KotlinSyntaxNode argument : arguments.children("VALUE_ARGUMENT")) {
+                if (argument.children.isEmpty()) {
+                    elements.add(otherValue());
+                } else {
+                    elements.add(annotationValue(argument.children.get(0)));
+                }
+            }
+            return new KotlinAnnotationValue(KotlinAnnotationValueKind.ARRAY, null, elements);
+        }
+
+        private KotlinAnnotationValue signedNumber(final KotlinSyntaxNode prefix) {
+            if (prefix.children.size() != 2 || !prefix.children.get(0).is("OPERATION_REFERENCE")) {
+                return otherValue();
+            }
+            final String operator = tree.text(prefix.children.get(0)).trim();
+            final KotlinAnnotationValue operand = annotationValue(prefix.children.get(1));
+            if (operand.kind() != KotlinAnnotationValueKind.NUMBER) {
+                return otherValue();
+            }
+            if ("-".equals(operator)) {
+                return new KotlinAnnotationValue(KotlinAnnotationValueKind.NUMBER, "-" + operand.text(), List.of());
+            }
+            if ("+".equals(operator)) {
+                return operand;
+            }
+            return otherValue();
+        }
+
+        private KotlinAnnotationValue concatenation(final KotlinSyntaxNode binary) {
+            if (binary.children.size() != 3 || !binary.children.get(1).is("OPERATION_REFERENCE")
+                    || !"+".equals(tree.text(binary.children.get(1)).trim())) {
+                return otherValue();
+            }
+            final KotlinAnnotationValue left = annotationValue(binary.children.get(0));
+            final KotlinAnnotationValue right = annotationValue(binary.children.get(2));
+            if (left.kind() != KotlinAnnotationValueKind.STRING || right.kind() != KotlinAnnotationValueKind.STRING) {
+                return otherValue();
+            }
+            return new KotlinAnnotationValue(KotlinAnnotationValueKind.STRING, left.text() + right.text(), List.of());
+        }
+
+        /** Whether the node is a plain name or a dotted chain of plain names. */
+        private boolean isNameChain(final KotlinSyntaxNode node) {
+            if (node.is("REFERENCE_EXPRESSION")) {
+                return true;
+            }
+            if (!node.is("DOT_QUALIFIED_EXPRESSION") || node.children.size() != 2) {
+                return false;
+            }
+            return isNameChain(node.children.get(0)) && node.children.get(1).is("REFERENCE_EXPRESSION");
+        }
+
+        private String nameChain(final KotlinSyntaxNode node) {
+            return tree.text(node).replaceAll("\\s+", "").trim();
+        }
+
+        /** The text of a string with no template, or null when it holds one. */
+        private String stringTemplateText(final KotlinSyntaxNode template) {
+            final StringBuilder text = new StringBuilder();
+            for (final KotlinSyntaxNode part : template.children) {
+                if (part.is("LITERAL_STRING_TEMPLATE_ENTRY")) {
+                    text.append(tree.text(part));
+                } else if (part.is("ESCAPE_STRING_TEMPLATE_ENTRY")) {
+                    final String decoded = unescape(tree.text(part));
+                    if (decoded == null) {
+                        return null;
+                    }
+                    text.append(decoded);
+                } else {
+                    return null;
+                }
+            }
+            return text.toString();
+        }
+
+        /** Decodes the simple escapes of one escaped character or a plain run, or null for any other. */
+        private String unescape(final String written) {
+            final StringBuilder out = new StringBuilder();
+            for (int i = 0; i < written.length(); i++) {
+                final char c = written.charAt(i);
+                if (c != '\\') {
+                    out.append(c);
+                    continue;
+                }
+                if (i + 1 >= written.length()) {
+                    return null;
+                }
+                final char next = written.charAt(++i);
+                switch (next) {
+                    case 't': out.append('\t'); break;
+                    case 'b': out.append('\b'); break;
+                    case 'n': out.append('\n'); break;
+                    case 'r': out.append('\r'); break;
+                    case '\'': out.append('\''); break;
+                    case '"': out.append('"'); break;
+                    case '\\': out.append('\\'); break;
+                    case '$': out.append('$'); break;
+                    default: return null;
+                }
+            }
+            return out.toString();
         }
 
         private String annotationName(final KotlinSyntaxNode entry) {

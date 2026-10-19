@@ -117,7 +117,7 @@ final class CSharpModel {
         int implementationHash;
         List<String> modifiers = new ArrayList<>();
         /** Names of the attributes ({@code [ApiController]}) applied to this type declaration. */
-        List<String> annotations = new ArrayList<>();
+        List<CSharpAttribute> annotations = new ArrayList<>();
         List<String> baseTypes = new ArrayList<>();
         List<CSharpMemberModel> members = new ArrayList<>();
         List<CSharpTypeModel> nestedTypes = new ArrayList<>();
@@ -156,6 +156,10 @@ final class CSharpModel {
         }
     }
 
+    /** An attribute applied to a declaration: its name as written and its argument list's text, or null. */
+    record CSharpAttribute(String name, String arguments) {
+    }
+
     static final class CSharpMemberModel {
         String kind;
         String name;
@@ -174,7 +178,7 @@ final class CSharpModel {
         int implementationHash;
         List<String> modifiers = new ArrayList<>();
         /** Names of the attributes ({@code [HttpGet]}) applied to this member declaration. */
-        List<String> annotations = new ArrayList<>();
+        List<CSharpAttribute> annotations = new ArrayList<>();
         List<CSharpParameterModel> parameters = new ArrayList<>();
         List<CSharpMemberModel> locals = new ArrayList<>();
         List<String> simpleTypeUsages = new ArrayList<>();

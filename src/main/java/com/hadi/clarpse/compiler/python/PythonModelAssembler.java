@@ -2,12 +2,16 @@ package com.hadi.clarpse.compiler.python;
 
 import com.hadi.clarpse.compiler.CompilerSupport;
 import com.hadi.clarpse.compiler.python.model.PythonClassModel;
+import com.hadi.clarpse.compiler.python.model.PythonDecoratorArgumentModel;
+import com.hadi.clarpse.compiler.python.model.PythonDecoratorValueModel;
 import com.hadi.clarpse.compiler.python.model.PythonFieldModel;
 import com.hadi.clarpse.compiler.python.model.PythonFileModel;
 import com.hadi.clarpse.compiler.python.model.PythonMethodModel;
 import com.hadi.clarpse.compiler.python.model.PythonParamModel;
 import com.hadi.clarpse.compiler.python.model.PythonTypeRefModel;
 import com.hadi.clarpse.listener.ParseUtil;
+import com.hadi.clarpse.reference.AnnotationArgument;
+import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
@@ -251,7 +255,7 @@ final class PythonModelAssembler {
                 insertReferences(component, base, true);
             }
         }
-        attachDecoratorReferences(component, classModel.decorators);
+        attachDecoratorReferences(component, classModel.decorators, classModel.decoratorArguments);
         return component;
     }
 
@@ -262,12 +266,16 @@ final class PythonModelAssembler {
      * name ({@code app.route} to {@code route}); an unresolved decorator is still a real fact, so it
      * is kept under that name.
      */
-    private static void attachDecoratorReferences(final Component component, final java.util.List<String> decorators) {
+    private static void attachDecoratorReferences(final Component component,
+                                                  final java.util.List<String> decorators,
+                                                  final java.util.List<java.util.List<PythonDecoratorArgumentModel>>
+                                                          decoratorArguments) {
         if (decorators == null) {
             return;
         }
         final Set<String> seen = new java.util.LinkedHashSet<>();
-        for (final String decorator : decorators) {
+        for (int i = 0; i < decorators.size(); i++) {
+            final String decorator = decorators.get(i);
             if (decorator == null || decorator.isBlank()) {
                 continue;
             }
@@ -275,8 +283,79 @@ final class PythonModelAssembler {
             if (invoked.equals(component.uniqueName()) || !seen.add(invoked)) {
                 continue;
             }
-            component.insertCmpRef(new AnnotationReference(invoked));
+            final AnnotationReference reference = new AnnotationReference(invoked);
+            if (decoratorArguments != null && i < decoratorArguments.size()
+                    && decoratorArguments.get(i) != null) {
+                reference.setArguments(decoratorArgumentMap(decoratorArguments.get(i)));
+            }
+            component.insertCmpRef(reference);
         }
+    }
+
+    private static java.util.Map<String, AnnotationArgument> decoratorArgumentMap(
+            final java.util.List<PythonDecoratorArgumentModel> arguments) {
+        final AnnotationArguments collected = new AnnotationArguments();
+        for (final PythonDecoratorArgumentModel argument : arguments) {
+            final AnnotationArgument value = decoratorValue(argument.value);
+            if (argument.name == null) {
+                collected.unnamed(value);
+            } else {
+                collected.named(argument.name, value);
+            }
+        }
+        return collected.build();
+    }
+
+    private static AnnotationArgument decoratorValue(final PythonDecoratorValueModel value) {
+        if (value == null || value.kind == null) {
+            return AnnotationArgument.unresolved();
+        }
+        switch (value.kind) {
+            case "string":
+                return AnnotationArgument.literal(AnnotationArgument.Kind.STRING, value.text);
+            case "number":
+                return AnnotationArgument.literal(AnnotationArgument.Kind.NUMBER, value.text);
+            case "boolean":
+                return AnnotationArgument.literal(AnnotationArgument.Kind.BOOLEAN, value.text);
+            case "class":
+                return AnnotationArgument.literal(AnnotationArgument.Kind.CLASS, value.target);
+            case "qualified":
+                return decoratorQualifiedName(value);
+            case "array":
+                return decoratorArray(value);
+            default:
+                return AnnotationArgument.unresolved();
+        }
+    }
+
+    private static AnnotationArgument decoratorQualifiedName(final PythonDecoratorValueModel value) {
+        if (value.target == null) {
+            return AnnotationArgument.unresolved();
+        }
+        return AnnotationArgument.enumCandidate(value.text, value.target);
+    }
+
+    private static AnnotationArgument decoratorArray(final PythonDecoratorValueModel value) {
+        final java.util.List<AnnotationArgument> elements = new java.util.ArrayList<>();
+        for (final PythonDecoratorValueModel element : value.elements) {
+            elements.add(decoratorValue(element));
+        }
+        return AnnotationArgument.array(elements);
+    }
+
+    /**
+     * Decides which decorator arguments are enum members. A file is read on its own, so a dotted
+     * name whose qualifier is a class of another file cannot be told from a constant until every
+     * file is in the model.
+     */
+    static void settleDecoratorEnums(final OOPSourceCodeModel srcModel) {
+        final Set<String> enums = new HashSet<>();
+        srcModel.components()
+                .filter(cmp -> cmp.componentType() == OOPSourceModelConstants.ComponentType.ENUM)
+                .forEach(cmp -> enums.add(cmp.uniqueName()));
+        srcModel.components().forEach(component -> component.references().stream()
+                .filter(AnnotationReference.class::isInstance)
+                .forEach(reference -> ((AnnotationReference) reference).settleEnumCandidates(enums::contains)));
     }
 
     private static Component buildFieldComponent(final Package pkg,
@@ -394,7 +473,7 @@ final class PythonModelAssembler {
                 insertReferences(component, bodyRef, false);
             }
         }
-        attachDecoratorReferences(component, method.decorators);
+        attachDecoratorReferences(component, method.decorators, method.decoratorArguments);
         return component;
     }
 
@@ -430,7 +509,7 @@ final class PythonModelAssembler {
                 insertReferences(component, bodyRef, false);
             }
         }
-        attachDecoratorReferences(component, function.decorators);
+        attachDecoratorReferences(component, function.decorators, function.decoratorArguments);
         return component;
     }
 

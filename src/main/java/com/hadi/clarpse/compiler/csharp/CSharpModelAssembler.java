@@ -1,6 +1,8 @@
 package com.hadi.clarpse.compiler.csharp;
 
 import com.hadi.clarpse.listener.ParseUtil;
+import com.hadi.clarpse.reference.AnnotationArgument;
+import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.ResolutionKind;
@@ -485,14 +487,15 @@ final class CSharpModelAssembler {
      * still recorded (unlike a base type, which is dropped when it cannot be resolved).
      */
     private static void attachAnnotationReferences(final Component component,
-                                                   final Collection<String> annotationNames,
+                                                   final Collection<CSharpModel.CSharpAttribute> attributes,
                                                    final TypeIndex typeIndex,
                                                    final CSharpModel.CSharpTypeModel ownerType) {
-        if (annotationNames == null) {
+        if (attributes == null) {
             return;
         }
         final Set<String> seen = new LinkedHashSet<>();
-        for (final String annotationName : annotationNames) {
+        for (final CSharpModel.CSharpAttribute attribute : attributes) {
+            final String annotationName = attribute.name();
             if (annotationName == null || annotationName.isBlank()) {
                 continue;
             }
@@ -509,8 +512,75 @@ final class CSharpModelAssembler {
             }
             final AnnotationReference reference = new AnnotationReference(invoked);
             reference.setResolutionKind(kind);
+            reference.setArguments(attributeArguments(attribute, typeIndex, ownerType));
             component.insertCmpRef(reference);
         }
+    }
+
+    private static Map<String, AnnotationArgument> attributeArguments(final CSharpModel.CSharpAttribute attribute,
+                                                                      final TypeIndex typeIndex,
+                                                                      final CSharpModel.CSharpTypeModel ownerType) {
+        final AnnotationArguments arguments = new AnnotationArguments();
+        for (final CSharpAttributeArguments.Argument argument : CSharpAttributeArguments.parse(attribute.arguments())) {
+            final AnnotationArgument value = attributeValue(argument.value(), typeIndex, ownerType);
+            if (argument.name() == null) {
+                arguments.unnamed(value);
+            } else {
+                arguments.named(argument.name(), value);
+            }
+        }
+        return arguments.build();
+    }
+
+    private static AnnotationArgument attributeValue(final CSharpAttributeArguments.Value value,
+                                                     final TypeIndex typeIndex,
+                                                     final CSharpModel.CSharpTypeModel ownerType) {
+        switch (value.kind()) {
+            case STRING:
+                return AnnotationArgument.literal(AnnotationArgument.Kind.STRING, value.text());
+            case NUMBER:
+                return AnnotationArgument.literal(AnnotationArgument.Kind.NUMBER, value.text());
+            case BOOLEAN:
+                return AnnotationArgument.literal(AnnotationArgument.Kind.BOOLEAN, value.text());
+            case CLASS:
+                return attributeClass(value.text(), typeIndex, ownerType);
+            case QUALIFIED:
+                return attributeEnumConstant(value.text(), typeIndex, ownerType);
+            case ARRAY:
+                return attributeArray(value, typeIndex, ownerType);
+            default:
+                return AnnotationArgument.unresolved();
+        }
+    }
+
+    private static AnnotationArgument attributeClass(final String written, final TypeIndex typeIndex,
+                                                     final CSharpModel.CSharpTypeModel ownerType) {
+        final Resolution resolved = typeIndex.resolveType(written, ownerType, null);
+        if (resolved == null) {
+            return AnnotationArgument.literal(AnnotationArgument.Kind.CLASS, written);
+        }
+        return AnnotationArgument.literal(AnnotationArgument.Kind.CLASS, resolved.name());
+    }
+
+    /** A dotted name is an enum constant only when its qualifier resolves to an enum of the repository. */
+    private static AnnotationArgument attributeEnumConstant(final String written, final TypeIndex typeIndex,
+                                                            final CSharpModel.CSharpTypeModel ownerType) {
+        final int split = written.lastIndexOf('.');
+        final Resolution owner = typeIndex.resolveType(written.substring(0, split), ownerType, null);
+        if (owner != null && typeIndex.isEnum(owner.name())) {
+            return AnnotationArgument.literal(AnnotationArgument.Kind.ENUM, written);
+        }
+        return AnnotationArgument.unresolved();
+    }
+
+    private static AnnotationArgument attributeArray(final CSharpAttributeArguments.Value value,
+                                                     final TypeIndex typeIndex,
+                                                     final CSharpModel.CSharpTypeModel ownerType) {
+        final List<AnnotationArgument> elements = new ArrayList<>();
+        for (final CSharpAttributeArguments.Value element : value.elements()) {
+            elements.add(attributeValue(element, typeIndex, ownerType));
+        }
+        return AnnotationArgument.array(elements);
     }
 
     private static void attachTypeReferences(final Component component,
@@ -753,6 +823,12 @@ final class CSharpModelAssembler {
         private final Map<String, Set<String>> typesBySimpleName = new HashMap<>();
         private final Map<String, String> memberByTypeAndName = new HashMap<>();
         private final Set<String> interfaceTypes = new LinkedHashSet<>();
+        private final Set<String> enumTypes = new LinkedHashSet<>();
+
+        /** Whether the repository declares the named type as an enum. */
+        private boolean isEnum(final String uniqueName) {
+            return enumTypes.contains(uniqueName);
+        }
 
         private TypeIndex(final List<CSharpModel.CSharpTypeModel> types) {
             for (final CSharpModel.CSharpTypeModel type : types) {
@@ -762,6 +838,9 @@ final class CSharpModelAssembler {
                 typesBySimpleName.computeIfAbsent(type.name, ignored -> new LinkedHashSet<>()).add(lookupName);
                 if ("interface".equals(type.kind)) {
                     interfaceTypes.add(type.uniqueName);
+                }
+                if ("enum".equals(type.kind)) {
+                    enumTypes.add(type.uniqueName);
                 }
                 for (final CSharpModel.CSharpMemberModel member : type.members) {
                     // A constant is a member of its type, but reading one is not a dependency on a

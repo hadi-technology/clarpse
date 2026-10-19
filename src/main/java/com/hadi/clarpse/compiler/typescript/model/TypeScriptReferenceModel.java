@@ -15,4 +15,11 @@ public class TypeScriptReferenceModel {
      */
     public boolean unresolved;
     public TypeScriptTargetModel target;
+
+    /**
+     * The arguments written on an applied decorator, in written order: empty for a decorator written
+     * without any, and {@code null} for a reference that is not a decorator or whose arguments were
+     * not read.
+     */
+    public java.util.List<TypeScriptArgumentModel> arguments;
 }

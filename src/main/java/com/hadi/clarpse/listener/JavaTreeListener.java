@@ -85,6 +85,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     private final Stack<Component> componentStack = new Stack<>();
     private final Set<String> currentImports = new HashSet<>();
     private final TypeSolver typeSolver;
+    private final JavaAnnotationArgumentReader annotationArguments;
     private final OOPSourceCodeModel srcModel;
     private final Map<String, String> currentImportsMap = new HashMap<>();
 
@@ -146,6 +147,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         this.srcModel = srcModel;
         this.file = file;
         this.typeSolver = typeSolver;
+        this.annotationArguments = new JavaAnnotationArgumentReader(typeSolver, name -> resolveType(name, true));
         this.shallow = shallow;
         if (otherLanguageTypes == null) {
             this.otherLanguageTypes = name -> false;
@@ -917,8 +919,9 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      */
     private void recordAnnotations(final NodeList<AnnotationExpr> annotations, final Component cmp) {
         for (final AnnotationExpr annotation : annotations) {
-            ParseUtil.insertCmpRef(cmp, new AnnotationReference(resolveAnnotationName(annotation)),
-                    this.componentStack);
+            final AnnotationReference reference = new AnnotationReference(resolveAnnotationName(annotation));
+            reference.setArguments(annotationArguments.read(annotation));
+            ParseUtil.insertCmpRef(cmp, reference, this.componentStack);
         }
     }
 

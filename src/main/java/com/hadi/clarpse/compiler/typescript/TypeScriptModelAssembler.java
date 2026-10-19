@@ -1,11 +1,15 @@
 package com.hadi.clarpse.compiler.typescript;
 
 import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.typescript.model.TypeScriptArgumentModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptComponentModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptFileModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptReferenceModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptTargetModel;
+import com.hadi.clarpse.compiler.typescript.model.TypeScriptValueModel;
 import com.hadi.clarpse.listener.ParseUtil;
+import com.hadi.clarpse.reference.AnnotationArgument;
+import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.ResolutionKind;
@@ -342,9 +346,65 @@ final class TypeScriptModelAssembler {
             return new TypeImplementationReference(invoked);
         }
         if ("annotation".equals(reference.kind)) {
-            return new AnnotationReference(invoked);
+            final AnnotationReference annotation = new AnnotationReference(invoked);
+            if (reference.arguments != null) {
+                annotation.setArguments(decoratorArguments(reference.arguments, repoRoot));
+            }
+            return annotation;
         }
         return new SimpleTypeReference(invoked);
+    }
+
+    private static java.util.Map<String, AnnotationArgument> decoratorArguments(
+            final java.util.List<TypeScriptArgumentModel> arguments, final String repoRoot) {
+        final AnnotationArguments collected = new AnnotationArguments();
+        for (final TypeScriptArgumentModel argument : arguments) {
+            final AnnotationArgument value = decoratorValue(argument.value, repoRoot);
+            if (argument.name == null) {
+                collected.unnamed(value);
+            } else {
+                collected.named(argument.name, value);
+            }
+        }
+        return collected.build();
+    }
+
+    private static AnnotationArgument decoratorValue(final TypeScriptValueModel value, final String repoRoot) {
+        if (value == null || value.kind == null) {
+            return AnnotationArgument.unresolved();
+        }
+        switch (value.kind) {
+            case "string":
+                return AnnotationArgument.literal(AnnotationArgument.Kind.STRING, value.text);
+            case "number":
+                return AnnotationArgument.literal(AnnotationArgument.Kind.NUMBER, value.text);
+            case "boolean":
+                return AnnotationArgument.literal(AnnotationArgument.Kind.BOOLEAN, value.text);
+            case "enum":
+                return AnnotationArgument.literal(AnnotationArgument.Kind.ENUM, value.text);
+            case "class":
+                return decoratorClass(value, repoRoot);
+            case "array":
+                return decoratorArray(value, repoRoot);
+            default:
+                return AnnotationArgument.unresolved();
+        }
+    }
+
+    private static AnnotationArgument decoratorClass(final TypeScriptValueModel value, final String repoRoot) {
+        final String resolved = resolveUniqueName(repoRoot, value.target);
+        if (resolved == null) {
+            return AnnotationArgument.literal(AnnotationArgument.Kind.CLASS, value.text);
+        }
+        return AnnotationArgument.literal(AnnotationArgument.Kind.CLASS, resolved);
+    }
+
+    private static AnnotationArgument decoratorArray(final TypeScriptValueModel value, final String repoRoot) {
+        final java.util.List<AnnotationArgument> elements = new java.util.ArrayList<>();
+        for (final TypeScriptValueModel element : value.elements) {
+            elements.add(decoratorValue(element, repoRoot));
+        }
+        return AnnotationArgument.array(elements);
     }
 
     private static String resolveInvokedComponent(final TypeScriptReferenceModel reference,

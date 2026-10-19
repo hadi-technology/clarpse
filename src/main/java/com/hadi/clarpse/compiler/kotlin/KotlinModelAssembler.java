@@ -1,5 +1,8 @@
 package com.hadi.clarpse.compiler.kotlin;
 
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationArgument;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationUse;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationValue;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinFileModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinImport;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinMemberModel;
@@ -12,6 +15,8 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeUsage;
 import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Resolution;
 import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Scope;
 import com.hadi.clarpse.listener.ParseUtil;
+import com.hadi.clarpse.reference.AnnotationArgument;
+import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.ResolutionKind;
@@ -29,6 +34,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.Stack;
@@ -356,17 +362,77 @@ final class KotlinModelAssembler {
         return kind == TypeKind.CLASS || kind == TypeKind.ENUM;
     }
 
-    private void addAnnotationReferences(final Component component, final List<String> annotations,
+    private void addAnnotationReferences(final Component component, final List<KotlinAnnotationUse> annotations,
                                          final Scope scope) {
-        for (final String annotation : annotations) {
-            final Resolution resolved = resolver.resolve(annotation, scope, false);
+        for (final KotlinAnnotationUse annotation : annotations) {
+            final Resolution resolved = resolver.resolve(annotation.name(), scope, false);
             if (resolved == null) {
                 continue;
             }
             final AnnotationReference reference = new AnnotationReference(resolved.name());
             reference.setResolutionKind(resolved.kind());
+            reference.setArguments(annotationArguments(annotation, scope));
             ParseUtil.insertCmpRef(component, reference, stack);
         }
+    }
+
+    private Map<String, AnnotationArgument> annotationArguments(final KotlinAnnotationUse annotation,
+                                                                final Scope scope) {
+        final AnnotationArguments arguments = new AnnotationArguments();
+        for (final KotlinAnnotationArgument argument : annotation.arguments()) {
+            final AnnotationArgument value = annotationValue(argument.value(), scope);
+            if (argument.name() == null) {
+                arguments.unnamed(value);
+            } else {
+                arguments.named(argument.name(), value);
+            }
+        }
+        return arguments.build();
+    }
+
+    private AnnotationArgument annotationValue(final KotlinAnnotationValue value, final Scope scope) {
+        switch (value.kind()) {
+            case STRING:
+                return AnnotationArgument.literal(AnnotationArgument.Kind.STRING, value.text());
+            case NUMBER:
+                return AnnotationArgument.literal(AnnotationArgument.Kind.NUMBER, value.text());
+            case BOOLEAN:
+                return AnnotationArgument.literal(AnnotationArgument.Kind.BOOLEAN, value.text());
+            case CLASS:
+                return classLiteral(value.text(), scope);
+            case QUALIFIED:
+                return enumConstant(value.text(), scope);
+            case ARRAY:
+                return annotationArray(value, scope);
+            default:
+                return AnnotationArgument.unresolved();
+        }
+    }
+
+    private AnnotationArgument classLiteral(final String written, final Scope scope) {
+        final Resolution resolved = resolver.resolve(written, scope, false);
+        if (resolved == null) {
+            return AnnotationArgument.literal(AnnotationArgument.Kind.CLASS, written);
+        }
+        return AnnotationArgument.literal(AnnotationArgument.Kind.CLASS, resolved.name());
+    }
+
+    private AnnotationArgument annotationArray(final KotlinAnnotationValue value, final Scope scope) {
+        final List<AnnotationArgument> elements = new ArrayList<>();
+        for (final KotlinAnnotationValue element : value.elements()) {
+            elements.add(annotationValue(element, scope));
+        }
+        return AnnotationArgument.array(elements);
+    }
+
+    /** A dotted name is an enum constant only when its qualifier resolves to an enum of the repository. */
+    private AnnotationArgument enumConstant(final String written, final Scope scope) {
+        final int split = written.lastIndexOf('.');
+        final Resolution owner = resolver.resolve(written.substring(0, split), scope, false);
+        if (owner != null && resolver.index().kotlinKind(owner.name()) == TypeKind.ENUM) {
+            return AnnotationArgument.literal(AnnotationArgument.Kind.ENUM, written);
+        }
+        return AnnotationArgument.unresolved();
     }
 
     private void addTypeReferences(final Component component, final Collection<TypeUsage> usages, final Scope scope) {

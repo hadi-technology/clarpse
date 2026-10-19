@@ -1170,10 +1170,10 @@ function decoratorTypeName(expression) {
 }
 
 // An applied decorator (`@Component`, `@Injectable`) names a type the way `extends`/`implements` do,
-// so it is emitted as an "annotation"-kind reference rather than a separate field. The decorator's
-// call arguments are not retained -- only the decorator type's name. Decorators live outside
+// so it is emitted as an "annotation"-kind reference rather than a separate field. Its call
+// arguments are read as `arguments`, see readDecoratorArguments. Decorators live outside
 // `node.modifiers` in TypeScript 5, so they are read through `getDecorators`.
-function buildDecoratorReferences(node) {
+function buildDecoratorReferences(node, checker) {
   const references = [];
   if (!node || typeof state.ts.canHaveDecorators !== "function" || !state.ts.canHaveDecorators(node)) {
     return references;
@@ -1182,10 +1182,129 @@ function buildDecoratorReferences(node) {
   for (const decorator of decorators) {
     const name = decoratorTypeName(decorator.expression);
     if (name) {
-      references.push({ kind: "annotation", external: true, displayName: name });
+      references.push({
+        kind: "annotation",
+        external: true,
+        displayName: name,
+        arguments: readDecoratorArguments(decorator.expression, checker)
+      });
     }
   }
   return references;
+}
+
+// The arguments written on a decorator, in written order: an empty list for a decorator written
+// without a call or with an empty one, null when its arguments cannot be read (a call whose callee
+// is itself a call). A call whose only argument is an object literal of plain `name: literal`
+// properties contributes those properties as its arguments, which is how option objects are
+// written; any other object literal is an argument that is present and not read.
+function readDecoratorArguments(expression, checker) {
+  const ts = state.ts;
+  if (!ts.isCallExpression(expression)) {
+    return ts.isIdentifier(expression) || ts.isPropertyAccessExpression(expression) ? [] : null;
+  }
+  if (ts.isCallExpression(expression.expression)) {
+    return null;
+  }
+  const args = expression.arguments || [];
+  if (args.length === 1 && ts.isObjectLiteralExpression(args[0])) {
+    const properties = readOptionProperties(args[0], checker);
+    if (properties) {
+      return properties;
+    }
+  }
+  return args.map(argument => ({ name: null, value: readLiteralArgument(argument, checker) }));
+}
+
+function readOptionProperties(objectLiteral, checker) {
+  const ts = state.ts;
+  const properties = [];
+  for (const property of objectLiteral.properties) {
+    if (!ts.isPropertyAssignment(property)) {
+      return null;
+    }
+    const key = property.name;
+    let name = null;
+    if (ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)) {
+      name = key.text;
+    }
+    if (name === null) {
+      return null;
+    }
+    properties.push({ name, value: readLiteralArgument(property.initializer, checker) });
+  }
+  return properties;
+}
+
+function readLiteralArgument(node, checker) {
+  const ts = state.ts;
+  while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)
+    || ts.isNonNullExpression(node)) {
+    node = node.expression;
+  }
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return { kind: "string", text: node.text };
+  }
+  if (ts.isNumericLiteral(node)) {
+    return { kind: "number", text: node.text };
+  }
+  if (node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword) {
+    return { kind: "boolean", text: node.kind === ts.SyntaxKind.TrueKeyword ? "true" : "false" };
+  }
+  if (ts.isPrefixUnaryExpression(node) && ts.isNumericLiteral(node.operand)) {
+    if (node.operator === ts.SyntaxKind.MinusToken) {
+      return { kind: "number", text: "-" + node.operand.text };
+    }
+    if (node.operator === ts.SyntaxKind.PlusToken) {
+      return { kind: "number", text: node.operand.text };
+    }
+  }
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = readLiteralArgument(node.left, checker);
+    const right = readLiteralArgument(node.right, checker);
+    if (left.kind === "string" && right.kind === "string") {
+      return { kind: "string", text: left.text + right.text };
+    }
+    return { kind: "other" };
+  }
+  if (ts.isArrayLiteralExpression(node)) {
+    return { kind: "array", elements: node.elements.map(element => readLiteralArgument(element, checker)) };
+  }
+  if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node)) {
+    return readNamedArgument(node, checker);
+  }
+  return { kind: "other" };
+}
+
+// A name used as an argument is an enum member or a class when the type checker says so, and is not
+// read otherwise: a constant, a variable and a function say nothing about their value here.
+function readNamedArgument(node, checker) {
+  const ts = state.ts;
+  let symbol;
+  try {
+    symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(node) ? node.name : node);
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
+      symbol = checker.getAliasedSymbol(symbol);
+    }
+  } catch (err) {
+    return { kind: "other" };
+  }
+  const declaration = symbol && symbol.declarations && symbol.declarations.length ? symbol.declarations[0] : null;
+  if (!declaration) {
+    return { kind: "other" };
+  }
+  const text = node.getText().replace(/\s+/g, "");
+  if (ts.isEnumMember(declaration)) {
+    return { kind: "enum", text };
+  }
+  if (ts.isClassDeclaration(declaration) && declaration.name) {
+    const fileName = declaration.getSourceFile().fileName;
+    const target = fileName && isInternalFile(fileName)
+      ? { filePath: path.resolve(fileName), symbolName: declaration.name.text }
+      : null;
+    return { kind: "class", text: declaration.name.text, target };
+  }
+  return { kind: "other" };
 }
 
 /**
@@ -1311,6 +1430,15 @@ function buildTopLevelVariableModel(declaration, statement, checker) {
     return null;
   }
   model.kind = "moduleField";
+  if (declaration.initializer) {
+    // What the initializer calls or constructs, as for a function body, whether the binding holds
+    // a function or any other value.
+    model.references = mergeReferences(
+      model.references,
+      collectBodyDetails(declaration.initializer, checker).references,
+      collectValueReferences(declaration.initializer, checker, declaration)
+    );
+  }
   if (statement) {
     model.modifiers = collectModifiers(state.ts, statement).concat(model.modifiers || []);
     if (statement.declarationList) {
@@ -1326,6 +1454,92 @@ function buildTopLevelVariableModel(declaration, statement, checker) {
   return model;
 }
 
+// Whether a declaration is one this program models as a component of its own: a class, an
+// enum, a function or a binding declared at the top level of a module.
+function isModelledValueDeclaration(declaration) {
+  const ts = state.ts;
+  if (!declaration || !declaration.parent) {
+    return false;
+  }
+  if (ts.isClassDeclaration(declaration) || ts.isEnumDeclaration(declaration)) {
+    return !!declaration.name && ts.isSourceFile(declaration.parent);
+  }
+  if (ts.isFunctionDeclaration(declaration)) {
+    return !!declaration.name && ts.isSourceFile(declaration.parent);
+  }
+  if (ts.isVariableDeclaration(declaration)) {
+    const list = declaration.parent;
+    const statement = list && list.parent;
+    return ts.isIdentifier(declaration.name)
+      && !!statement
+      && ts.isVariableStatement(statement)
+      && !!statement.parent
+      && ts.isSourceFile(statement.parent);
+  }
+  return false;
+}
+
+// The references an initializer makes by naming a modelled declaration as a value: a class or
+// function placed in an array or object literal, a constant used in an expression. A name that
+// resolves to a local, a parameter, a member, or anything outside the program is not recorded.
+function collectValueReferences(initializer, checker, owner) {
+  const references = [];
+  if (!initializer || state.shallowBody) {
+    return references;
+  }
+  const ts = state.ts;
+  function visit(node) {
+    if (ts.isTypeNode(node)) {
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      const reference = buildValueReference(node, checker, owner);
+      if (reference) {
+        references.push(reference);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(initializer);
+  return references;
+}
+
+function buildValueReference(identifier, checker, owner) {
+  const ts = state.ts;
+  const parent = identifier.parent;
+  if (parent && ts.isPropertyAccessExpression(parent) && parent.name === identifier) {
+    return null;
+  }
+  let symbol;
+  try {
+    symbol = parent && ts.isShorthandPropertyAssignment(parent) && parent.name === identifier
+      ? checker.getShorthandAssignmentValueSymbol(parent)
+      : checker.getSymbolAtLocation(identifier);
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
+      symbol = checker.getAliasedSymbol(symbol);
+    }
+  } catch (err) {
+    return null;
+  }
+  if (!symbol || !symbol.declarations || !symbol.declarations.length) {
+    return null;
+  }
+  const declaration = symbol.declarations.find(isModelledValueDeclaration);
+  if (!declaration || declaration === owner) {
+    return null;
+  }
+  const fileName = declaration.getSourceFile().fileName;
+  const name = declaration.name.getText();
+  if (!fileName || !name || isInternalSymbolName(name) || !isInternalFile(fileName)) {
+    return null;
+  }
+  return {
+    kind: "type",
+    external: false,
+    target: { filePath: path.resolve(fileName), symbolName: name }
+  };
+}
+
 function collectBodyDetails(body, checker) {
   const references = [];
   const locals = [];
@@ -1334,11 +1548,13 @@ function collectBodyDetails(body, checker) {
     // its program does not hold, so they are not read at all.
     return { references, locals };
   }
+  // A function expression or arrow function written inside the body is part of it: what it calls
+  // or constructs is a reference of the declaration that holds it. The variables it declares are
+  // its own, not members of that declaration.
+  let nestedDepth = 0;
   function visit(node) {
-    if (state.ts.isFunctionLike(node) && node !== body) {
-      return;
-    }
-    if (state.ts.isVariableDeclaration(node)) {
+    const nested = state.ts.isFunctionLike(node) && node !== body;
+    if (!nested && nestedDepth === 0 && state.ts.isVariableDeclaration(node)) {
       const localModel = buildLocalVariableModel(node, checker);
       if (localModel) {
         locals.push(localModel);
@@ -1351,7 +1567,13 @@ function collectBodyDetails(body, checker) {
       const newType = checker.getTypeAtLocation(node);
       references.push(...buildReferenceModelsFromType(newType, checker, "type"));
     }
+    if (nested) {
+      nestedDepth += 1;
+    }
     state.ts.forEachChild(node, visit);
+    if (nested) {
+      nestedDepth -= 1;
+    }
   }
   if (body) {
     visit(body);
@@ -1424,7 +1646,9 @@ function buildFieldModel(node, checker) {
     jsDoc: getJsDoc(node),
     references: mergeReferences(
       buildReferenceModelsFromType(fieldType, checker, "type"),
-      buildDecoratorReferences(node)
+      node.initializer ? collectBodyDetails(node.initializer, checker).references : [],
+      collectValueReferences(node.initializer, checker, null),
+      buildDecoratorReferences(node, checker)
     )
   };
 }
@@ -1450,7 +1674,7 @@ function buildMethodModel(node, checker, kindLabel) {
     references: mergeReferences(
       returnTypeObject ? buildReferenceModelsFromType(returnTypeObject, checker, "type") : [],
       bodyDetails.references,
-      buildDecoratorReferences(node)
+      buildDecoratorReferences(node, checker)
     )
   };
 }
@@ -1471,7 +1695,7 @@ function buildAccessorModel(node, checker, accessorKind) {
     jsDoc: getJsDoc(node),
     cyclo: computeCyclo(state.ts, node),
     members: buildParameterModels(node.parameters || [], checker).concat(bodyDetails.locals),
-    references: mergeReferences(bodyDetails.references, buildDecoratorReferences(node))
+    references: mergeReferences(bodyDetails.references, buildDecoratorReferences(node, checker))
   };
 }
 
@@ -1696,7 +1920,7 @@ function buildClassModel(node, checker, unresolvedBases) {
     members,
     references: mergeReferences(
       buildHeritageReferences(node, checker),
-      buildDecoratorReferences(node)
+      buildDecoratorReferences(node, checker)
     )
   };
 }
