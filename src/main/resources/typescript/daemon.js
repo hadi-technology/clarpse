@@ -1311,6 +1311,14 @@ function buildTopLevelVariableModel(declaration, statement, checker) {
     return null;
   }
   model.kind = "moduleField";
+  if (declaration.initializer) {
+    // What the initializer calls or constructs, as for a function body, whether the binding holds
+    // a function or any other value.
+    model.references = mergeReferences(
+      model.references,
+      collectBodyDetails(declaration.initializer, checker).references
+    );
+  }
   if (statement) {
     model.modifiers = collectModifiers(state.ts, statement).concat(model.modifiers || []);
     if (statement.declarationList) {
@@ -1334,11 +1342,13 @@ function collectBodyDetails(body, checker) {
     // its program does not hold, so they are not read at all.
     return { references, locals };
   }
+  // A function expression or arrow function written inside the body is part of it: what it calls
+  // or constructs is a reference of the declaration that holds it. The variables it declares are
+  // its own, not members of that declaration.
+  let nestedDepth = 0;
   function visit(node) {
-    if (state.ts.isFunctionLike(node) && node !== body) {
-      return;
-    }
-    if (state.ts.isVariableDeclaration(node)) {
+    const nested = state.ts.isFunctionLike(node) && node !== body;
+    if (!nested && nestedDepth === 0 && state.ts.isVariableDeclaration(node)) {
       const localModel = buildLocalVariableModel(node, checker);
       if (localModel) {
         locals.push(localModel);
@@ -1351,7 +1361,13 @@ function collectBodyDetails(body, checker) {
       const newType = checker.getTypeAtLocation(node);
       references.push(...buildReferenceModelsFromType(newType, checker, "type"));
     }
+    if (nested) {
+      nestedDepth += 1;
+    }
     state.ts.forEachChild(node, visit);
+    if (nested) {
+      nestedDepth -= 1;
+    }
   }
   if (body) {
     visit(body);
@@ -1424,6 +1440,7 @@ function buildFieldModel(node, checker) {
     jsDoc: getJsDoc(node),
     references: mergeReferences(
       buildReferenceModelsFromType(fieldType, checker, "type"),
+      node.initializer ? collectBodyDetails(node.initializer, checker).references : [],
       buildDecoratorReferences(node)
     )
   };
