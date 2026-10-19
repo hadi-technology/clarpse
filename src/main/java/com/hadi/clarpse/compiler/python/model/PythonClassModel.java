@@ -16,6 +16,11 @@ public class PythonClassModel {
     public int implementationHash;
     /** Names of the decorators ({@code @dataclass}) applied to this class. */
     public List<String> decorators = new ArrayList<>();
+    /**
+     * The arguments written on each decorator, in the order of {@link #decorators}: {@code null}
+     * where the decorator's arguments could not be read, empty where it was written without any.
+     */
+    public List<List<PythonDecoratorArgumentModel>> decoratorArguments = new ArrayList<>();
     public List<PythonTypeRefModel> bases = new ArrayList<>();
     public List<PythonMethodModel> methods = new ArrayList<>();
     public List<PythonFieldModel> fields = new ArrayList<>();

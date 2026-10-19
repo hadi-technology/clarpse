@@ -1806,6 +1806,299 @@ function extractDecoratorNames(functionNode, fileText) {
   return names;
 }
 
+/**
+ * The arguments written on each decorator extractDecoratorNames reports, in the same order: for
+ * each, null when the decorator is not a plain (dotted) name optionally called once, so its
+ * arguments cannot be read, and otherwise the list of its arguments, empty when it has none.
+ */
+function extractDecoratorArguments(functionNode, ctx) {
+  const decorators = getNodeProp(functionNode, ['decorators', 'decoratorExpressions', 'decoratorNodes']);
+  if (!Array.isArray(decorators) || !decorators.length) {
+    return [];
+  }
+  const uses = [];
+  for (const decorator of decorators) {
+    const raw = textForNode(decorator, ctx.fileText) || nameFromNode(decorator);
+    if (!normalizeDecoratorName(raw)) {
+      continue;
+    }
+    uses.push(readDecoratorArguments(raw, ctx));
+  }
+  return uses;
+}
+
+const PYTHON_DOTTED_PATH = /^[A-Za-z_][A-Za-z0-9_]*(\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*$/;
+
+function readDecoratorArguments(rawDecoratorText, ctx) {
+  let text = rawDecoratorText.trim();
+  if (text.startsWith('@')) {
+    text = text.slice(1).trim();
+  }
+  const open = text.indexOf('(');
+  if (open < 0) {
+    return PYTHON_DOTTED_PATH.test(text) ? [] : null;
+  }
+  if (!PYTHON_DOTTED_PATH.test(text.slice(0, open).trim())) {
+    return null;
+  }
+  const close = matchingBracket(text, open);
+  if (close < 0 || text.slice(close + 1).trim()) {
+    return null;
+  }
+  const args = [];
+  for (const part of splitExpressionList(text.slice(open + 1, close), ',')) {
+    const argument = part.trim();
+    if (!argument) {
+      continue;
+    }
+    const keyword = /^([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)\s*([\s\S]*)$/.exec(argument);
+    if (keyword) {
+      args.push({ name: keyword[1], value: readLiteralValue(keyword[2].trim(), ctx) });
+    } else if (argument.startsWith('*')) {
+      args.push({ name: null, value: { kind: 'other' } });
+    } else {
+      args.push({ name: null, value: readLiteralValue(argument, ctx) });
+    }
+  }
+  return args;
+}
+
+/** The index of the bracket closing the one at `open`, ignoring strings, or -1. */
+function matchingBracket(text, open) {
+  let depth = 0;
+  for (let i = open; i < text.length; i += 1) {
+    const skipped = skipStringLiteral(text, i);
+    if (skipped < 0) {
+      return -1;
+    }
+    i = skipped;
+    const ch = text[i];
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth += 1;
+    } else if (ch === ')' || ch === ']' || ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+/**
+ * If a string literal starts at `at`, the index of its last character, -1 for one that is never
+ * closed; any other position is returned unchanged.
+ */
+function skipStringLiteral(text, at) {
+  let i = at;
+  if (i > 0 && /[A-Za-z0-9_]/.test(text[i - 1])) {
+    return at;
+  }
+  while (i < text.length && i - at < 2 && /[rRbBuUfF]/.test(text[i])) {
+    i += 1;
+  }
+  const quote = text[i];
+  if (quote !== '"' && quote !== "'") {
+    return at;
+  }
+  const triple = text.startsWith(quote.repeat(3), i);
+  const delimiter = triple ? quote.repeat(3) : quote;
+  let j = i + delimiter.length;
+  while (j < text.length) {
+    if (text[j] === '\\') {
+      j += 2;
+      continue;
+    }
+    if (text.startsWith(delimiter, j)) {
+      return j + delimiter.length - 1;
+    }
+    j += 1;
+  }
+  return -1;
+}
+
+/** Splits at a separator outside every string and bracket. */
+function splitExpressionList(text, separator) {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const skipped = skipStringLiteral(text, i);
+    if (skipped < 0) {
+      break;
+    }
+    i = skipped;
+    const ch = text[i];
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth += 1;
+    } else if (ch === ')' || ch === ']' || ch === '}') {
+      depth -= 1;
+    } else if (ch === separator && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+const PYTHON_NUMBER = /^[+-]?(0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|(\d[\d_]*\.?[\d_]*|\.\d[\d_]*)([eE][+-]?\d+)?)$/;
+const PYTHON_DOTTED_NAME = /^[A-Za-z_][A-Za-z0-9_]*(\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)+$/;
+const PYTHON_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * An argument's value as written, when it is a literal: a string (implicit or `+` concatenation
+ * included), a number, a boolean, a list or tuple of these, a class the repository declares, or a
+ * dotted name, whose qualifier is resolved so that the Java side can tell an enum member. Any other
+ * expression is `other`: present, and not read.
+ */
+function readLiteralValue(text, ctx) {
+  const value = text.trim();
+  if (!value) {
+    return { kind: 'other' };
+  }
+  if (value.startsWith('(') && matchingBracket(value, 0) === value.length - 1) {
+    const inner = value.slice(1, -1).trim();
+    const items = splitExpressionList(inner, ',');
+    if (!inner || items.length > 1) {
+      return arrayValue(items, ctx);
+    }
+    return readLiteralValue(inner, ctx);
+  }
+  if (value.startsWith('[') && matchingBracket(value, 0) === value.length - 1) {
+    return arrayValue(splitExpressionList(value.slice(1, -1), ','), ctx);
+  }
+  const string = readStringExpression(value);
+  if (string !== null) {
+    return { kind: 'string', text: string };
+  }
+  if (value === 'True' || value === 'False') {
+    return { kind: 'boolean', text: value.toLowerCase() };
+  }
+  if (PYTHON_NUMBER.test(value)) {
+    return { kind: 'number', text: value.replace(/_/g, '').replace(/^\+/, '') };
+  }
+  const signed = /^([+-])\s*(\S[\s\S]*)$/.exec(value);
+  if (signed && PYTHON_NUMBER.test(signed[2].replace(/\s+/g, ''))) {
+    return { kind: 'number', text: (signed[1] === '-' ? '-' : '') + signed[2].replace(/_/g, '').replace(/\s+/g, '') };
+  }
+  if (PYTHON_NAME.test(value)) {
+    const target = resolveCandidate(value, ctx);
+    return target ? { kind: 'class', text: value, target } : { kind: 'other' };
+  }
+  if (PYTHON_DOTTED_NAME.test(value)) {
+    const compact = value.replace(/\s+/g, '');
+    const qualifier = compact.slice(0, compact.lastIndexOf('.'));
+    return { kind: 'qualified', text: compact, target: resolveCandidate(qualifier, ctx) || null };
+  }
+  return { kind: 'other' };
+}
+
+function arrayValue(items, ctx) {
+  const elements = [];
+  for (const item of items) {
+    if (item.trim()) {
+      elements.push(readLiteralValue(item, ctx));
+    }
+  }
+  return { kind: 'array', elements };
+}
+
+/**
+ * The value of one or more adjacent or `+`-joined plain string literals that make up the whole
+ * text, or null. A byte string, an f-string, or anything else in the sequence makes it null.
+ */
+function readStringExpression(text) {
+  let i = 0;
+  let result = '';
+  let count = 0;
+  while (i < text.length) {
+    while (i < text.length && /\s/.test(text[i])) {
+      i += 1;
+    }
+    if (i >= text.length) {
+      break;
+    }
+    if (text[i] === '+' && count > 0) {
+      i += 1;
+      continue;
+    }
+    const end = skipStringLiteral(text, i);
+    if (end < 0 || end === i) {
+      return null;
+    }
+    const decoded = decodePythonString(text.slice(i, end + 1));
+    if (decoded === null) {
+      return null;
+    }
+    result += decoded;
+    count += 1;
+    i = end + 1;
+  }
+  return count > 0 ? result : null;
+}
+
+function decodePythonString(literal) {
+  const match = /^([A-Za-z]{0,2})('''|"""|'|")([\s\S]*)$/.exec(literal);
+  if (!match) {
+    return null;
+  }
+  const prefix = match[1].toLowerCase();
+  if (prefix !== '' && prefix !== 'r' && prefix !== 'u') {
+    return null;
+  }
+  const delimiter = match[2];
+  const rest = match[3];
+  if (rest.length < delimiter.length || !rest.endsWith(delimiter)) {
+    return null;
+  }
+  const body = rest.slice(0, rest.length - delimiter.length);
+  if (prefix === 'r') {
+    return body;
+  }
+  let out = '';
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (ch !== '\\') {
+      out += ch;
+      continue;
+    }
+    const next = body[i + 1];
+    i += 1;
+    switch (next) {
+      case 'n': out += '\n'; break;
+      case 't': out += '\t'; break;
+      case 'r': out += '\r'; break;
+      case '0': out += '\0'; break;
+      case '\\': out += '\\'; break;
+      case "'": out += "'"; break;
+      case '"': out += '"'; break;
+      case '\n': break;
+      case 'x': {
+        const hex = body.slice(i + 1, i + 3);
+        if (!/^[0-9a-fA-F]{2}$/.test(hex)) {
+          return null;
+        }
+        out += String.fromCharCode(parseInt(hex, 16));
+        i += 2;
+        break;
+      }
+      case 'u': {
+        const hex = body.slice(i + 1, i + 5);
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+          return null;
+        }
+        out += String.fromCharCode(parseInt(hex, 16));
+        i += 4;
+        break;
+      }
+      default:
+        out += '\\' + (next === undefined ? '' : next);
+    }
+  }
+  return out;
+}
+
 function getNodeProp(node, keys) {
   if (!node || !node.d) {
     return null;
@@ -2583,6 +2876,7 @@ function extractMethod(methodNode, ctx, parseNodeType) {
     return null;
   }
   const decorators = extractDecoratorNames(methodNode, ctx.fileText);
+  const decoratorArguments = extractDecoratorArguments(methodNode, ctx);
   const isClassMethod = decorators.includes('classmethod');
   const isStaticMethod = decorators.includes('staticmethod');
   const comment = extractSuiteDocString(methodNode.d ? methodNode.d.suite : null, ctx.fileText);
@@ -2610,6 +2904,7 @@ function extractMethod(methodNode, ctx, parseNodeType) {
     classMethod: isClassMethod,
     staticMethod: isStaticMethod,
     decorators,
+    decoratorArguments,
     params,
     locals: collectLocalVariables(methodNode, bodyCtx, parseNodeType),
     return: returnRef,
@@ -2624,6 +2919,7 @@ function extractFunction(functionNode, ctx, parseNodeType) {
   }
   const comment = extractSuiteDocString(functionNode.d ? functionNode.d.suite : null, ctx.fileText);
   const decorators = extractDecoratorNames(functionNode, ctx.fileText);
+  const decoratorArguments = extractDecoratorArguments(functionNode, ctx);
   const params = extractParams(functionNode, ctx, parseNodeType);
   const returnNode = getNodeProp(functionNode, ['returnTypeAnnotation', 'returnType', 'returnAnnotation']);
   const returnRawText = returnNode ? textForNode(returnNode, ctx.fileText) : 'Any';
@@ -2651,6 +2947,7 @@ function extractFunction(functionNode, ctx, parseNodeType) {
     classMethod: false,
     staticMethod: false,
     decorators,
+    decoratorArguments,
     params,
     locals: collectLocalVariables(functionNode, bodyCtx, parseNodeType),
     return: returnRef,
@@ -2836,6 +3133,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
     const classUniqueName = resolveClassUniqueName(className, ctx, parentUniqueName);
     const classComment = extractSuiteDocString(statement.d ? statement.d.suite : null, ctx.fileText);
     const classDecorators = extractDecoratorNames(statement, ctx.fileText);
+    const classDecoratorArguments = extractDecoratorArguments(statement, ctx);
     let baseExprs = [];
     if (statement.d && Array.isArray(statement.d.baseClassExpressions)) {
       baseExprs = statement.d.baseClassExpressions;
@@ -2898,6 +3196,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       comment: classComment,
       implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
       decorators: classDecorators,
+      decoratorArguments: classDecoratorArguments,
       bases,
       methods,
       fields,

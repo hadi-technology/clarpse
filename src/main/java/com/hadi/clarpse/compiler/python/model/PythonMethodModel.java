@@ -20,6 +20,11 @@ public class PythonMethodModel {
     public boolean staticMethod;
     /** Names of the decorators ({@code @app.route}) applied to this method or function. */
     public List<String> decorators = new ArrayList<>();
+    /**
+     * The arguments written on each decorator, in the order of {@link #decorators}: {@code null}
+     * where the decorator's arguments could not be read, empty where it was written without any.
+     */
+    public List<List<PythonDecoratorArgumentModel>> decoratorArguments = new ArrayList<>();
     public List<PythonParamModel> params = new ArrayList<>();
 
     /**

@@ -75,6 +75,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         srcModel.merge(parseResults.model);
         compileFailures.addAll(parseResults.failures);
         PythonModelAssembler.resolveFunctionReferences(srcModel);
+        PythonModelAssembler.settleDecoratorEnums(srcModel);
         CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(OOPSourceModelConstants.ComponentType.CLASS));
         CompilerSupport.classifyReferences(srcModel);
         return new CompileResult(srcModel, compileFailures);
@@ -178,6 +179,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
                 srcModel.merge(modelInSession(selection.modelled(), persistDir, compileFailures));
             }
             PythonModelAssembler.resolveFunctionReferences(srcModel);
+            PythonModelAssembler.settleDecoratorEnums(srcModel);
             CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(OOPSourceModelConstants.ComponentType.CLASS));
             CompilerSupport.classifyReferences(srcModel,
                     reference -> index.fileDeclaring(reference.invokedComponent()) != null);

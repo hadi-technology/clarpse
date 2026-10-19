@@ -117,6 +117,31 @@ final class KotlinModel {
         }
     }
 
+    /** An annotation applied to a declaration: its type as written, and the arguments written on it. */
+    record KotlinAnnotationUse(String name, List<KotlinAnnotationArgument> arguments) {
+    }
+
+    /** One argument of an applied annotation; the name is null when it was written without one. */
+    record KotlinAnnotationArgument(String name, KotlinAnnotationValue value) {
+    }
+
+    /** What kind of expression an annotation argument was written as. */
+    enum KotlinAnnotationValueKind {
+        STRING, NUMBER, BOOLEAN, CLASS,
+        /** A dotted name, which is an enum constant when its qualifier is an enum. */
+        QUALIFIED,
+        ARRAY,
+        /** Any other expression. */
+        OTHER
+    }
+
+    /**
+     * An annotation argument as written: for a literal its value, for a class literal or dotted name
+     * its text, for an array its elements.
+     */
+    record KotlinAnnotationValue(KotlinAnnotationValueKind kind, String text, List<KotlinAnnotationValue> elements) {
+    }
+
     /** A class, interface, object, enum class or annotation class. */
     static final class KotlinTypeModel {
         TypeKind kind;
@@ -127,7 +152,7 @@ final class KotlinModel {
         int startOffset;
         boolean companion;
         final List<String> modifiers = new ArrayList<>();
-        final List<String> annotations = new ArrayList<>();
+        final List<KotlinAnnotationUse> annotations = new ArrayList<>();
         final List<KotlinSuperType> superTypes = new ArrayList<>();
         /**
          * Types the declaration names outside its members: type parameter bounds and constraints,
@@ -154,7 +179,7 @@ final class KotlinModel {
         int startOffset;
         int cyclo = 1;
         final List<String> modifiers = new ArrayList<>();
-        final List<String> annotations = new ArrayList<>();
+        final List<KotlinAnnotationUse> annotations = new ArrayList<>();
         final List<KotlinParameterModel> parameters = new ArrayList<>();
         /** The local variables a function or constructor body declares. */
         final List<KotlinMemberModel> locals = new ArrayList<>();

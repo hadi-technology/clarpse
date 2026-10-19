@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.TypeReferences;
@@ -107,7 +108,7 @@ public final class Component implements Serializable {
         this.codeHash = component.codeHash;
         this.cyclo = component.cyclo;
         this.boundary = component.boundary;
-        component.references().forEach(this::insertCmpRefCopy);
+        component.references().forEach(reference -> insertCmpRefCopy(reference, pool));
     }
 
     public Component() {
@@ -486,13 +487,16 @@ public final class Component implements Serializable {
         this.codeHash = codeHash;
     }
 
-    private void insertCmpRefCopy(final ComponentReference reference) {
+    private void insertCmpRefCopy(final ComponentReference reference, final StringPool pool) {
         if (reference == null) {
             return;
         }
         final ComponentReference clonedRef = cloneReference(reference);
         clonedRef.setExternal(reference.isExternal());
         clonedRef.setNotLoaded(reference.isNotLoaded());
+        if (pool != null && clonedRef instanceof AnnotationReference) {
+            ((AnnotationReference) clonedRef).pool(pool);
+        }
         this.insertCmpRef(clonedRef);
     }
 

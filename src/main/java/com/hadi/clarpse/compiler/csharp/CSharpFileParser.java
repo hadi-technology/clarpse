@@ -505,7 +505,7 @@ final class CSharpFileParser {
         typeModel.sourceText = fileModel.sourceText;
         typeModel.comment = extractLeadingComment(fileModel.sourceText, node.startOffset);
         typeModel.modifiers = parseModifiers(node.text);
-        typeModel.annotations = precedingAttributeNames(node);
+        typeModel.annotations = precedingAttributes(node);
         typeModel.partial = typeModel.modifiers.contains("partial");
         typeModel.startOffset = node.startOffset;
         typeModel.endOffset = node.endOffset;
@@ -602,10 +602,10 @@ final class CSharpFileParser {
         }
         // The member's attributes sit on the declaration node and apply to every component it yields
         // (a `[Required] public int A, B;` decorates both fields).
-        final List<String> attributeNames = precedingAttributeNames(node);
-        if (!attributeNames.isEmpty()) {
+        final List<CSharpModel.CSharpAttribute> attributes = precedingAttributes(node);
+        if (!attributes.isEmpty()) {
             for (final CSharpModel.CSharpMemberModel member : members) {
-                member.annotations = new ArrayList<>(attributeNames);
+                member.annotations = new ArrayList<>(attributes);
             }
         }
         return members;
@@ -868,7 +868,7 @@ final class CSharpFileParser {
     }
 
     /**
-     * The names of the attributes applied to a type or member declaration.
+     * The attributes applied to a type or member declaration, each with its name and argument list.
      *
      * <p>An attribute section ({@code [ApiController]}) is not a child of the declaration it decorates;
      * the parser emits it as a {@code cs:attribute-declaration} sibling immediately preceding the
@@ -877,26 +877,46 @@ final class CSharpFileParser {
      * {@code cs:id-role} it wraps ({@code Route} in {@code [Route("/x")]}). A single section may carry
      * several attributes ({@code [A, B]}), which appear as several {@code cs:id-role} children.
      */
-    private static List<String> precedingAttributeNames(final SyntaxNode node) {
-        final List<String> names = new ArrayList<>();
+    private static List<CSharpModel.CSharpAttribute> precedingAttributes(final SyntaxNode node) {
+        final List<CSharpModel.CSharpAttribute> attributes = new ArrayList<>();
         if (node == null || node.parent == null) {
-            return names;
+            return attributes;
         }
         final List<SyntaxNode> siblings = node.parent.children;
         final int index = siblings.indexOf(node);
         if (index < 0) {
-            return names;
+            return attributes;
         }
         for (int i = index - 1; i >= 0; i -= 1) {
             final SyntaxNode sibling = siblings.get(i);
             if (!"cs:attribute-declaration".equals(sibling.type)) {
                 break;
             }
-            final List<String> attributeNames = directChildTexts(sibling, "cs:id-role");
             // Prepend so declaration order is preserved across the backward walk.
-            names.addAll(0, attributeNames);
+            attributes.addAll(0, attributesOfSection(sibling));
         }
-        return names;
+        return attributes;
+    }
+
+    /**
+     * The attributes of one section: each {@code cs:id-role} is an attribute's name, and a
+     * {@code cs:parent-list} directly after it is that attribute's argument list.
+     */
+    private static List<CSharpModel.CSharpAttribute> attributesOfSection(final SyntaxNode section) {
+        final List<CSharpModel.CSharpAttribute> attributes = new ArrayList<>();
+        final List<SyntaxNode> children = section.children;
+        for (int i = 0; i < children.size(); i++) {
+            final SyntaxNode child = children.get(i);
+            if (!"cs:id-role".equals(child.type)) {
+                continue;
+            }
+            String arguments = null;
+            if (i + 1 < children.size() && "cs:parent-list".equals(children.get(i + 1).type)) {
+                arguments = children.get(i + 1).text;
+            }
+            attributes.add(new CSharpModel.CSharpAttribute(normalizeWhitespace(child.text), arguments));
+        }
+        return attributes;
     }
 
     /**
