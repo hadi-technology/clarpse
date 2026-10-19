@@ -1316,7 +1316,8 @@ function buildTopLevelVariableModel(declaration, statement, checker) {
     // a function or any other value.
     model.references = mergeReferences(
       model.references,
-      collectBodyDetails(declaration.initializer, checker).references
+      collectBodyDetails(declaration.initializer, checker).references,
+      collectValueReferences(declaration.initializer, checker, declaration)
     );
   }
   if (statement) {
@@ -1332,6 +1333,92 @@ function buildTopLevelVariableModel(declaration, statement, checker) {
     }
   }
   return model;
+}
+
+// Whether a declaration is one this program models as a component of its own: a class, an
+// enum, a function or a binding declared at the top level of a module.
+function isModelledValueDeclaration(declaration) {
+  const ts = state.ts;
+  if (!declaration || !declaration.parent) {
+    return false;
+  }
+  if (ts.isClassDeclaration(declaration) || ts.isEnumDeclaration(declaration)) {
+    return !!declaration.name && ts.isSourceFile(declaration.parent);
+  }
+  if (ts.isFunctionDeclaration(declaration)) {
+    return !!declaration.name && ts.isSourceFile(declaration.parent);
+  }
+  if (ts.isVariableDeclaration(declaration)) {
+    const list = declaration.parent;
+    const statement = list && list.parent;
+    return ts.isIdentifier(declaration.name)
+      && !!statement
+      && ts.isVariableStatement(statement)
+      && !!statement.parent
+      && ts.isSourceFile(statement.parent);
+  }
+  return false;
+}
+
+// The references an initializer makes by naming a modelled declaration as a value: a class or
+// function placed in an array or object literal, a constant used in an expression. A name that
+// resolves to a local, a parameter, a member, or anything outside the program is not recorded.
+function collectValueReferences(initializer, checker, owner) {
+  const references = [];
+  if (!initializer || state.shallowBody) {
+    return references;
+  }
+  const ts = state.ts;
+  function visit(node) {
+    if (ts.isTypeNode(node)) {
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      const reference = buildValueReference(node, checker, owner);
+      if (reference) {
+        references.push(reference);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(initializer);
+  return references;
+}
+
+function buildValueReference(identifier, checker, owner) {
+  const ts = state.ts;
+  const parent = identifier.parent;
+  if (parent && ts.isPropertyAccessExpression(parent) && parent.name === identifier) {
+    return null;
+  }
+  let symbol;
+  try {
+    symbol = parent && ts.isShorthandPropertyAssignment(parent) && parent.name === identifier
+      ? checker.getShorthandAssignmentValueSymbol(parent)
+      : checker.getSymbolAtLocation(identifier);
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
+      symbol = checker.getAliasedSymbol(symbol);
+    }
+  } catch (err) {
+    return null;
+  }
+  if (!symbol || !symbol.declarations || !symbol.declarations.length) {
+    return null;
+  }
+  const declaration = symbol.declarations.find(isModelledValueDeclaration);
+  if (!declaration || declaration === owner) {
+    return null;
+  }
+  const fileName = declaration.getSourceFile().fileName;
+  const name = declaration.name.getText();
+  if (!fileName || !name || isInternalSymbolName(name) || !isInternalFile(fileName)) {
+    return null;
+  }
+  return {
+    kind: "type",
+    external: false,
+    target: { filePath: path.resolve(fileName), symbolName: name }
+  };
 }
 
 function collectBodyDetails(body, checker) {
@@ -1441,6 +1528,7 @@ function buildFieldModel(node, checker) {
     references: mergeReferences(
       buildReferenceModelsFromType(fieldType, checker, "type"),
       node.initializer ? collectBodyDetails(node.initializer, checker).references : [],
+      collectValueReferences(node.initializer, checker, null),
       buildDecoratorReferences(node)
     )
   };
