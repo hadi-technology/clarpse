@@ -589,6 +589,40 @@ function resolveRelativeModule(nodeModule, level, currentModule) {
   return parts.join('.');
 }
 
+/**
+ * Every import statement in a parsed file, wherever it is written. `moduleScope` holds those that
+ * bind a module-level name: the top level and any depth of `if`, `elif`, `else`, `try`, `except`,
+ * `finally`, `with`, `for`, `while` or `match` that is not inside a function or class. `nested`
+ * holds those written inside a function or class body at any depth.
+ */
+function collectParsedImportStatements(parseTree, fileText, parseNodeType) {
+  const types = parseNodeType || {};
+  const moduleScope = [];
+  const nested = [];
+
+  function visit(node, inScope) {
+    if (!node || typeof node !== 'object' || !node.d) {
+      return;
+    }
+    if (node.nodeType === types.Import || node.nodeType === types.ImportFrom) {
+      (inScope ? nested : moduleScope).push(...collectImportStatements(textForNode(node, fileText)));
+      return;
+    }
+    const enters = isFunctionNode(node, parseNodeType) || isClassNode(node, parseNodeType);
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      if (Array.isArray(child)) {
+        child.forEach(item => visit(item, inScope || enters));
+      } else if (child && typeof child === 'object' && child.d) {
+        visit(child, inScope || enters);
+      }
+    }
+  }
+
+  visit(parseTree, false);
+  return { moduleScope, nested };
+}
+
 function collectImports(fileText, ctx) {
   return resolveImportStatements(collectImportStatements(fileText), ctx);
 }
@@ -3331,12 +3365,19 @@ async function handleGetFileModel(params) {
   const moduleName = moduleBaseNameForPath(normalized);
   const packageName = packageNameForPath(normalized, state.repoRoot);
   const fullModuleName = packageName ? packageName + '.' + moduleName : moduleName;
-  const imported = collectImports(fileText, {
+  const importCtx = {
     moduleIndex: state.moduleIndex,
     fullModuleName,
     packageName,
     repoRoot: state.repoRoot
-  });
+  };
+  const topLevelStatements = collectImportStatements(fileText);
+  const parsedImports = collectParsedImportStatements(parseTree, fileText, parseNodeType);
+  const seenStatements = new Set(topLevelStatements);
+  const moduleStatements = topLevelStatements.concat(
+    parsedImports.moduleScope.filter(statement => !seenStatements.has(statement)));
+  const imported = resolveImportStatements(moduleStatements, importCtx);
+  const nestedImported = resolveImportStatements(parsedImports.nested, importCtx);
   const localClasses = collectLocalClasses(parseTree, parseNodeType);
   const ctx = {
     repoRoot: state.repoRoot,
@@ -3368,6 +3409,14 @@ async function handleGetFileModel(params) {
     if (moduleName) importList.push(moduleName);
   }
   for (const symbol of imported.importedSymbols.values()) {
+    if (symbol && symbol.moduleName && symbol.symbolName) {
+      importList.push(symbol.moduleName + '.' + symbol.symbolName);
+    }
+  }
+  for (const moduleName of nestedImported.importedModules.values()) {
+    if (moduleName) importList.push(moduleName);
+  }
+  for (const symbol of nestedImported.importedSymbols.values()) {
     if (symbol && symbol.moduleName && symbol.symbolName) {
       importList.push(symbol.moduleName + '.' + symbol.symbolName);
     }
