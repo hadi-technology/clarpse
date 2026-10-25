@@ -803,6 +803,42 @@ function typeToString(checker, node) {
   return checker.typeToString(type);
 }
 
+/**
+ * The type annotation a declaration is written with, on one line, or null when it has none.
+ *
+ * The checker prints a resolved type, and for an alias such as `(typeof TOKENS)[number]` it drops
+ * the alias name and writes out every literal. The annotation is what the author wrote.
+ */
+function writtenTypeText(node) {
+  if (!node || !node.type) {
+    return null;
+  }
+  const text = node.type.getText().replace(/\s+/g, " ").trim();
+  return text || null;
+}
+
+/**
+ * Whether a type is a literal, or a union of literals (optionally with `null` / `undefined`).
+ * `normalizeReturnType` widens such a type, so a return type of this shape keeps that text.
+ */
+function isLiteralOrLiteralUnion(type) {
+  const ts = state.ts;
+  const literal = ts.TypeFlags.StringLiteral | ts.TypeFlags.NumberLiteral
+    | ts.TypeFlags.BooleanLiteral | ts.TypeFlags.BigIntLiteral;
+  const absent = ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void;
+  const members = type.isUnion && type.isUnion() && Array.isArray(type.types) ? type.types : [type];
+  let sawLiteral = false;
+  for (const member of members) {
+    const flags = member.flags || 0;
+    if (flags & literal) {
+      sawLiteral = true;
+    } else if (!(flags & absent)) {
+      return false;
+    }
+  }
+  return sawLiteral;
+}
+
 function getReturnType(checker, node) {
   if (!checker) {
     return "";
@@ -812,6 +848,12 @@ function getReturnType(checker, node) {
     return "";
   }
   const returnType = checker.getReturnTypeOfSignature(signature);
+  const written = writtenTypeText(node);
+  // A type predicate (`x is Foo`) is printed by the checker as `boolean`, and a literal return type
+  // is widened by `normalizeReturnType`; both keep the text they have always had.
+  if (written && !state.ts.isTypePredicateNode(node.type) && !isLiteralOrLiteralUnion(returnType)) {
+    return written;
+  }
   return normalizeReturnType(returnType, checker);
 }
 
@@ -1430,6 +1472,7 @@ function buildTopLevelVariableModel(declaration, statement, checker) {
     return null;
   }
   model.kind = "moduleField";
+  model.type = writtenTypeText(declaration) || model.type;
   if (declaration.initializer) {
     // What the initializer calls or constructs, as for a function body, whether the binding holds
     // a function or any other value.
@@ -1640,7 +1683,7 @@ function buildFieldModel(node, checker) {
   return {
     kind: "field",
     name: node.name.getText(),
-    type: typeToString(checker, node),
+    type: writtenTypeText(node) || typeToString(checker, node),
     implementationHash: stableImplementationHash(node.getText()),
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
