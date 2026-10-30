@@ -95,12 +95,12 @@ public class PythonFunctionLocalImportTest {
         assertNoReferenceTo(method(SERVICE, "import_in_nested_function"), RECEIPT);
     }
 
-    /** The class carries its file's module-level imports, not the imports its methods perform. */
+    /** The file's imports include those its functions perform, though they resolve only in those functions. */
     @Test
-    public void functionLocalImportsAreNotTheFilesImports() {
+    public void functionLocalImportsAreAmongTheFilesImports() {
         final Set<String> imports = new HashSet<>(component(SERVICE).imports());
         Assert.assertTrue(imports.toString(), imports.contains(INVOICE));
-        Assert.assertFalse(imports.toString(), imports.contains(ORDER));
+        Assert.assertTrue(imports.toString(), imports.contains(ORDER));
     }
 
     private static void assertInternal(final Component component, final String target) {
