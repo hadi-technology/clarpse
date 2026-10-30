@@ -162,11 +162,15 @@ final class PythonModelAssembler {
                 .collect(java.util.stream.Collectors.toList());
         final boolean declaresAType = declared.stream()
                 .anyMatch(component -> component.componentType().isBaseComponent());
-        declared.stream()
-                .filter(component -> declaresAType
-                        ? component.componentType().isBaseComponent()
-                        : isModuleLevelDeclaration(component))
-                .forEach(component -> component.setImports(imports));
+        for (final Component component : declared) {
+            if (declaresAType) {
+                if (component.componentType().isBaseComponent()) {
+                    component.setImports(imports);
+                }
+            } else if (isModuleLevelDeclaration(component)) {
+                component.setImports(imports);
+            }
+        }
     }
 
     private static boolean isModuleLevelDeclaration(final Component component) {
