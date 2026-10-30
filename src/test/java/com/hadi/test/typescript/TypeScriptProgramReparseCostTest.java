@@ -116,7 +116,9 @@ public class TypeScriptProgramReparseCostTest {
         final long distinctConfigs = observed.programOutDirs.stream().distinct().count();
         assertTrue("expected " + GROUPS + " programs, one per config, but " + observed.programs()
                         + " were built for " + distinctConfigs + " configs in " + observed.sessions
-                        + " daemon session(s): " + observed.programOutDirs,
+                        + " daemon session(s): "
+                        + observed.programOutDirs.stream().map(d -> d.substring(d.lastIndexOf('/') + 1))
+                        .collect(Collectors.toList()),
                 observed.programs() == distinctConfigs && distinctConfigs == GROUPS);
     }
 }
