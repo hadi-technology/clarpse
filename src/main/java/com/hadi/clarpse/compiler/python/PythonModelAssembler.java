@@ -140,13 +140,15 @@ final class PythonModelAssembler {
     }
 
     /**
-     * Attaches the file's imports to the types it declares, and to nothing else.
+     * Attaches the file's imports to the types it declares; a file declaring no type gives them to
+     * its module-level functions and variables instead, and a file declaring one gives nothing to
+     * those.
      *
      * <p>Applied after insertion rather than threaded through {@code insertClass}, which already
      * takes seven parameters — one more trips the parameter-count rule, and bundling arguments to
-     * carry a value two frames down is worse than reading it back off the model. Only type
-     * components carry imports, matching Java: a field reporting its file's import list as its own
-     * is what made {@code imports()} mean a different thing in each language (issue #156).
+     * carry a value two frames down is worse than reading it back off the model. Fields, methods
+     * and locals never carry imports, matching Java: a field reporting its file's import list as
+     * its own is what made {@code imports()} mean a different thing in each language.
      */
     private static void applyImports(final String sourcePath,
                                      final PythonFileModel fileModel,
@@ -155,10 +157,22 @@ final class PythonModelAssembler {
             return;
         }
         final java.util.Set<String> imports = new java.util.LinkedHashSet<>(fileModel.imports);
-        srcModel.components()
-                .filter(component -> component.componentType().isBaseComponent())
+        final java.util.List<Component> declared = srcModel.components()
                 .filter(component -> sourcePath.equals(component.sourceFile()))
+                .collect(java.util.stream.Collectors.toList());
+        final boolean declaresAType = declared.stream()
+                .anyMatch(component -> component.componentType().isBaseComponent());
+        declared.stream()
+                .filter(component -> declaresAType
+                        ? component.componentType().isBaseComponent()
+                        : isModuleLevelDeclaration(component))
                 .forEach(component -> component.setImports(imports));
+    }
+
+    private static boolean isModuleLevelDeclaration(final Component component) {
+        final OOPSourceModelConstants.ComponentType type = component.componentType();
+        return type == OOPSourceModelConstants.ComponentType.FUNCTION
+                || type == OOPSourceModelConstants.ComponentType.MODULE_FIELD;
     }
 
     private static void insertClass(final Package pkg,

@@ -2636,6 +2636,13 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
   const localNames = collectLocalNames(functionNode, parseNodeType);
   // A name the function's own imports bind resolves through them.
   (ctx.functionImportNames || []).forEach(name => localNames.delete(name));
+  // The names bound by the scopes being walked, innermost last. A nested function or class binds
+  // names of its own, which hide the module's for everything written inside it.
+  let scopes = [localNames];
+  // Whether the code being walked is a default value or a decorator, where a bare function name
+  // handed on as a value (`Depends(get_db)`) is a reference as well.
+  let inHeader = false;
+  const isLocal = name => scopes.some(scope => scope.has(name));
   const moduleMemberTargets = new Set();
   const calleeNames = new Set();
 
@@ -2651,7 +2658,7 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
       return false;
     }
     const base = dotted.substring(0, dotted.indexOf('.'));
-    if (localNames.has(base) || !bindsModule(base, ctx)) {
+    if (isLocal(base) || !bindsModule(base, ctx)) {
       return false;
     }
     const resolved = resolveModuleMember(dotted, ctx);
@@ -2669,7 +2676,7 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
    * function does not bind that name itself.
    */
   function addClassRef(name, raw) {
-    if (!name || localNames.has(name)) {
+    if (!name || isLocal(name)) {
       return false;
     }
     const resolved = resolveRepoClass(name, ctx);
@@ -2718,7 +2725,10 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
   function walk(node) {
     if (!node || typeof node !== 'object' || !node.d) return;
 
-    if (isClassNode(node, parseNodeType) || isFunctionNode(node, parseNodeType)) return;
+    if (isClassNode(node, parseNodeType) || isFunctionNode(node, parseNodeType)) {
+      walkNested(node);
+      return;
+    }
 
     // A binding or a scope declaration names nothing it uses: a function-local import, and the targets of
     // `global` and `nonlocal`.
@@ -2753,7 +2763,11 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
 
     if (parseNodeType && parseNodeType.Name !== undefined && node.nodeType === parseNodeType.Name) {
       if (!calleeNames.has(node)) {
-        addClassRef(nameFromNode(node), nameFromNode(node));
+        const name = nameFromNode(node);
+        if (!addClassRef(name, name) && inHeader && name && !isLocal(name)
+          && ctx.importedSymbols && ctx.importedSymbols.has(name)) {
+          addRef(name);
+        }
       }
       return;
     }
@@ -2778,6 +2792,48 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
     }
   }
 
+  /**
+   * What a definition evaluates where it is written, in the scope around it: its decorators, the
+   * default values of its parameters, and a class's bases and keyword arguments.
+   */
+  function walkHeader(node) {
+    const wasInHeader = inHeader;
+    inHeader = true;
+    (getNodeProp(node, ['decorators']) || []).forEach(walk);
+    if (isClassNode(node, parseNodeType)) {
+      (getNodeProp(node, ['arguments']) || []).forEach(walk);
+    } else {
+      for (const param of (node.d && (node.d.params || node.d.parameters)) || []) {
+        walk(getNodeProp(param, ['defaultValue', 'defaultExpr', 'defaultExpression']));
+      }
+    }
+    inHeader = wasInHeader;
+  }
+
+  /**
+   * A function or class written inside what is being walked: its header belongs to the scope around
+   * it and its body to a scope of its own, so what it names counts for the enclosing function or
+   * class unless the nested scope binds the name itself.
+   */
+  function walkNested(node) {
+    walkHeader(node);
+    const nestedSuite = node.d ? node.d.suite : null;
+    if (!nestedSuite || !nestedSuite.d) {
+      return;
+    }
+    const nestedLocals = collectLocalNames(node, parseNodeType);
+    scopes.push(nestedLocals);
+    for (const stmt of getStatementsFromSuite(nestedSuite)) {
+      walk(stmt);
+    }
+    scopes.pop();
+  }
+
+  // The definition's own decorators and defaults are evaluated outside its body.
+  const bodyScopes = scopes;
+  scopes = [];
+  walkHeader(functionNode);
+  scopes = bodyScopes;
   const statements = getStatementsFromSuite(suite);
   for (const stmt of statements) {
     walk(stmt);

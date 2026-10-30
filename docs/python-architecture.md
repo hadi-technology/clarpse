@@ -88,6 +88,19 @@ and can be mapped through imports or local class declarations.
   for the same reason a parameter carries none: it cannot be reached from outside the body that
   binds it.
 - Nested classes are fully supported with proper unique name chaining.
+- References are recorded against the enclosing module-level function or class method, however deep
+  the code that makes them sits: a function or class written inside a function or method counts for
+  the function or method around it, unless the nested definition binds the name itself (its
+  parameters, locals and imports hide the module's name for everything written inside it).
+  A decorator, the default value of a parameter, and a class's bases and keyword arguments are
+  evaluated where the definition is written and count for the enclosing function; there a bare name
+  that an import binds to a repository function, as in `def f(db=Depends(get_db))`, is a reference
+  as well.
+- Imports are found wherever they are written: in compound statements (`if`, `try`, `with`, loops)
+  and in function and method bodies, at any depth.
+- A file's module-level imports belong to the classes it declares. A file declaring no class gives
+  them to its module-level functions and variables instead, the same way a TypeScript file declaring
+  no type does; a file declaring a class gives those components none.
 - Docstrings are extracted and attached to the component's comment field.
 - Cyclomatic complexity is calculated and stored in the component's cyclo field.
 - Every component carries a non-zero code hash, derived from its full declaration, for change detection.
