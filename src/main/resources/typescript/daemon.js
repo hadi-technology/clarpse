@@ -847,13 +847,76 @@ function portableTypeText(text) {
   return portable;
 }
 
+/**
+ * The text of a type with the members of every union in it in an order of their own. The checker
+ * orders a union's members by the order it created their types in, so the same union reads
+ * `"verbose" | "debug"` in one program and `"debug" | "verbose"` in another that met `"debug"`
+ * first, and the text then names the same declaration two ways. The members are ordered by their
+ * own text, with `null` and `undefined` left last as the checker leaves them.
+ *
+ * Only text that holds a union is touched, and it is rebuilt from the checker's own type node. The
+ * rebuilt text is used only when printing the node unchanged gives exactly the checker's text and
+ * the reordered text is the same characters in another order; otherwise the checker's text stands.
+ */
+function stableUnionTypeText(ts, checker, typeToStringAt, args, text) {
+  const type = args[0];
+  if (!text || text.indexOf(" | ") < 0 || text.endsWith("...") || args.length > 3
+    || !type || typeof type.flags !== "number") {
+    return text;
+  }
+  try {
+    const flags = args[2] === undefined
+      ? ts.TypeFormatFlags.AllowUniqueESSymbolType | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope
+      : args[2];
+    const node = checker.typeToTypeNode(type, args[1], flags | ts.NodeBuilderFlags.IgnoreErrors);
+    if (!node) {
+      return text;
+    }
+    const printer = ts.createPrinter({ removeComments: true });
+    const host = ts.createSourceFile("type.ts", "", ts.ScriptTarget.Latest);
+    const print = (typeNode) => printer.printNode(ts.EmitHint.Unspecified, typeNode, host);
+    if (print(node) !== text) {
+      return text;
+    }
+    const ordered = ts.transform(node, [(context) => (root) => {
+      const visit = (child) => {
+        const visited = ts.visitEachChild(child, visit, context);
+        return ts.isUnionTypeNode(visited) ? withOrderedMembers(ts, visited, print) : visited;
+      };
+      return ts.visitNode(root, visit);
+    }]);
+    const rewritten = print(ordered.transformed[0]);
+    ordered.dispose();
+    if (rewritten.indexOf("\n") >= 0 || rewritten.length !== text.length
+      || rewritten.split("").sort().join("") !== text.split("").sort().join("")) {
+      return text;
+    }
+    return rewritten;
+  } catch (err) {
+    return text;
+  }
+}
+
+function withOrderedMembers(ts, union, print) {
+  const isLast = (member) => member.kind === ts.SyntaxKind.UndefinedKeyword
+    || member.kind === ts.SyntaxKind.NullKeyword
+    || (ts.isLiteralTypeNode(member) && member.literal.kind === ts.SyntaxKind.NullKeyword);
+  const leading = union.types.filter((member) => !isLast(member))
+    .map((member) => ({ member, text: print(member) }))
+    .sort((left, right) => (left.text < right.text ? -1 : left.text > right.text ? 1 : 0))
+    .map((entry) => entry.member);
+  const trailing = union.types.filter(isLast);
+  return ts.factory.updateUnionTypeNode(union, ts.factory.createNodeArray([...leading, ...trailing]));
+}
+
 /** The checker, with `typeToString` answering portable type text. */
 function withPortableTypeText(checker) {
   if (!checker || checker.portableTypeText) {
     return checker;
   }
   const typeToStringAt = checker.typeToString.bind(checker);
-  checker.typeToString = (...args) => portableTypeText(typeToStringAt(...args));
+  checker.typeToString = (...args) => portableTypeText(
+    stableUnionTypeText(state.ts, checker, typeToStringAt, args, typeToStringAt(...args)));
   checker.portableTypeText = true;
   return checker;
 }
@@ -2488,8 +2551,12 @@ function handleDiscoverLevelOne(params) {
 }
 
 /**
- * The planned files a file refers to: those its module specifiers (imports, `export ... from`,
- * `require`, dynamic `import()`) resolve to, and those named by `/// <reference path>`.
+ * The files a file brings into a program. Those its module specifiers (imports, `export ... from`,
+ * `require`, dynamic `import()`) resolve to count when they are planned: the program is built
+ * without resolution, so only planned files are held. Those named by `/// <reference path>` count
+ * whether or not they are planned, since the compiler adds them to a program from the reference
+ * alone; they are held so what they declare resolves, and are not modelled. A file that is not
+ * planned brings in only the files it references.
  */
 function plannedImports(file, plannedSet) {
   const text = readSource(file);
@@ -2498,7 +2565,7 @@ function plannedImports(file, plannedSet) {
   }
   const info = state.ts.preProcessFile(text, true, true);
   const found = new Set();
-  for (const entry of info.importedFiles) {
+  for (const entry of plannedSet.has(file) ? info.importedFiles : []) {
     const resolved = resolveInternalModule(entry.fileName, file);
     if (resolved && plannedSet.has(resolved)) {
       found.add(resolved);
@@ -2506,7 +2573,7 @@ function plannedImports(file, plannedSet) {
   }
   for (const entry of info.referencedFiles) {
     const referenced = normalizePath(state.ts, path.resolve(path.dirname(file), entry.fileName));
-    if (plannedSet.has(referenced)) {
+    if (isTypeScriptFile(referenced) && state.ts.sys.fileExists(referenced)) {
       found.add(referenced);
     }
   }
@@ -2519,7 +2586,9 @@ function plannedImports(file, plannedSet) {
  * Each file is assigned to the config that owns it and is modelled in that config's program. The
  * program of every config that owns a focus file holds the planned files it owns and the planned
  * files those reach through imports, transitively, so a focus file's references into level one
- * resolve whichever config owns the target and no program holds a file it cannot reach. The
+ * resolve whichever config owns the target, and the files they name with `/// <reference path>`,
+ * planned or not, transitively, as the compiler would add them. No program holds a file it cannot
+ * reach. The
  * planned `.d.ts` files are held by each such program, since global declarations are reached
  * without an import. The program of a config that owns only level-one files holds those. Every
  * planned program also holds its config's own `.d.ts` root files, so global declarations and module

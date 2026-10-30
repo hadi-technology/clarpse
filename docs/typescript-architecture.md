@@ -66,8 +66,11 @@ one again over every analysed file; since no program outlives its session, nothi
 2) The Java side applies the level-one budget.
 3) `planOneLevel` assigns every planned file to the config owning it. The program of each config
    owning an analysed file holds the planned files that config owns and the planned files those
-   reach through imports, `export ... from`, `require`, `import()` and `/// <reference path>`,
-   transitively, so a program holds nothing its own files cannot reach. The planned `.d.ts` files
+   reach through imports, `export ... from`, `require` and `import()`, transitively, plus the files
+   named by `/// <reference path>`, transitively, whether or not they are planned: the compiler adds
+   a referenced file to a program from the reference alone, so such a file is held for resolution
+   and not modelled. A program holds nothing its own files cannot reach, and a global script of
+   another config is never held, so each config binds a global name to its own declaration. The planned `.d.ts` files
    are held by each such program, since global declarations are reached without an import. A config
    owning only level-one files holds those. Every planned program also holds its config's `.d.ts`
    root files. Programs are built with
@@ -106,6 +109,11 @@ twice gives the same model:
 - Type text is written with paths relative to the repository root. The checker prints a type it
   cannot name from where it is printed as `import("<path>")`; the path is written as
   `node_modules/extlib/index`, not as an absolute path.
+
+Type text the checker renders puts the members of every union in an order of their own (by their
+text, `null` and `undefined` last). The checker orders members by when it created their types, so
+without this the same signature reads differently in programs that hold different files. A type
+annotation written in the source is kept as written.
 
 # Failure Contract
 TypeScript follows the same failure model as Python:

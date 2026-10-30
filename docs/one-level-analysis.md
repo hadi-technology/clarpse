@@ -311,8 +311,9 @@ These rules hold of the implementation. A change that breaks one changes what th
    `daemon.js` builds programs only from each config's `oneLevelRoots`, with `noResolve` and without
    project references, and answers `getFileModel` only for planned files. The `oneLevelRoots` of a
    config owning an analysed file are the planned files it owns plus the planned files reachable from
-   them through imports, `export ... from`, `require`, `import()` and `/// <reference path>`, plus
-   the planned `.d.ts` files; a program never holds a planned file its own files cannot reach.
+   them through imports, `export ... from`, `require` and `import()`, plus the planned `.d.ts` files,
+   plus the files named by `/// <reference path>` from any held file, planned or not, transitively
+   (held for resolution, never modelled); a program never holds a file its own files cannot reach.
    Programs share parsed source files (see `typescript-architecture.md`), so a planned file is
    parsed once per compile however many programs hold it.
 9. **`CSharpModelAssembler` never emits a stub.** `buildModel(parsed, stubs, emittedPaths)` emits
