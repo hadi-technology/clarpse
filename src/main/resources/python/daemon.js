@@ -589,6 +589,40 @@ function resolveRelativeModule(nodeModule, level, currentModule) {
   return parts.join('.');
 }
 
+/**
+ * Every import statement in a parsed file, wherever it is written. `moduleScope` holds those that
+ * bind a module-level name: the top level and any depth of `if`, `elif`, `else`, `try`, `except`,
+ * `finally`, `with`, `for`, `while` or `match` that is not inside a function or class. `nested`
+ * holds those written inside a function or class body at any depth.
+ */
+function collectParsedImportStatements(parseTree, fileText, parseNodeType) {
+  const types = parseNodeType || {};
+  const moduleScope = [];
+  const nested = [];
+
+  function visit(node, inScope) {
+    if (!node || typeof node !== 'object' || !node.d) {
+      return;
+    }
+    if (node.nodeType === types.Import || node.nodeType === types.ImportFrom) {
+      (inScope ? nested : moduleScope).push(...collectImportStatements(textForNode(node, fileText)));
+      return;
+    }
+    const enters = isFunctionNode(node, parseNodeType) || isClassNode(node, parseNodeType);
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      if (Array.isArray(child)) {
+        child.forEach(item => visit(item, inScope || enters));
+      } else if (child && typeof child === 'object' && child.d) {
+        visit(child, inScope || enters);
+      }
+    }
+  }
+
+  visit(parseTree, false);
+  return { moduleScope, nested };
+}
+
 function collectImports(fileText, ctx) {
   return resolveImportStatements(collectImportStatements(fileText), ctx);
 }
@@ -2602,6 +2636,13 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
   const localNames = collectLocalNames(functionNode, parseNodeType);
   // A name the function's own imports bind resolves through them.
   (ctx.functionImportNames || []).forEach(name => localNames.delete(name));
+  // The names bound by the scopes being walked, innermost last. A nested function or class binds
+  // names of its own, which hide the module's for everything written inside it.
+  let scopes = [localNames];
+  // Whether the code being walked is a default value or a decorator, where a bare function name
+  // handed on as a value (`Depends(get_db)`) is a reference as well.
+  let inHeader = false;
+  const isLocal = name => scopes.some(scope => scope.has(name));
   const moduleMemberTargets = new Set();
   const calleeNames = new Set();
 
@@ -2617,7 +2658,7 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
       return false;
     }
     const base = dotted.substring(0, dotted.indexOf('.'));
-    if (localNames.has(base) || !bindsModule(base, ctx)) {
+    if (isLocal(base) || !bindsModule(base, ctx)) {
       return false;
     }
     const resolved = resolveModuleMember(dotted, ctx);
@@ -2635,7 +2676,7 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
    * function does not bind that name itself.
    */
   function addClassRef(name, raw) {
-    if (!name || localNames.has(name)) {
+    if (!name || isLocal(name)) {
       return false;
     }
     const resolved = resolveRepoClass(name, ctx);
@@ -2684,7 +2725,10 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
   function walk(node) {
     if (!node || typeof node !== 'object' || !node.d) return;
 
-    if (isClassNode(node, parseNodeType) || isFunctionNode(node, parseNodeType)) return;
+    if (isClassNode(node, parseNodeType) || isFunctionNode(node, parseNodeType)) {
+      walkNested(node);
+      return;
+    }
 
     // A binding or a scope declaration names nothing it uses: a function-local import, and the targets of
     // `global` and `nonlocal`.
@@ -2719,7 +2763,11 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
 
     if (parseNodeType && parseNodeType.Name !== undefined && node.nodeType === parseNodeType.Name) {
       if (!calleeNames.has(node)) {
-        addClassRef(nameFromNode(node), nameFromNode(node));
+        const name = nameFromNode(node);
+        if (!addClassRef(name, name) && inHeader && name && !isLocal(name)
+          && ctx.importedSymbols && ctx.importedSymbols.has(name)) {
+          addRef(name);
+        }
       }
       return;
     }
@@ -2744,6 +2792,48 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
     }
   }
 
+  /**
+   * What a definition evaluates where it is written, in the scope around it: its decorators, the
+   * default values of its parameters, and a class's bases and keyword arguments.
+   */
+  function walkHeader(node) {
+    const wasInHeader = inHeader;
+    inHeader = true;
+    (getNodeProp(node, ['decorators']) || []).forEach(walk);
+    if (isClassNode(node, parseNodeType)) {
+      (getNodeProp(node, ['arguments']) || []).forEach(walk);
+    } else {
+      for (const param of (node.d && (node.d.params || node.d.parameters)) || []) {
+        walk(getNodeProp(param, ['defaultValue', 'defaultExpr', 'defaultExpression']));
+      }
+    }
+    inHeader = wasInHeader;
+  }
+
+  /**
+   * A function or class written inside what is being walked: its header belongs to the scope around
+   * it and its body to a scope of its own, so what it names counts for the enclosing function or
+   * class unless the nested scope binds the name itself.
+   */
+  function walkNested(node) {
+    walkHeader(node);
+    const nestedSuite = node.d ? node.d.suite : null;
+    if (!nestedSuite || !nestedSuite.d) {
+      return;
+    }
+    const nestedLocals = collectLocalNames(node, parseNodeType);
+    scopes.push(nestedLocals);
+    for (const stmt of getStatementsFromSuite(nestedSuite)) {
+      walk(stmt);
+    }
+    scopes.pop();
+  }
+
+  // The definition's own decorators and defaults are evaluated outside its body.
+  const bodyScopes = scopes;
+  scopes = [];
+  walkHeader(functionNode);
+  scopes = bodyScopes;
   const statements = getStatementsFromSuite(suite);
   for (const stmt of statements) {
     walk(stmt);
@@ -3331,12 +3421,19 @@ async function handleGetFileModel(params) {
   const moduleName = moduleBaseNameForPath(normalized);
   const packageName = packageNameForPath(normalized, state.repoRoot);
   const fullModuleName = packageName ? packageName + '.' + moduleName : moduleName;
-  const imported = collectImports(fileText, {
+  const importCtx = {
     moduleIndex: state.moduleIndex,
     fullModuleName,
     packageName,
     repoRoot: state.repoRoot
-  });
+  };
+  const topLevelStatements = collectImportStatements(fileText);
+  const parsedImports = collectParsedImportStatements(parseTree, fileText, parseNodeType);
+  const seenStatements = new Set(topLevelStatements);
+  const moduleStatements = topLevelStatements.concat(
+    parsedImports.moduleScope.filter(statement => !seenStatements.has(statement)));
+  const imported = resolveImportStatements(moduleStatements, importCtx);
+  const nestedImported = resolveImportStatements(parsedImports.nested, importCtx);
   const localClasses = collectLocalClasses(parseTree, parseNodeType);
   const ctx = {
     repoRoot: state.repoRoot,
@@ -3368,6 +3465,14 @@ async function handleGetFileModel(params) {
     if (moduleName) importList.push(moduleName);
   }
   for (const symbol of imported.importedSymbols.values()) {
+    if (symbol && symbol.moduleName && symbol.symbolName) {
+      importList.push(symbol.moduleName + '.' + symbol.symbolName);
+    }
+  }
+  for (const moduleName of nestedImported.importedModules.values()) {
+    if (moduleName) importList.push(moduleName);
+  }
+  for (const symbol of nestedImported.importedSymbols.values()) {
     if (symbol && symbol.moduleName && symbol.symbolName) {
       importList.push(symbol.moduleName + '.' + symbol.symbolName);
     }
