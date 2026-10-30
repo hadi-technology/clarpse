@@ -20,6 +20,11 @@ const MAX_TYPE_DEPTH = 10;
 // enough that a repository with dozens of configs cannot exhaust the heap.
 const DEFAULT_MAX_PROGRAMS = 2;
 
+// In a one-level compile each program holds only planned files, which programs share, so up to this
+// many stay resident whatever `maxPrograms` is: files are modelled analysed first and level one
+// second, and a program evicted between the two would be built again.
+const MAX_ONE_LEVEL_RESIDENT_PROGRAMS = 16;
+
 let state = {
   repoRoot: null,
   ts: null,
@@ -29,7 +34,10 @@ let state = {
   programOrder: [],
   maxPrograms: DEFAULT_MAX_PROGRAMS,
   oneLevel: null,
-  shallowBody: false
+  shallowBody: false,
+  sourceFiles: new Map(),
+  settingsKeys: new WeakMap(),
+  documentRegistry: null
 };
 
 // Standard output carries replies and nothing else: the reader on the other end takes each line
@@ -590,7 +598,10 @@ function programFor(index) {
   };
   state.programCache.set(index, entry);
   state.programOrder.push(index);
-  while (state.programOrder.length > state.maxPrograms) {
+  const resident = state.oneLevel
+    ? Math.max(state.maxPrograms, state.oneLevel.residentPrograms)
+    : state.maxPrograms;
+  while (state.programOrder.length > resident) {
     state.programCache.delete(state.programOrder.shift());
   }
   return entry;
@@ -604,16 +615,78 @@ function programFor(index) {
  */
 function programSpec(config) {
   if (state.oneLevel) {
+    const options = Object.assign({}, config.options, { noResolve: true });
     return {
       rootNames: config.oneLevelRoots || [],
-      options: Object.assign({}, config.options, { noResolve: true })
+      options,
+      host: sharedSourceFileHost(options)
     };
   }
   return {
     rootNames: config.rootNames,
     options: config.options,
-    projectReferences: config.projectReferences
+    projectReferences: config.projectReferences,
+    host: sharedSourceFileHost(config.options)
   };
+}
+
+/**
+ * A compiler host whose parsed source files are shared by every program built in this session, so a
+ * file held by several programs is read and parsed once. A file is shared only between programs
+ * whose options parse and bind it identically: the key is the file, the language version, module
+ * format and JSDoc mode it was created with, and the compiler's own key for the options that
+ * affect a source file (the one a language service's document registry uses).
+ *
+ * In a one-level compile every file is shared, since the planned files bound what any program can
+ * hold. Otherwise only the default library declarations are, because a program may reach a large
+ * part of a repository and holding every parsed file would defeat the bound on resident programs.
+ */
+function sharedSourceFileHost(options) {
+  const ts = state.ts;
+  const host = ts.createCompilerHost(options);
+  const getSourceFile = host.getSourceFile.bind(host);
+  const libDirectory = path.dirname(ts.getDefaultLibFilePath({}));
+  host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {
+    const shared = state.oneLevel || isUnder(fileName, libDirectory);
+    if (!shared || shouldCreateNewSourceFile) {
+      return getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile);
+    }
+    const key = sourceFileKey(options, fileName, languageVersionOrOptions);
+    if (state.sourceFiles.has(key)) {
+      return state.sourceFiles.get(key);
+    }
+    const source = getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile);
+    if (source) {
+      state.sourceFiles.set(key, source);
+    }
+    return source;
+  };
+  return host;
+}
+
+function isUnder(fileName, directory) {
+  const relative = path.relative(directory, fileName);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function sourceFileKey(options, fileName, languageVersionOrOptions) {
+  if (!state.documentRegistry) {
+    state.documentRegistry = state.ts.createDocumentRegistry();
+  }
+  let settings = state.settingsKeys.get(options);
+  if (settings === undefined) {
+    settings = state.documentRegistry.getKeyForCompilationSettings(options);
+    state.settingsKeys.set(options, settings);
+  }
+  let creation = String(languageVersionOrOptions);
+  if (languageVersionOrOptions && typeof languageVersionOrOptions === "object") {
+    creation = [
+      languageVersionOrOptions.languageVersion,
+      languageVersionOrOptions.impliedNodeFormat,
+      languageVersionOrOptions.jsDocParsingMode
+    ].join(",");
+  }
+  return [fileName, creation, settings].join("|");
 }
 
 function touchProgram(index) {
@@ -2156,7 +2229,10 @@ async function handleInitRepo(params) {
     programOrder: [],
     maxPrograms: resolveMaxPrograms(params),
     oneLevel: null,
-    shallowBody: false
+    shallowBody: false,
+    sourceFiles: new Map(),
+    settingsKeys: new WeakMap(),
+    documentRegistry: null
   };
   const fileCount = parsedConfigs.reduce((sum, config) => sum + config.rootNames.length, 0);
   return {
@@ -2412,14 +2488,43 @@ function handleDiscoverLevelOne(params) {
 }
 
 /**
+ * The planned files a file refers to: those its module specifiers (imports, `export ... from`,
+ * `require`, dynamic `import()`) resolve to, and those named by `/// <reference path>`.
+ */
+function plannedImports(file, plannedSet) {
+  const text = readSource(file);
+  if (text === null) {
+    return [];
+  }
+  const info = state.ts.preProcessFile(text, true, true);
+  const found = new Set();
+  for (const entry of info.importedFiles) {
+    const resolved = resolveInternalModule(entry.fileName, file);
+    if (resolved && plannedSet.has(resolved)) {
+      found.add(resolved);
+    }
+  }
+  for (const entry of info.referencedFiles) {
+    const referenced = normalizePath(state.ts, path.resolve(path.dirname(file), entry.fileName));
+    if (plannedSet.has(referenced)) {
+      found.add(referenced);
+    }
+  }
+  return Array.from(found);
+}
+
+/**
  * Switches the daemon to one-level analysis of the given focus and level-one files.
  *
  * Each file is assigned to the config that owns it and is modelled in that config's program. The
- * program of every config that owns a focus file holds all planned files, so a focus file's
- * references into level one resolve whichever config owns the target; the program of a config that
- * owns only level-one files holds those. Every planned program also holds its config's own `.d.ts`
- * root files, so global declarations and module augmentations in the repository still resolve.
- * Programs built before the plan are discarded.
+ * program of every config that owns a focus file holds the planned files it owns and the planned
+ * files those reach through imports, transitively, so a focus file's references into level one
+ * resolve whichever config owns the target and no program holds a file it cannot reach. The
+ * planned `.d.ts` files are held by each such program, since global declarations are reached
+ * without an import. The program of a config that owns only level-one files holds those. Every
+ * planned program also holds its config's own `.d.ts` root files, so global declarations and module
+ * augmentations in the repository still resolve. Programs built before the plan are discarded, and
+ * so are the source files they shared.
  */
 function handlePlanOneLevel(params) {
   requireReady();
@@ -2451,10 +2556,26 @@ function handlePlanOneLevel(params) {
       focusConfigs.add(fileConfig.get(file));
     }
   }
-  for (const index of focusConfigs) {
-    for (const file of planned) {
-      addRoot(index, file);
+  const plannedSet = new Set(planned);
+  const imports = new Map();
+  const importsOf = (file) => {
+    if (!imports.has(file)) {
+      imports.set(file, plannedImports(file, plannedSet));
     }
+    return imports.get(file);
+  };
+  const globalDeclarations = planned.filter((file) => file.toLowerCase().endsWith(".d.ts"));
+  for (const index of focusConfigs) {
+    const queue = Array.from(rootsByConfig.get(index));
+    while (queue.length) {
+      for (const imported of importsOf(queue.shift())) {
+        if (!rootsByConfig.get(index).has(imported)) {
+          addRoot(index, imported);
+          queue.push(imported);
+        }
+      }
+    }
+    globalDeclarations.forEach((file) => addRoot(index, file));
   }
   for (let i = 0; i < state.configs.length; i += 1) {
     delete state.configs[i].oneLevelRoots;
@@ -2470,7 +2591,8 @@ function handlePlanOneLevel(params) {
   }
   state.programCache = new Map();
   state.programOrder = [];
-  state.oneLevel = { fileConfig };
+  state.sourceFiles = new Map();
+  state.oneLevel = { fileConfig, residentPrograms: Math.min(rootsByConfig.size, MAX_ONE_LEVEL_RESIDENT_PROGRAMS) };
   return {
     plannedFiles: planned.length - unowned.length,
     programCount: rootsByConfig.size,

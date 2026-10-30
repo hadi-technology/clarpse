@@ -65,8 +65,12 @@ one again over every analysed file; since no program outlives its session, nothi
    options of the config owning the file, and follows the re-exports of the files it reaches.
 2) The Java side applies the level-one budget.
 3) `planOneLevel` assigns every planned file to the config owning it. The program of each config
-   owning an analysed file holds all planned files; a config owning only level-one files holds
-   those. Every planned program also holds its config's `.d.ts` root files. Programs are built with
+   owning an analysed file holds the planned files that config owns and the planned files those
+   reach through imports, `export ... from`, `require`, `import()` and `/// <reference path>`,
+   transitively, so a program holds nothing its own files cannot reach. The planned `.d.ts` files
+   are held by each such program, since global declarations are reached without an import. A config
+   owning only level-one files holds those. Every planned program also holds its config's `.d.ts`
+   root files. Programs are built with
    `noResolve` and without project references, so the compiler does not follow imports past the
    planned files, and does not redirect a referenced project's sources to build output that a
    checkout does not have.
@@ -154,6 +158,17 @@ These are properly modeled as fields with their corresponding visibility modifie
   the `include`/`exclude` globs, and a file->config map is built from those root file names during
   initialization. A file that no config lists is looked for in the programs of the configs whose
   directory encloses it, nearest first.
+- Programs share parsed source files. Each program is built on a compiler host that hands out one
+  `SourceFile` per file, language version, module format and set of source-file-affecting compiler
+  options (the key a language service's document registry uses), so a file held by several programs
+  is read and parsed once, and a program never receives a file parsed under options that would parse
+  or bind it differently. Default library declarations are shared in every compile; every file is
+  shared in a one-level compile, whose planned files bound what any program holds. Outside it a
+  program may reach much of a repository, so only the library files are shared and the bound on
+  resident programs still bounds memory.
+- In a one-level compile each program holds only planned files, which programs share, so up to 16
+  programs stay resident whatever `maxPrograms` is: files are modelled analysed first and level one
+  second, and a program evicted between the two would be built again.
 - A config whose program fails to build is remembered as failed, so one broken config costs one
   attempt rather than one per file.
 - The daemon is single-threaded; Java parsing can run in parallel.

@@ -20,9 +20,20 @@ final class SyntheticMonorepo {
     final int groups;
     final int perGroup;
     final boolean separateConfigs;
+    final boolean pairedImports;
     final Map<String, String> files = new LinkedHashMap<>();
 
     SyntheticMonorepo(final int groups, final int perGroup, final boolean separateConfigs) {
+        this(groups, perGroup, separateConfigs, false);
+    }
+
+    /**
+     * As above; with {@code pairedImports} only groups of even index import the next group, so the
+     * import graph has no cycle across groups.
+     */
+    SyntheticMonorepo(final int groups, final int perGroup, final boolean separateConfigs,
+                      final boolean pairedImports) {
+        this.pairedImports = pairedImports;
         this.groups = groups;
         this.perGroup = perGroup;
         this.separateConfigs = separateConfigs;
@@ -60,7 +71,7 @@ final class SyntheticMonorepo {
             src.append("import { ").append(cls(g, i - 1)).append(" } from \"./f").append(i - 1).append("\";\n");
             body.append("  before: ").append(cls(g, i - 1)).append(" | undefined;\n");
         }
-        if (groups > 1) {
+        if (groups > 1 && (!pairedImports || g % 2 == 0)) {
             final int next = (g + 1) % groups;
             src.append("import { ").append(cls(next, i)).append(" } from \"")
                     .append(relative(g, next, i)).append("\";\n");

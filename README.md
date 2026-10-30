@@ -194,7 +194,9 @@ Entries handed to a `DiscardedEntryObserver` count against these limits like any
 - `CLARPSE_TS_MAX_PROGRAMS` or `-Dclarpse.typescript.maxPrograms=<n>` caps how many TypeScript
   programs the daemon holds at once (default: 2). A program retains every source file it reaches and
   a type checker over them, so this, rather than the heap size, is what bounds a repository with many
-  `tsconfig.json` files. Raise it to trade memory for fewer rebuilds when files are interleaved
+  `tsconfig.json` files. Programs share the parsed default library declarations and, in a one-level analysis,
+  every parsed source file, so each is parsed once however many programs hold it; in a one-level
+  analysis up to 16 programs stay resident whatever this is set to. Raise it to trade memory for fewer rebuilds when files are interleaved
   across projects.
 
 Example for large projects:

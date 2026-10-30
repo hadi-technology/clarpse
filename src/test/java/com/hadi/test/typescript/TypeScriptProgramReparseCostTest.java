@@ -81,32 +81,37 @@ public class TypeScriptProgramReparseCostTest {
 
     @Test
     public void aConfigsProgramHoldsOnlyTheFilesItOwnsAndWhatTheyImport() throws Exception {
-        final SyntheticMonorepo repo = new SyntheticMonorepo(GROUPS, PER_GROUP, true);
-        // One analysed file per package; each imports its predecessor (same package, so level one)
-        // and a file of the next package (analysed or level one of that package).
+        final SyntheticMonorepo repo = new SyntheticMonorepo(GROUPS, PER_GROUP, true, true);
         final List<String> analysed = java.util.stream.IntStream.range(0, GROUPS)
                 .mapToObj(g -> repo.path(g, 3)).collect(Collectors.toList());
         final Observation observed = ParseCountedTypeScript.observe(repo.files, analysed);
         assertTrue("fixture must compile cleanly: " + observed.result.failures(),
                 observed.result.failures().isEmpty());
 
-        // Per package: the analysed file and its same-package import are owned (2); what those two
-        // import in the next package is the only other file the program may need (2).
-        final int allowed = 4;
-        final List<Integer> rootCounts = observed.programRoots.stream().map(List::size)
-                .collect(Collectors.toList());
-        final int planned = observed.programRoots.stream().mapToInt(List::size).max().orElse(0);
-        assertTrue("expected each of the " + GROUPS + " programs to hold at most " + allowed
-                        + " root files (2 owned + 2 imported), but root counts were " + rootCounts
-                        + " and the largest program held " + planned + " roots and "
+        // Per package g: the analysed file f3 and its same-package import f2 are owned. A package
+        // of even index also imports f3 and f2 of the next package, so its program may hold those
+        // two as well; an odd package imports nothing from another package.
+        final List<String> built = observed.programOutDirs;
+        final StringBuilder over = new StringBuilder();
+        for (int p = 0; p < observed.programs(); p++) {
+            final int group = Integer.parseInt(built.get(p).substring(built.get(p).lastIndexOf('g') + 1));
+            final int allowed = group % 2 == 0 ? 4 : 2;
+            final int roots = observed.programRoots.get(p).size();
+            if (roots > allowed) {
+                over.append(String.format("g%02d: %d roots (at most %d); ", group, roots, allowed));
+            }
+        }
+        assertTrue("expected each program to hold only the files its config owns and what they import, but "
+                        + over + "root counts were " + observed.programRoots.stream().map(List::size)
+                        .collect(Collectors.toList()) + " and the largest program held "
                         + observed.programFileCounts.stream().mapToInt(Integer::intValue).max().orElse(0)
                         + " source files in all",
-                planned <= allowed);
+                observed.programs() > 0 && over.length() == 0);
     }
 
     @Test
     public void noProgramIsBuiltTwiceWhileAnalysedAndLevelOneFilesAreModelled() throws Exception {
-        final SyntheticMonorepo repo = new SyntheticMonorepo(GROUPS, PER_GROUP, true);
+        final SyntheticMonorepo repo = new SyntheticMonorepo(GROUPS, PER_GROUP, true, true);
         final List<String> analysed = java.util.stream.IntStream.range(0, GROUPS)
                 .mapToObj(g -> repo.path(g, 3)).collect(Collectors.toList());
         final Observation observed = ParseCountedTypeScript.observe(repo.files, analysed);
