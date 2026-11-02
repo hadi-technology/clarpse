@@ -133,6 +133,49 @@ public class DiscardedEntryObserverTest {
     }
 
     @Test
+    public void entriesSkippedAfterTheTotalLimitAreReportedWithThatReason() throws Exception {
+        RecordingObserver observer = new RecordingObserver(path -> false);
+
+        ProjectFiles files = ProjectFiles.fromZip(new ByteArrayInputStream(archiveOverTheTotalSizeLimit()), observer);
+
+        assertTrue(describe(files).isEmpty());
+        assertEquals(DiscardedEntryObserver.SkipReason.TOTAL_SIZE_LIMIT, observer.skipped.get("repo/src/Main.java"));
+        assertFalse(observer.skipped.containsKey("repo/docs/large19.md"));
+        assertEquals(DiscardedEntryObserver.SkipReason.TOTAL_SIZE_LIMIT, observer.skipped.get("repo/docs/large20.md"));
+        assertTrue(observer.skipped.values().stream()
+                .allMatch(reason -> reason == DiscardedEntryObserver.SkipReason.TOTAL_SIZE_LIMIT));
+    }
+
+    @Test
+    public void aSourceFileOverThePerEntryLimitIsReported() throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(out)) {
+            zos.putNextEntry(new ZipEntry("repo/src/Huge.java"));
+            zos.write(new byte[MAX_ENTRY_UNCOMPRESSED_BYTES + 1]);
+            zos.closeEntry();
+            zos.putNextEntry(new ZipEntry("repo/src/Main.java"));
+            zos.write(JAVA_SOURCE.getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+        RecordingObserver observer = new RecordingObserver();
+
+        ProjectFiles files = ProjectFiles.fromZip(new ByteArrayInputStream(out.toByteArray()), observer);
+
+        assertEquals(List.of("/repo/src/Main.java=" + JAVA_SOURCE), describe(files));
+        assertEquals(Map.of("repo/src/Huge.java", DiscardedEntryObserver.SkipReason.ENTRY_TOO_LARGE),
+                observer.skipped);
+    }
+
+    @Test
+    public void anObserverThatOnlyImplementsObserveStillWorksWhenEntriesAreSkipped() throws Exception {
+        DiscardedEntryObserver minimal = (path, content, lastModified) -> { };
+
+        ProjectFiles files = ProjectFiles.fromZip(new ByteArrayInputStream(archiveOverTheTotalSizeLimit()), minimal);
+
+        assertTrue(describe(files).isEmpty());
+    }
+
+    @Test
     public void theTotalSizeLimitCountsTheEntriesAnObserverDeclined() throws Exception {
         byte[] archive = archiveOverTheTotalSizeLimit();
         RecordingObserver declining = new RecordingObserver(path -> false);
@@ -308,6 +351,7 @@ public class DiscardedEntryObserverTest {
         private final Predicate<String> filter;
         private final List<String> asked = new ArrayList<>();
         private final List<String> paths = new ArrayList<>();
+        private final Map<String, DiscardedEntryObserver.SkipReason> skipped = new LinkedHashMap<>();
         private final Map<String, byte[]> contents = new LinkedHashMap<>();
         private final Map<String, Instant> times = new LinkedHashMap<>();
 
@@ -330,6 +374,11 @@ public class DiscardedEntryObserverTest {
             this.paths.add(path);
             this.contents.put(path, content);
             this.times.put(path, lastModified);
+        }
+
+        @Override
+        public void skipped(final String path, final DiscardedEntryObserver.SkipReason reason) {
+            this.skipped.put(path, reason);
         }
 
         private String text(final String path) {

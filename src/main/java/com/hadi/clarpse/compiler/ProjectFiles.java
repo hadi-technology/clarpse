@@ -268,13 +268,15 @@ public class ProjectFiles implements AutoCloseable {
                         boolean observed = !kept && observer != null && observesPath(observer, entryPath);
                         byte[] content = null;
                         if (kept || observed) {
-                            content = readEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, safeName);
+                            content = readEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, entryPath);
                             totalBytes += content.length;
                         } else {
-                            totalBytes += countEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, safeName);
+                            totalBytes += countEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, entryPath);
                         }
                         if (totalBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
-                            throw new IllegalArgumentException("Zip exceeds maximum uncompressed size.");
+                            throw new SkippedEntryException(entryPath,
+                                    DiscardedEntryObserver.SkipReason.TOTAL_SIZE_LIMIT,
+                                    "Zip exceeds maximum uncompressed size.");
                         }
                         if (kept) {
                             String textContent = new String(content, StandardCharsets.UTF_8);
@@ -293,6 +295,9 @@ public class ProjectFiles implements AutoCloseable {
                             observe(observer, entryPath, content, entry);
                         }
                     }
+                } catch (final SkippedEntryException e) {
+                    LOGGER.warn("Skipping zip entry {}: {}", entry.getName(), e.getMessage());
+                    reportSkipped(observer, e);
                 } catch (final IllegalArgumentException e) {
                     LOGGER.warn("Skipping problematic zip entry {}: {}", entry.getName(), e.getMessage());
                 }
@@ -334,6 +339,40 @@ public class ProjectFiles implements AutoCloseable {
             observer.observe(entryPath, content, lastModified);
         } catch (final RuntimeException e) {
             throw new ObserverFailure(e);
+        }
+    }
+
+    /** Tells the observer, if there is one, which entry extraction skipped and why. */
+    private static void reportSkipped(final DiscardedEntryObserver observer, final SkippedEntryException skipped) {
+        if (observer == null) {
+            return;
+        }
+        try {
+            observer.skipped(skipped.path(), skipped.reason());
+        } catch (final RuntimeException e) {
+            throw new ObserverFailure(e);
+        }
+    }
+
+    /** An entry extraction skips because of a size limit; the archive is still read past it. */
+    private static final class SkippedEntryException extends IllegalArgumentException {
+        private static final long serialVersionUID = 1L;
+        private final String path;
+        private final DiscardedEntryObserver.SkipReason reason;
+
+        SkippedEntryException(final String path, final DiscardedEntryObserver.SkipReason reason,
+                              final String message) {
+            super(message);
+            this.path = path;
+            this.reason = reason;
+        }
+
+        String path() {
+            return this.path;
+        }
+
+        DiscardedEntryObserver.SkipReason reason() {
+            return this.reason;
         }
     }
 
@@ -390,7 +429,7 @@ public class ProjectFiles implements AutoCloseable {
         while ((read = inputStream.read(buffer)) != -1) {
             total += read;
             if (total > maxBytes) {
-                throw new IllegalArgumentException(
+                throw new SkippedEntryException(entryName, DiscardedEntryObserver.SkipReason.ENTRY_TOO_LARGE,
                         "Zip entry exceeds maximum allowed size: " + entryName + ".");
             }
             output.write(buffer, 0, read);
@@ -409,7 +448,7 @@ public class ProjectFiles implements AutoCloseable {
         while ((read = inputStream.read(buffer)) != -1) {
             total += read;
             if (total > maxBytes) {
-                throw new IllegalArgumentException(
+                throw new SkippedEntryException(entryName, DiscardedEntryObserver.SkipReason.ENTRY_TOO_LARGE,
                         "Zip entry exceeds maximum allowed size: " + entryName + ".");
             }
         }
