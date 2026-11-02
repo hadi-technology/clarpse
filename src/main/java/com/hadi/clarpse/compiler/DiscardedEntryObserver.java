@@ -21,11 +21,24 @@ import java.time.Instant;
  * them against the limits. An observer that accepts one owns the array it is handed, including
  * whatever memory it retains by keeping it.
  *
- * <p>An exception thrown by either method propagates to the caller of the extraction, with the
+ * <p>Entries extraction skips because of a size limit are neither kept nor observed; they are
+ * reported through {@link #skipped(String, SkipReason)}, so a caller can tell an extraction that
+ * read the whole archive from one that stopped short. Skipped entries are reported whatever their
+ * extension, and an observer that does not override the method is told nothing.
+ *
+ * <p>An exception thrown by any of these methods propagates to the caller of the extraction, with the
  * archive closed and the partly built {@link ProjectFiles} discarded.
  */
 @FunctionalInterface
 public interface DiscardedEntryObserver {
+
+    /** Why extraction skipped an entry. */
+    enum SkipReason {
+        /** Reading the entry took the archive past its total uncompressed size limit. */
+        TOTAL_SIZE_LIMIT,
+        /** The entry alone is larger than the per-entry uncompressed size limit. */
+        ENTRY_TOO_LARGE
+    }
 
     /**
      * Whether the entry at this path is worth reading. Extraction asks this before it reads the
@@ -49,4 +62,15 @@ public interface DiscardedEntryObserver {
      * @param lastModified The entry's last-modified time, or null when the archive records none.
      */
     void observe(String path, byte[] content, Instant lastModified);
+
+    /**
+     * Reports an entry extraction skipped because of a size limit. Once the total limit is reached
+     * every later entry is reported with {@link SkipReason#TOTAL_SIZE_LIMIT}. The entry's bytes are
+     * not handed over. The default does nothing.
+     *
+     * @param path The entry's path relative to the archive root, normalised, with forward slashes.
+     * @param reason Why the entry was skipped.
+     */
+    default void skipped(String path, SkipReason reason) {
+    }
 }
