@@ -290,7 +290,10 @@ final class CSharpModelAssembler {
         attachAnnotationReferences(typeComponent, typeModel.annotations, typeIndex, typeModel);
         stack.push(typeComponent);
         for (final String baseType : typeModel.baseTypes) {
+            boolean baseTypeToken = true;
             for (final CSharpFileParser.TypeToken token : CSharpFileParser.extractTypeReferences(baseType)) {
+                final boolean isBase = baseTypeToken;
+                baseTypeToken = false;
                 final String rawToken = token.name();
                 final Resolution resolved = typeIndex.resolveType(rawToken, token.arity(), typeModel, null);
                 if (resolved == null || resolved.name().equals(typeComponent.uniqueName())) {
@@ -299,8 +302,12 @@ final class CSharpModelAssembler {
                 if ("interface".equals(typeModel.kind) || "class".equals(typeModel.kind)
                         || "record".equals(typeModel.kind) || "recordStruct".equals(typeModel.kind)
                         || "struct".equals(typeModel.kind)) {
+                    // Only the first name of a base-list entry is the base type; the names after it are
+                    // its type arguments, which the type merely mentions.
                     final ComponentReference ref;
-                    if (isInterfaceTarget(rawToken, resolved.name(), typeIndex)) {
+                    if (!isBase) {
+                        ref = new SimpleTypeReference(resolved.name());
+                    } else if (isInterfaceTarget(rawToken, resolved.name(), typeIndex)) {
                         ref = new TypeImplementationReference(resolved.name());
                     } else {
                         ref = new TypeExtensionReference(resolved.name());

@@ -1092,7 +1092,7 @@ function resolveSymbolName(symbol, checker) {
   return actual.getName();
 }
 
-function collectSymbolEntries(type, checker, entries, depth) {
+function collectSymbolEntries(type, checker, entries, depth, withoutTypeArguments) {
   if (!type) {
     return;
   }
@@ -1106,11 +1106,11 @@ function collectSymbolEntries(type, checker, entries, depth) {
   }
   if (type.isUnionOrIntersection && type.isUnionOrIntersection()) {
     for (const sub of type.types) {
-      collectSymbolEntries(sub, checker, entries, depth + 1);
+      collectSymbolEntries(sub, checker, entries, depth + 1, withoutTypeArguments);
     }
     return;
   }
-  if (type.aliasTypeArguments) {
+  if (!withoutTypeArguments && type.aliasTypeArguments) {
     for (const arg of type.aliasTypeArguments) {
       if (arg && arg.isThisType) {
         continue;
@@ -1118,7 +1118,7 @@ function collectSymbolEntries(type, checker, entries, depth) {
       collectSymbolEntries(arg, checker, entries, depth + 1);
     }
   }
-  if (type.typeArguments) {
+  if (!withoutTypeArguments && type.typeArguments) {
     for (const arg of type.typeArguments) {
       if (arg && arg.isThisType) {
         continue;
@@ -1132,7 +1132,7 @@ function collectSymbolEntries(type, checker, entries, depth) {
   }
 }
 
-function collectDisplayNames(type, checker, names, depth) {
+function collectDisplayNames(type, checker, names, depth, withoutTypeArguments) {
   if (!type) {
     return;
   }
@@ -1142,11 +1142,11 @@ function collectDisplayNames(type, checker, names, depth) {
   }
   if (type.isUnionOrIntersection && type.isUnionOrIntersection()) {
     for (const sub of type.types) {
-      collectDisplayNames(sub, checker, names, depth + 1);
+      collectDisplayNames(sub, checker, names, depth + 1, withoutTypeArguments);
     }
     return;
   }
-  if (type.aliasTypeArguments) {
+  if (!withoutTypeArguments && type.aliasTypeArguments) {
     for (const arg of type.aliasTypeArguments) {
       if (arg && arg.isThisType) {
         continue;
@@ -1154,7 +1154,7 @@ function collectDisplayNames(type, checker, names, depth) {
       collectDisplayNames(arg, checker, names, depth + 1);
     }
   }
-  if (type.typeArguments) {
+  if (!withoutTypeArguments && type.typeArguments) {
     for (const arg of type.typeArguments) {
       if (arg && arg.isThisType) {
         continue;
@@ -1215,13 +1215,13 @@ function isInternalSymbolName(name) {
   return !!name && TS_INTERNAL_SYMBOL_NAMES.has(name);
 }
 
-function buildReferenceModelsFromType(type, checker, kind) {
+function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments) {
   const references = [];
   const seen = new Set();
   const entries = [];
-  collectSymbolEntries(type, checker, entries);
+  collectSymbolEntries(type, checker, entries, 0, withoutTypeArguments);
   const displayNames = new Set();
-  collectDisplayNames(type, checker, displayNames);
+  collectDisplayNames(type, checker, displayNames, 0, withoutTypeArguments);
   if (!entries.length) {
     const displayName = checker.typeToString(type);
     if (displayName && displayName !== "void") {
@@ -1316,6 +1316,32 @@ function isLostType(type, displayName) {
   return !!displayName && ANY_WORD.test(displayName);
 }
 
+/** The type arguments a type is written with, through unions and intersections, without `this`. */
+function writtenTypeArguments(type, depth) {
+  const found = [];
+  if (!type || (depth || 0) >= MAX_TYPE_DEPTH) {
+    return found;
+  }
+  if (type.isUnionOrIntersection && type.isUnionOrIntersection()) {
+    for (const sub of type.types) {
+      found.push(...writtenTypeArguments(sub, (depth || 0) + 1));
+    }
+    return found;
+  }
+  for (const list of [type.aliasTypeArguments, type.typeArguments]) {
+    for (const arg of list || []) {
+      if (arg && !arg.isThisType) {
+        found.push(arg);
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * The references a heritage clause makes. Only the type named in the clause is extended or
+ * implemented; the types written as its type arguments (`B<C>`) are ordinary references.
+ */
 function buildHeritageReferences(node, checker) {
   const references = [];
   if (!node.heritageClauses) {
@@ -1325,7 +1351,10 @@ function buildHeritageReferences(node, checker) {
     const kind = clause.token === state.ts.SyntaxKind.ExtendsKeyword ? "extends" : "implements";
     for (const typeNode of clause.types) {
       const type = checker.getTypeAtLocation(typeNode);
-      references.push(...buildReferenceModelsFromType(type, checker, kind));
+      references.push(...buildReferenceModelsFromType(type, checker, kind, true));
+      for (const argument of writtenTypeArguments(type)) {
+        references.push(...buildReferenceModelsFromType(argument, checker, "type"));
+      }
     }
   }
   return references;
