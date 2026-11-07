@@ -73,11 +73,12 @@ public class TypeScriptWrittenTypeAnnotationTest {
         Assert.assertEquals("[" + literals
                 + "SimpleTypeReference:external:(\"alpha\" | \"beta\" | \"gamma\")[], "
                 + "SimpleTypeReference:external:Partial, SimpleTypeReference:internal:src.Tokens.Flags, "
-                + "SimpleTypeReference:internal:src.Tokens.TOKENS]",
+                + "SimpleTypeReference:internal:src.Tokens.TOKENS, SimpleTypeReference:internal:src.Tokens.Token]",
                 references("tokensFromFlags"));
         Assert.assertEquals("[" + literals + "SimpleTypeReference:external:\"one\", "
                 + "SimpleTypeReference:external:\"two\", SimpleTypeReference:external:Record, "
-                + "SimpleTypeReference:external:readonly (\"alpha\" | \"beta\" | \"gamma\")[]]",
+                + "SimpleTypeReference:external:readonly (\"alpha\" | \"beta\" | \"gamma\")[], "
+                + "SimpleTypeReference:internal:src.Tokens.Id, SimpleTypeReference:internal:src.Tokens.Token]",
                 references("RUNTIME"));
     }
 

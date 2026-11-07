@@ -1974,7 +1974,10 @@ function buildLocalVariableModel(declaration, checker) {
     return null;
   }
   const variableType = checker.getTypeAtLocation(declaration);
-  let references = buildReferenceModelsFromType(variableType, checker, "type");
+  let references = mergeReferences(
+    buildReferenceModelsFromType(variableType, checker, "type"),
+    writtenAliasReferences(declaration.type, checker)
+  );
   if (!declaration.type && declaration.initializer) {
     references = mergeReferences(
       references,
@@ -2400,7 +2403,10 @@ function buildParameterModels(parameters, checker) {
       implementationHash: stableImplementationHash(param.getText()),
       modifiers: collectModifiers(state.ts, param),
       jsDoc: getJsDoc(param),
-      references: buildReferenceModelsFromType(paramType, checker, "type")
+      references: mergeReferences(
+        buildReferenceModelsFromType(paramType, checker, "type"),
+        writtenAliasReferences(param.type, checker)
+      )
     });
   }
   return models;
@@ -2420,6 +2426,7 @@ function buildFieldModel(node, checker) {
     jsDoc: getJsDoc(node),
     references: mergeReferences(
       buildReferenceModelsFromType(fieldType, checker, "type"),
+      writtenAliasReferences(node.type, checker),
       node.initializer ? collectBodyDetails(node.initializer, checker).references : [],
       collectValueReferences(node.initializer, checker, null),
       buildDecoratorReferences(node, checker)
@@ -2447,6 +2454,7 @@ function buildMethodModel(node, checker, kindLabel) {
     members: paramModels.concat(bodyDetails.locals),
     references: mergeReferences(
       returnTypeObject ? buildReferenceModelsFromType(returnTypeObject, checker, "type") : [],
+      writtenAliasReferences(node.type, checker),
       bodyDetails.references,
       buildDecoratorReferences(node, checker)
     )
@@ -2734,6 +2742,60 @@ function typeAliasReference(node, checker) {
 }
 
 /**
+ * A reference to the repository class, interface, enum or type alias a type reference names, as
+ * written, or null where it names none. Unlike the type the name resolves to, the written name is
+ * not lost when the type is an instantiation of a generic or has been given a name of its own.
+ */
+function declaredTypeReference(node, checker) {
+  const nameNode = state.ts.isTypeReferenceNode(node) ? node.typeName : node.expression;
+  let symbol;
+  try {
+    symbol = nameNode ? checker.getSymbolAtLocation(nameNode) : null;
+    if (symbol && (symbol.flags & state.ts.SymbolFlags.Alias)) {
+      symbol = checker.getAliasedSymbol(symbol);
+    }
+  } catch (err) {
+    return null;
+  }
+  const kinds = state.ts.SymbolFlags.Class | state.ts.SymbolFlags.Interface
+    | state.ts.SymbolFlags.Enum | state.ts.SymbolFlags.TypeAlias;
+  if (!symbol || !(symbol.flags & kinds)) {
+    return null;
+  }
+  const declaration = symbol.declarations && symbol.declarations.length ? symbol.declarations[0] : null;
+  const fileName = declaration && declaration.getSourceFile ? declaration.getSourceFile().fileName : null;
+  if (!fileName || !isInternalFile(fileName) || !declaration.parent
+    || !state.ts.isSourceFile(declaration.parent)) {
+    return null;
+  }
+  return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: symbol.getName() } };
+}
+
+/**
+ * The type aliases a type is written with: `Tracked` in `f(): Tracked`, however deep in a union,
+ * an array or a type argument. The type an alias stands for is what the checker reports, and for a
+ * union or an intersection that is its members, so the name the code was written against would
+ * otherwise be lost.
+ */
+function writtenAliasReferences(typeNode, checker) {
+  const references = [];
+  if (!typeNode || state.shallowBody) {
+    return references;
+  }
+  function visit(child) {
+    if (state.ts.isTypeReferenceNode(child) || state.ts.isExpressionWithTypeArguments(child)) {
+      const named = typeAliasReference(child, checker);
+      if (named) {
+        references.push(named);
+      }
+    }
+    state.ts.forEachChild(child, visit);
+  }
+  visit(typeNode);
+  return references;
+}
+
+/**
  * A type alias: the name a module gives a type expression. Its references are the named types the
  * expression is written with, read from the expression itself so that a type nested inside an
  * object literal, a mapped type or a function type is found as well.
@@ -2748,6 +2810,14 @@ function buildTypeAliasModel(node, checker) {
         // Another alias, named as written: resolving its type would expand a union or literal
         // alias into its members and lose the name the code was written against.
         references.push(named);
+      } else if (declaredTypeReference(child, checker)) {
+        // A generic instantiation such as `Shape<"card">` resolves to a type the alias itself
+        // names, so the declaration it instantiates is taken from the written name.
+        references.push(declaredTypeReference(child, checker));
+        const referenced = checker.getTypeAtLocation(child);
+        if (!(referenced.flags & state.ts.TypeFlags.TypeParameter)) {
+          references.push(...buildReferenceModelsFromType(referenced, checker, "type"));
+        }
       } else if (!(referenced.flags & state.ts.TypeFlags.TypeParameter)) {
         // The alias's own type parameters name no declaration a consumer could look up.
         references.push(...buildReferenceModelsFromType(referenced, checker, "type"));

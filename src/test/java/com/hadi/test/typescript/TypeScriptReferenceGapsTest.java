@@ -296,4 +296,46 @@ public class TypeScriptReferenceGapsTest {
         assertFalse(targets(component(result, "packages.a.src.use.measure")).toString(),
                 targets(component(result, "packages.a.src.use.measure")).contains("packages.b.src.index.area"));
     }
+
+    private static final String ALIASES = "export interface Shape<K extends string> { kind: K }\n"
+            + "export interface Circle { r: number }\n"
+            + "export interface Square { s: number }\n"
+            + "export type Card = Shape<\"card\">;\n"
+            + "export type Round = Circle | Square;\n"
+            + "export type Ctx = { id: string };\n"
+            + "export type Tracked = Ctx & { extra: number };\n";
+
+    @Test
+    public void anAliasOfAGenericInstantiationReferencesTheGenericItInstantiates() throws Exception {
+        final CompileResult result = compile("/src/types.ts", ALIASES);
+        assertTrue(targets(component(result, "src.types.Card")).toString(),
+                targets(component(result, "src.types.Card")).contains("src.types.Shape"));
+    }
+
+    @Test
+    public void anAliasWrittenAsAReturnTypeIsReferencedByName() throws Exception {
+        final CompileResult result = compile("/src/types.ts", ALIASES,
+                "/src/use.ts", "import { Tracked, Round } from './types';\n"
+                        + "export function tracked(): Tracked { return null as unknown as Tracked; }\n"
+                        + "export function pick(round: Round): Round[] { return [round]; }\n");
+        assertTrue("the intersection alias, not only the type it stands for: "
+                        + targets(component(result, "src.use.tracked")),
+                targets(component(result, "src.use.tracked")).containsAll(Set.of("src.types.Tracked", "src.types.Ctx")));
+        assertTrue(targets(component(result, "src.use.pick")).toString(),
+                targets(component(result, "src.use.pick")).contains("src.types.Round"));
+        assertTrue("and as a parameter's type: " + targets(component(result, "src.use.pick.round")),
+                targets(component(result, "src.use.pick.round")).contains("src.types.Round"));
+    }
+
+    @Test
+    public void anAliasWrittenAsAFieldOrVariableTypeIsReferencedByName() throws Exception {
+        final CompileResult result = compile("/src/types.ts", ALIASES,
+                "/src/use.ts", "import { Round, Tracked } from './types';\n"
+                        + "export class Holder { shape: Round | undefined; }\n"
+                        + "export const current: Tracked | null = null;\n");
+        assertTrue(targets(component(result, "src.use.Holder.shape")).toString(),
+                targets(component(result, "src.use.Holder.shape")).contains("src.types.Round"));
+        assertTrue(targets(component(result, "src.use.current")).toString(),
+                targets(component(result, "src.use.current")).contains("src.types.Tracked"));
+    }
 }
