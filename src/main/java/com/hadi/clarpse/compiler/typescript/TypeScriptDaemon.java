@@ -402,14 +402,10 @@ public final class TypeScriptDaemon implements AutoCloseable {
                             message = message + " (" + data.toString() + ")";
                         }
                     }
-                    if (!disarmTimeout()) {
-                        throw requestTimeoutException();
-                    }
+                    settleReply();
                     throw new TypeScriptDaemonException(message, code);
                 }
-                if (!disarmTimeout()) {
-                    throw requestTimeoutException();
-                }
+                settleReply();
                 return response.get("result");
             }
         } catch (final IOException e) {
@@ -487,6 +483,13 @@ public final class TypeScriptDaemon implements AutoCloseable {
         }, limit.toMillis(), TimeUnit.MILLISECONDS);
     }
 
+    /** Ends the timeout of a request that was answered, unless it had already fired. */
+    private void settleReply() throws TypeScriptDaemonException {
+        if (!disarmTimeout()) {
+            throw requestTimeoutException();
+        }
+    }
+
     /**
      * Ends the armed timeout, because the request was answered or has ended.
      *
@@ -526,11 +529,8 @@ public final class TypeScriptDaemon implements AutoCloseable {
      */
     private void awaitProcessExit() {
         final Process current = process;
-        if (current == null) {
-            return;
-        }
         try {
-            if (!current.waitFor(SHUTDOWN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+            if (current != null && !current.waitFor(SHUTDOWN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
                 LOGGER.warn("The TypeScript daemon was still running {}s after it was killed.",
                         SHUTDOWN_TIMEOUT.toSeconds());
             }

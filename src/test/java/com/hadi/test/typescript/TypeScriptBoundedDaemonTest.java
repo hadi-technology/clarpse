@@ -48,6 +48,7 @@ public class TypeScriptBoundedDaemonTest {
     };
 
     private Path scratch;
+    private boolean diesOnRestart;
 
     @Before
     public void createScratch() throws IOException {
@@ -211,6 +212,18 @@ public class TypeScriptBoundedDaemonTest {
     }
 
     @Test
+    public void whenTheReplacementCannotStartTheRestOfTheFilesAreRecordedAsNotAnalysed() throws Exception {
+        diesOnRestart = true;
+        fakeNode("*app2.ts*", "hang", "0");
+        System.setProperty("clarpse.typescript.requestTimeoutSeconds", "1");
+        final CompileResult result = TypeScriptTestUtil.compileFixture(FIXTURE);
+        final TreeSet<String> failed = failedPaths(result);
+        assertEquals("The stuck file and every file after it.", 10, failed.size());
+        assertFalse(failed.stream().anyMatch(path -> path.endsWith("app1.ts")));
+        assertTrue(result.failures().stream().anyMatch(failure -> failure.message().contains("could not be restarted")));
+    }
+
+    @Test
     public void aDaemonThatDiesCostsItsFileAndNotTheWholeRepository() throws Exception {
         fakeNode("*app2.ts*", "die", "0");
         System.setProperty("clarpse.typescript.maxRestarts", "0");
@@ -284,6 +297,39 @@ public class TypeScriptBoundedDaemonTest {
         System.setProperty("clarpse.typescript.maxRestarts", "");
         assertEquals("An empty value is no value.", 3, TypeScriptLimits.count(TypeScriptLimits.MAX_RESTARTS_PROP,
                 TypeScriptLimits.MAX_RESTARTS_ENV, 3));
+    }
+
+    @Test
+    public void aLimitIsReadFromTheEnvironmentWhenNoPropertySetsIt() {
+        assertEquals(7.5, TypeScriptLimits.seconds(TypeScriptLimits.COMPILE_BUDGET_PROP,
+                TypeScriptLimits.COMPILE_BUDGET_ENV, 420, name -> TypeScriptLimits.COMPILE_BUDGET_ENV.equals(name)
+                        ? " 7.5 " : null), 0.0);
+        System.setProperty("clarpse.typescript.compileBudgetSeconds", "2");
+        assertEquals("a property wins over the environment", 2.0, TypeScriptLimits.seconds(
+                TypeScriptLimits.COMPILE_BUDGET_PROP, TypeScriptLimits.COMPILE_BUDGET_ENV, 420, name -> "7.5"), 0.0);
+        System.clearProperty("clarpse.typescript.compileBudgetSeconds");
+        assertEquals("an invalid value in the environment is ignored", 420.0, TypeScriptLimits.seconds(
+                TypeScriptLimits.COMPILE_BUDGET_PROP, TypeScriptLimits.COMPILE_BUDGET_ENV, 420, name -> "-3"), 0.0);
+        assertEquals("a blank one is no value", 420.0, TypeScriptLimits.seconds(TypeScriptLimits.COMPILE_BUDGET_PROP,
+                TypeScriptLimits.COMPILE_BUDGET_ENV, 420, name -> "  "), 0.0);
+    }
+
+    @Test
+    public void aBudgetOfZeroMeansEveryFileIsAnalysed() throws Exception {
+        final Path log = fakeNode("*nothing-matches*", "hang", "0.2");
+        System.setProperty("clarpse.typescript.compileBudgetSeconds", "0");
+        final CompileResult result = TypeScriptTestUtil.compileFixture(FIXTURE);
+        assertTrue(result.failures().isEmpty());
+        assertEquals(11, requestsIn(log).stream().filter("getFileModel"::equals).count());
+    }
+
+    @Test
+    public void whenTheDaemonDiesWhileGroupingFilesItIsReplacedAndTheFilesAreStillAnalysed() throws Exception {
+        final Path log = fakeNode("*nothing-matches*", "hang", "0", "die");
+        final CompileResult result = TypeScriptTestUtil.compileFixture(FIXTURE);
+        assertTrue(result.failures().isEmpty());
+        assertEquals(2, requestsIn(log).stream().filter("initRepo"::equals).count());
+        assertEquals(11, requestsIn(log).stream().filter("getFileModel"::equals).count());
     }
 
     @Test
@@ -424,7 +470,9 @@ public class TypeScriptBoundedDaemonTest {
             onMatch = "exec sleep 600";
         }
         final String ownersReply;
-        if ("hang".equals(ownersBehaviour)) {
+        if ("die".equals(ownersBehaviour)) {
+            ownersReply = "exit 1";
+        } else if ("hang".equals(ownersBehaviour)) {
             ownersReply = "exec sleep 600";
         } else {
             ownersReply = "echo '{\"jsonrpc\":\"2.0\",\"id\":'$id',\"result\":{\"owners\":{}}}'";
@@ -432,6 +480,8 @@ public class TypeScriptBoundedDaemonTest {
         final String script = String.join("\n",
                 "#!/bin/sh",
                 "case \"$1\" in --version) echo v22.0.0; exit 0;; esac",
+                diesOnRestart ? "if [ -e '" + scratch.resolve("started") + "' ]; then exit 1; fi; : > '"
+                        + scratch.resolve("started") + "'" : ":",
                 "while IFS= read -r line; do",
                 "  id=$(printf '%s' \"$line\" | sed -n 's/.*\"id\":\\([0-9][0-9]*\\).*/\\1/p')",
                 "  method=$(printf '%s' \"$line\" | sed -n 's/.*\"method\":\"\\([A-Za-z]*\\)\".*/\\1/p')",

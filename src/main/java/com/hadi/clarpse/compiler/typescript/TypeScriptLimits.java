@@ -1,12 +1,13 @@
 package com.hadi.clarpse.compiler.typescript;
 
-import com.hadi.clarpse.compiler.ClarpseProperties;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.function.UnaryOperator;
+
 /**
  * Reads the limits that bound a TypeScript analysis. Each is set by a system property, else an
- * environment variable, else the properties file, else its default; a value that is not a
+ * environment variable, else its default; a value that is not a
  * non-negative number is reported and ignored. Zero turns a limit off.
  */
 public final class TypeScriptLimits {
@@ -38,21 +39,35 @@ public final class TypeScriptLimits {
      * @return The seconds; zero for no limit.
      */
     public static double seconds(final String prop, final String env, final double defaultValue) {
-        final String raw = raw(prop, env);
-        if (raw != null) {
-            try {
-                final double value = Double.parseDouble(raw);
-                if (value >= 0 && !Double.isNaN(value) && !Double.isInfinite(value)) {
-                    return value;
-                }
-            } catch (final NumberFormatException e) {
-                // reported below
-            }
-            LOGGER.warn("Invalid value '{}' for {}: it must be a number of seconds, zero or more. "
-                    + "Using the default.", raw, prop);
+        return seconds(prop, env, defaultValue, System::getenv);
+    }
+
+    /**
+     * A limit in seconds, with the environment given rather than the process's own.
+     *
+     * @param prop         The system property.
+     * @param env          The environment variable.
+     * @param defaultValue The value where none is set or the one set is not valid.
+     * @param environment  Looks an environment variable up by name; null where it is not set.
+     * @return The seconds; zero for no limit.
+     */
+    public static double seconds(final String prop, final String env, final double defaultValue,
+                                 final UnaryOperator<String> environment) {
+        final String raw = raw(prop, env, environment);
+        if (raw == null) {
             return defaultValue;
         }
-        return fromFile(prop, defaultValue);
+        try {
+            final double value = Double.parseDouble(raw);
+            if (value >= 0 && !Double.isNaN(value) && !Double.isInfinite(value)) {
+                return value;
+            }
+        } catch (final NumberFormatException e) {
+            // reported below
+        }
+        LOGGER.warn("Invalid value '{}' for {}: it must be a number of seconds, zero or more. "
+                + "Using the default.", raw, prop);
+        return defaultValue;
     }
 
     /**
@@ -64,31 +79,18 @@ public final class TypeScriptLimits {
      * @return The count; zero or more.
      */
     public static int count(final String prop, final String env, final int defaultValue) {
-        final double value = seconds(prop, env, defaultValue);
-        return (int) Math.min(Integer.MAX_VALUE, Math.floor(value));
+        return (int) Math.min(Integer.MAX_VALUE, Math.floor(seconds(prop, env, defaultValue)));
     }
 
-    private static String raw(final String prop, final String env) {
+    private static String raw(final String prop, final String env, final UnaryOperator<String> environment) {
         final String fromProperty = System.getProperty(prop);
         if (fromProperty != null && !fromProperty.trim().isEmpty()) {
             return fromProperty.trim();
         }
-        final String fromEnv = System.getenv(env);
+        final String fromEnv = environment.apply(env);
         if (fromEnv != null && !fromEnv.trim().isEmpty()) {
             return fromEnv.trim();
         }
         return null;
-    }
-
-    private static double fromFile(final String prop, final double defaultValue) {
-        final int value = ClarpseProperties.getInt(prop, Integer.MIN_VALUE);
-        if (value == Integer.MIN_VALUE) {
-            return defaultValue;
-        }
-        if (value < 0) {
-            LOGGER.warn("Invalid value '{}' for {}: it must be zero or more. Using the default.", value, prop);
-            return defaultValue;
-        }
-        return value;
     }
 }

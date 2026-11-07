@@ -199,7 +199,7 @@ Entries handed to a `DiscardedEntryObserver` count against these limits like any
   analysis up to 16 programs stay resident whatever this is set to. Raise it to trade memory for fewer rebuilds when files are interleaved
   across projects.
 - TypeScript analysis is bounded. A limit of `0` turns it off; a negative or non-numeric value is
-  reported and the default used. Each is also read from `clarpse.properties`.
+  reported and the default used.
   - `CLARPSE_TS_REQUEST_TIMEOUT_SECONDS` or `-Dclarpse.typescript.requestTimeoutSeconds=<s>` (default
     120): how long the daemon may take to answer for one file before it is killed.
   - `CLARPSE_TS_HEAVY_REQUEST_TIMEOUT_SECONDS` or `-Dclarpse.typescript.heavyRequestTimeoutSeconds=<s>`
