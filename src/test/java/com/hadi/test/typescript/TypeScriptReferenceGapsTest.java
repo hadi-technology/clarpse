@@ -440,4 +440,18 @@ public class TypeScriptReferenceGapsTest {
                 com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT,
                 component(result, "src.errors.TimeoutError.constructor(number, Detail, string).timeout").componentType());
     }
+
+    @Test
+    public void aTypePredicateReferencesTheTypeItTestsFor() throws Exception {
+        final CompileResult result = compile("/src/guards.ts",
+                "export class ApiError { status = 1; }\n"
+                        + "export function isApiError(value: unknown): value is ApiError { return true; }\n"
+                        + "export function assertApi(value: unknown): asserts value is ApiError { }\n"
+                        + "export const isApi = (value: unknown): value is ApiError => true;\n"
+                        + "export class Guard { check(value: unknown): value is ApiError { return true; } }\n");
+        for (final String name : new String[] {"isApiError", "assertApi", "isApi", "Guard.check(unknown)"}) {
+            assertTrue(name + ": " + targets(component(result, "src.guards." + name)),
+                    targets(component(result, "src.guards." + name)).contains("src.guards.ApiError"));
+        }
+    }
 }

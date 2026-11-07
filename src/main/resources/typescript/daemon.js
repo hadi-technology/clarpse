@@ -2019,6 +2019,10 @@ function functionValueSignatureReferences(declaration, checker) {
       references.push(...buildReferenceModelsFromType(parameterType, checker, "type"));
     }
     references.push(...buildReferenceModelsFromType(checker.getReturnTypeOfSignature(signature), checker, "type"));
+    const predicate = checker.getTypePredicateOfSignature(signature);
+    if (predicate && predicate.type) {
+      references.push(...buildReferenceModelsFromType(predicate.type, checker, "type"));
+    }
   }
   // The signature as written: on the function itself, or on the function type it is cast to.
   let written = declaration.initializer;
@@ -2519,6 +2523,7 @@ function buildMethodModel(node, checker, kindLabel) {
     references: mergeReferences(
       returnTypeObject ? buildReferenceModelsFromType(returnTypeObject, checker, "type") : [],
       writtenAliasReferences(node.type, checker),
+      typePredicateReferences(node, checker),
       typeParameterReferences(node, checker),
       bodyDetails.references,
       buildDecoratorReferences(node, checker)
@@ -2879,6 +2884,21 @@ function writtenAliasReferences(typeNode, checker) {
   }
   visit(typeNode);
   return references;
+}
+
+/**
+ * The type a type predicate narrows to: `ApiError` in `isApiError(e): e is ApiError`. The function
+ * returns a boolean, and the type it tests for is what it is about.
+ */
+function typePredicateReferences(node, checker) {
+  const returned = node && node.type;
+  if (!returned || !state.ts.isTypePredicateNode(returned) || !returned.type || state.shallowBody) {
+    return [];
+  }
+  return mergeReferences(
+    buildReferenceModelsFromType(checker.getTypeAtLocation(returned.type), checker, "type"),
+    writtenAliasReferences(returned.type, checker)
+  );
 }
 
 /**
