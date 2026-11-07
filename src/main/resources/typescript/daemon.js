@@ -337,6 +337,242 @@ function expandProjectReferences(ts, configPaths) {
  * programs. `parseJsonConfigFileContent` expands `include`/`exclude` globs on its own, so which
  * files a config owns is known without constructing a program for it.
  */
+/**
+ * The packages of a repository that is a workspace, as `paths` entries that send an import of the
+ * package to its source.
+ *
+ * A workspace package is imported by its name, and the name resolves through `node_modules` to
+ * the package's built output (`exports` naming `dist/index.d.ts`), which a checkout does not have
+ * until the repository is built and installed. The import then resolves to nothing, and every
+ * edge into the package is lost. Mapping the name to the package's source folder is what a build
+ * would have produced the output from.
+ *
+ * Workspaces are those the root `package.json` (`workspaces`) or `pnpm-workspace.yaml` list. A
+ * dependency declared as an alias of one (`"alias": "npm:@scope/pkg@1"`, or
+ * `"alias": "workspace:@scope/pkg@*"`) maps the alias too.
+ */
+function workspacePaths(repoRoot) {
+  const patterns = workspacePatterns(repoRoot);
+  if (!patterns.include.length) {
+    return {};
+  }
+  const packages = new Map();
+  for (const file of findPackageJsonFiles(repoRoot)) {
+    const dir = path.dirname(file);
+    const relative = path.relative(repoRoot, dir).split(path.sep).join("/");
+    if (!relative || !matchesWorkspace(relative, patterns)) {
+      continue;
+    }
+    const manifest = readJson(file);
+    if (manifest && typeof manifest.name === "string" && manifest.name) {
+      packages.set(manifest.name, { dir, manifest });
+    }
+  }
+  const mapping = {};
+  for (const [name, entry] of packages) {
+    addPackagePaths(mapping, name, entry);
+  }
+  for (const entry of packages.values()) {
+    for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+      const dependencies = entry.manifest[field];
+      for (const [alias, spec] of Object.entries(dependencies && typeof dependencies === "object" ? dependencies : {})) {
+        const target = typeof spec === "string" ? aliasTarget(spec) : null;
+        if (target && packages.has(target) && !mapping[alias]) {
+          addPackagePaths(mapping, alias, packages.get(target));
+        }
+      }
+    }
+  }
+  return mapping;
+}
+
+/** The package an `npm:` or `workspace:` dependency spec names, or null where it names none. */
+function aliasTarget(spec) {
+  const match = /^(?:npm|workspace):(@[^/@]+\/[^@/]+|[^@/]+)(?:@.*)?$/.exec(spec);
+  return match ? match[1] : null;
+}
+
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (err) {
+    return null;
+  }
+}
+
+function findPackageJsonFiles(root) {
+  const found = [];
+  const pending = [root];
+  while (pending.length && found.length < 5000) {
+    const dir = pending.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (entry.name !== "node_modules" && entry.name !== ".git") {
+          pending.push(path.join(dir, entry.name));
+        }
+      } else if (entry.name === "package.json") {
+        found.push(path.join(dir, entry.name));
+      }
+    }
+  }
+  return found.sort();
+}
+
+function workspacePatterns(repoRoot) {
+  const include = [];
+  const exclude = [];
+  const add = (pattern) => {
+    if (typeof pattern !== "string") {
+      return;
+    }
+    const cleaned = pattern.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+    if (cleaned.startsWith("!")) {
+      exclude.push(globToRegExp(cleaned.slice(1)));
+    } else if (cleaned) {
+      include.push(globToRegExp(cleaned));
+    }
+  };
+  const root = readJson(path.join(repoRoot, "package.json"));
+  if (root && root.workspaces) {
+    const listed = Array.isArray(root.workspaces) ? root.workspaces : root.workspaces.packages;
+    (Array.isArray(listed) ? listed : []).forEach(add);
+  }
+  try {
+    const yaml = fs.readFileSync(path.join(repoRoot, "pnpm-workspace.yaml"), "utf8");
+    let inPackages = false;
+    for (const line of yaml.split(/\r?\n/)) {
+      if (/^packages:\s*$/.test(line)) {
+        inPackages = true;
+      } else if (inPackages) {
+        const item = /^\s*-\s*['"]?([^'"#]+?)['"]?\s*(?:#.*)?$/.exec(line);
+        if (item) {
+          add(item[1]);
+        } else if (/^\S/.test(line)) {
+          inPackages = false;
+        }
+      }
+    }
+  } catch (err) {
+    // No pnpm workspace file.
+  }
+  return { include, exclude };
+}
+
+function globToRegExp(glob) {
+  let source = "";
+  for (let i = 0; i < glob.length; i += 1) {
+    const char = glob[i];
+    if (char === "*" && glob[i + 1] === "*") {
+      source += ".*";
+      i += 1;
+      if (glob[i + 1] === "/") {
+        i += 1;
+        source += "(?:/)?";
+      }
+    } else if (char === "*") {
+      source += "[^/]*";
+    } else {
+      source += char.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${source}$`);
+}
+
+function matchesWorkspace(relative, patterns) {
+  return patterns.include.some((pattern) => pattern.test(relative))
+    && !patterns.exclude.some((pattern) => pattern.test(relative));
+}
+
+const BUILD_OUTPUT_DIRECTORIES = /^(?:dist|build|out|lib|esm|cjs|es|types)\//;
+
+/** The source file a built file of a package was made from, or null where it cannot be found. */
+function sourceOfBuiltFile(packageDir, built, sourceRoots) {
+  if (typeof built !== "string") {
+    return null;
+  }
+  const relative = built.replace(/^\.\//, "");
+  const stems = new Set();
+  const stem = relative.replace(/\.d\.[cm]?ts$|\.[cm]?[jt]sx?$/, "");
+  stems.add(stem);
+  stems.add(stem.replace(BUILD_OUTPUT_DIRECTORIES, ""));
+  for (const candidate of stems) {
+    for (const root of sourceRoots) {
+      for (const extension of [".ts", ".tsx", ".mts", ".cts"]) {
+        const file = path.join(root, candidate + extension);
+        if (fs.existsSync(file)) {
+          return file;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function addPackagePaths(mapping, name, entry) {
+  const { dir, manifest } = entry;
+  const sourceRoots = ["src", "sources", "lib", ""].map((folder) => path.join(dir, folder))
+    .filter((folder) => fs.existsSync(folder));
+  const builtOf = (value) => {
+    if (typeof value === "string") {
+      return [value];
+    }
+    if (value && typeof value === "object") {
+      return Object.values(value).flatMap(builtOf);
+    }
+    return [];
+  };
+  const exportsField = manifest.exports;
+  const subpaths = exportsField && typeof exportsField === "object" && !Array.isArray(exportsField)
+    && Object.keys(exportsField).some((key) => key.startsWith("."))
+    ? exportsField
+    : { ".": exportsField };
+  let main = null;
+  for (const [key, value] of Object.entries(subpaths)) {
+    if (key.includes("*")) {
+      continue;
+    }
+    const source = builtOf(value).map((built) => sourceOfBuiltFile(dir, built, sourceRoots)).find(Boolean);
+    if (!source) {
+      continue;
+    }
+    const specifier = key === "." ? name : `${name}/${key.replace(/^\.\//, "")}`;
+    if (!mapping[specifier]) {
+      mapping[specifier] = [source];
+    }
+    if (key === ".") {
+      main = source;
+    }
+  }
+  if (!main) {
+    const legacy = [manifest.types, manifest.typings, manifest.module, manifest.main]
+      .map((built) => sourceOfBuiltFile(dir, built, sourceRoots)).find(Boolean);
+    const index = sourceRoots.flatMap((root) => ["index.ts", "index.tsx"].map((file) => path.join(root, file)))
+      .find((file) => fs.existsSync(file));
+    main = legacy || index || null;
+    if (main && !mapping[name]) {
+      mapping[name] = [main];
+    }
+  }
+  if (!mapping[`${name}/*`]) {
+    mapping[`${name}/*`] = sourceRoots.map((root) => path.join(root, "*"));
+  }
+}
+
+/** The options with the workspace packages' sources named, without overriding a path already written. */
+function withWorkspacePaths(options) {
+  const mapped = state.workspacePaths;
+  if (!mapped || !Object.keys(mapped).length) {
+    return options;
+  }
+  return Object.assign({}, options, { paths: Object.assign({}, mapped, options.paths || {}) });
+}
+
 function parseConfigs(ts, repoRoot, configPaths) {
   const configs = [];
   const invalidConfigs = [];
@@ -443,7 +679,7 @@ function parseConfigs(ts, repoRoot, configPaths) {
     configs.push({
       configPath,
       dir: normalizePath(ts, path.dirname(configPath)),
-      options,
+      options: withWorkspacePaths(options),
       rootNames,
       projectReferences,
       programFailed: false
@@ -531,7 +767,7 @@ function programsForUnownedFiles(ts, repoRoot, configs) {
     }
     groups.get(dir).push(normalized);
   }
-  const options = optionsWithoutAConfig(ts);
+  const options = withWorkspacePaths(optionsWithoutAConfig(ts));
   return Array.from(groups.keys()).sort().map((dir) => ({
     configPath: null,
     dir,
@@ -2598,6 +2834,8 @@ async function handleInitRepo(params) {
     throw err;
   }
   const configs = expandProjectReferences(ts, findProjectConfigs(ts, repoRoot));
+  const mappedWorkspaces = workspacePaths(repoRoot);
+  state.workspacePaths = mappedWorkspaces;
   let parsedConfigs = [];
   let invalidConfigs = [];
   let configDiagnostics = [];
@@ -2644,6 +2882,7 @@ async function handleInitRepo(params) {
   });
   state = {
     repoRoot,
+    workspacePaths: mappedWorkspaces,
     ts,
     configs: parsedConfigs,
     fileMap,

@@ -45,6 +45,16 @@ public class TypeScriptReferenceGapsTest {
         return new ClarpseProject(files, Lang.TYPESCRIPT).result();
     }
 
+    /** Compiles the given path and source pairs, with a tsconfig of the test's own at the root. */
+    static CompileResult compileWithConfig(final String config, final String... pathsAndSources) throws Exception {
+        final ProjectFiles files = new ProjectFiles();
+        files.insertFile(new ProjectFile("/tsconfig.json", config));
+        for (int i = 0; i < pathsAndSources.length; i += 2) {
+            files.insertFile(new ProjectFile(pathsAndSources[i], pathsAndSources[i + 1]));
+        }
+        return new ClarpseProject(files, Lang.TYPESCRIPT).result();
+    }
+
     static Set<String> targets(final Component component) {
         return component.references().stream().map(ComponentReference::invokedComponent)
                 .collect(Collectors.toCollection(TreeSet::new));
@@ -232,5 +242,58 @@ public class TypeScriptReferenceGapsTest {
             assertFalse("only a package's symbols are named package:Symbol: " + target,
                     target.contains(":") && !target.startsWith("src."));
         }
+    }
+
+    private static final String WORKSPACE_CONFIG = "{ \"compilerOptions\": { \"target\": \"es2020\", \"strict\": true,"
+            + " \"module\": \"commonjs\", \"moduleResolution\": \"node\" }, \"include\": [\"packages/**/*.ts\"] }";
+    private static final String PACKAGE_B_SOURCE = "export interface Shape { sides: number }\n"
+            + "export function area(shape: Shape): number { return shape.sides; }\n";
+
+    @Test
+    public void anImportOfAWorkspacePackageResolvesToThePackagesSource() throws Exception {
+        final CompileResult result = compileWithConfig(WORKSPACE_CONFIG,
+                "/package.json", "{ \"name\": \"root\", \"private\": true, \"workspaces\": [\"packages/*\"] }",
+                "/packages/b/package.json", "{ \"name\": \"@x/b\", \"exports\": { \".\": "
+                        + "{ \"types\": \"./dist/index.d.ts\", \"default\": \"./dist/index.js\" } } }",
+                "/packages/b/src/index.ts", PACKAGE_B_SOURCE,
+                "/packages/a/package.json", "{ \"name\": \"@x/a\", \"dependencies\": { \"@x/b\": \"workspace:*\" } }",
+                "/packages/a/src/use.ts", "import { area, Shape } from '@x/b';\n"
+                        + "export function measure(shape: Shape) { return area(shape); }\n");
+        final Set<String> measured = targets(component(result, "packages.a.src.use.measure"));
+        assertTrue("an edge into the package's source: " + measured,
+                measured.contains("packages.b.src.index.area") || measured.contains("packages.b.src.index.Shape"));
+        assertTrue(component(result, "packages.a.src.use.measure").imports().toString(),
+                component(result, "packages.a.src.use.measure").imports().stream()
+                        .anyMatch(imported -> imported.startsWith("packages.b.src.index")));
+    }
+
+    @Test
+    public void aSubpathExportAndAnAliasOfAWorkspacePackageResolveToItsSource() throws Exception {
+        final CompileResult result = compileWithConfig(WORKSPACE_CONFIG,
+                "/package.json", "{ \"private\": true, \"workspaces\": { \"packages\": [\"packages/*\"] } }",
+                "/packages/b/package.json", "{ \"name\": \"@x/b\", \"exports\": { \"./shapes\": "
+                        + "{ \"types\": \"./dist/shapes.d.ts\" } } }",
+                "/packages/b/src/shapes.ts", PACKAGE_B_SOURCE,
+                "/packages/a/package.json", "{ \"name\": \"@x/a\", \"dependencies\": "
+                        + "{ \"bee\": \"npm:@x/b@^1\" } }",
+                "/packages/a/src/use.ts", "import { area } from '@x/b/shapes';\n"
+                        + "export function viaSubpath() { return area({ sides: 1 }); }\n",
+                "/packages/a/src/alias.ts", "import { Shape } from 'bee/shapes';\n"
+                        + "export function viaAlias(shape: Shape) { return shape; }\n");
+        assertTrue(targets(component(result, "packages.a.src.use.viaSubpath")).toString(),
+                targets(component(result, "packages.a.src.use.viaSubpath")).contains("packages.b.src.shapes.area"));
+        assertTrue(targets(component(result, "packages.a.src.alias.viaAlias")).toString(),
+                targets(component(result, "packages.a.src.alias.viaAlias")).contains("packages.b.src.shapes.Shape"));
+    }
+
+    @Test
+    public void aPackageNoWorkspaceListsIsNotMappedToASourceFolder() throws Exception {
+        final CompileResult result = compileWithConfig(WORKSPACE_CONFIG,
+                "/packages/b/package.json", "{ \"name\": \"@x/b\", \"types\": \"./dist/index.d.ts\" }",
+                "/packages/b/src/index.ts", PACKAGE_B_SOURCE,
+                "/packages/a/src/use.ts", "import { area } from '@x/b';\n"
+                        + "export function measure() { return area({ sides: 1 }); }\n");
+        assertFalse(targets(component(result, "packages.a.src.use.measure")).toString(),
+                targets(component(result, "packages.a.src.use.measure")).contains("packages.b.src.index.area"));
     }
 }
