@@ -488,9 +488,29 @@ public final class TypeScriptDaemon implements AutoCloseable {
     }
 
     private TypeScriptDaemonException requestTimeoutException() {
+        awaitProcessExit();
         return new TypeScriptDaemonException("TypeScript daemon gave no answer within "
                 + requestTimeout.toSeconds() + "s and was stopped.",
                 TypeScriptDaemonException.CODE_REQUEST_TIMEOUT);
+    }
+
+    /**
+     * Waits, for a bounded time, for the process killed by the timeout to be gone, so a caller told
+     * the daemon was stopped can rely on it.
+     */
+    private void awaitProcessExit() {
+        final Process current = process;
+        if (current == null) {
+            return;
+        }
+        try {
+            if (!current.waitFor(SHUTDOWN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+                LOGGER.warn("The TypeScript daemon was still running {}s after it was killed.",
+                        SHUTDOWN_TIMEOUT.toSeconds());
+            }
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void ensureStarted() throws TypeScriptDaemonException {

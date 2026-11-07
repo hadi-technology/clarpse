@@ -78,7 +78,8 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             addInvalidConfigFailures(initResult, compileFailures, persistDir);
             final ModellingBudget budget = new ModellingBudget();
             for (final ProjectFile file : inOwnerOrder(daemon, persistDir, tsFiles, budget)) {
-                modelFile(daemon, file, persistDir, false, srcModel, compileFailures, null, budget);
+                modelFile(daemon, file, persistDir, false,
+                        new ModelSink(srcModel, compileFailures, null), budget);
             }
             CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(
                     OOPSourceModelConstants.ComponentType.CLASS,
@@ -109,15 +110,15 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
      *
      * @param boundary          Whether the file is a level-one file of a one-level analysis, whose
      *                          bodies are not read.
-     * @param inRepositoryNames Collects the names references resolved to inside the repository; may
-     *                          be {@code null}.
+     * @param sink              Where the file's model, and the failures confined to it, are put.
      */
     private static void modelFile(final TypeScriptDaemon daemon, final ProjectFile file,
                                   final String persistDir, final boolean boundary,
-                                  final OOPSourceCodeModel srcModel,
-                                  final Set<CompileFailure> compileFailures,
-                                  final Set<String> inRepositoryNames,
+                                  final ModelSink sink,
                                   final ModellingBudget budget) throws CompileException {
+        final OOPSourceCodeModel srcModel = sink.model();
+        final Set<CompileFailure> compileFailures = sink.failures();
+        final Set<String> inRepositoryNames = sink.inRepositoryNames();
         if (Thread.currentThread().isInterrupted()) {
             throw new CompileException("Interrupted while parsing TypeScript files.",
                     new InterruptedException());
@@ -281,12 +282,12 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 daemon.planOneLevel(diskPaths.toDisk(analysed()), diskPaths.toDisk(selection.modelled()));
                 final ModellingBudget budget = new ModellingBudget();
                 for (final ProjectFile file : inOwnerOrder(daemon, persistDir, analysed(), budget)) {
-                    modelFile(daemon, file, persistDir, false, srcModel, compileFailures, inRepositoryNames,
-                            budget);
+                    modelFile(daemon, file, persistDir, false,
+                            new ModelSink(srcModel, compileFailures, inRepositoryNames), budget);
                 }
                 for (final ProjectFile file : inOwnerOrder(daemon, persistDir, selection.modelled(), budget)) {
-                    modelFile(daemon, file, persistDir, true, srcModel, compileFailures, inRepositoryNames,
-                            budget);
+                    modelFile(daemon, file, persistDir, true,
+                            new ModelSink(srcModel, compileFailures, inRepositoryNames), budget);
                 }
             } catch (final TypeScriptDaemonException e) {
                 for (final ProjectFile file : analysed()) {
@@ -366,6 +367,18 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
     }
 
     /**
+     * Where a file's model and the failures confined to it go.
+     *
+     * @param model             The model being built.
+     * @param failures          The failures recorded so far.
+     * @param inRepositoryNames Collects the names references resolved to inside the repository; may
+     *                          be {@code null}.
+     */
+    private record ModelSink(OOPSourceCodeModel model, Set<CompileFailure> failures,
+                             Set<String> inRepositoryNames) {
+    }
+
+    /**
      * The files grouped by the program that holds them, and by path within a group. Only a few
      * programs are resident at once, and a program costs far more to build than a file costs to
      * model in it, so files asked for in an order that alternates between programs rebuild them
@@ -430,7 +443,11 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             } else {
                 seconds = ClarpseProperties.getInt(BUDGET_PROP, DEFAULT_BUDGET_SECONDS);
             }
-            this.deadlineNanos = seconds > 0 ? System.nanoTime() + (long) (seconds * 1_000_000_000L) : 0L;
+            if (seconds > 0) {
+                this.deadlineNanos = System.nanoTime() + (long) (seconds * 1_000_000_000L);
+            } else {
+                this.deadlineNanos = 0L;
+            }
         }
 
         boolean spent() {
