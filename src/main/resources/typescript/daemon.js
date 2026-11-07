@@ -2863,9 +2863,10 @@ function declaredTypeReference(node, checker) {
 }
 
 /**
- * The type aliases a type is written with: `Tracked` in `f(): Tracked`, however deep in a union,
- * an array or a type argument. The type an alias stands for is what the checker reports, and for a
- * union or an intersection that is its members, so the name the code was written against would
+ * The declarations of the repository a type is written with: `Tracked` in `f(): Tracked`, however
+ * deep in a union, an array, a type argument, or the members of an object type. The type an alias
+ * stands for is what the checker reports, and for a union or an intersection that is its members,
+ * and an object type is reported as its text, so the names the code was written against would
  * otherwise be lost.
  */
 function writtenAliasReferences(typeNode, checker) {
@@ -2875,7 +2876,7 @@ function writtenAliasReferences(typeNode, checker) {
   }
   function visit(child) {
     if (state.ts.isTypeReferenceNode(child) || state.ts.isExpressionWithTypeArguments(child)) {
-      const named = typeAliasReference(child, checker);
+      const named = typeAliasReference(child, checker) || declaredTypeReference(child, checker);
       if (named) {
         references.push(named);
       }

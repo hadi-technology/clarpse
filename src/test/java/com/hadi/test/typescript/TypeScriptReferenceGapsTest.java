@@ -454,4 +454,18 @@ public class TypeScriptReferenceGapsTest {
                     targets(component(result, "src.guards." + name)).contains("src.guards.ApiError"));
         }
     }
+
+    @Test
+    public void theMembersOfAnObjectTypeInAnAnnotationAreReferences() throws Exception {
+        final CompileResult result = compile("/src/cards.ts",
+                "export type AssetType = 'a' | 'b';\n"
+                        + "export interface Label { text: string }\n"
+                        + "export const CARDS: { type: AssetType; label: Label }[] = [];\n"
+                        + "export class Holder { items: Array<{ kind: AssetType }> = []; }\n"
+                        + "export function pick(card: { inner: { t: AssetType } }) { return card; }\n");
+        assertTrue(targets(component(result, "src.cards.CARDS")).toString(),
+                targets(component(result, "src.cards.CARDS")).containsAll(Set.of("src.cards.AssetType", "src.cards.Label")));
+        assertTrue(targets(component(result, "src.cards.Holder.items")).contains("src.cards.AssetType"));
+        assertTrue(targets(component(result, "src.cards.pick.card")).contains("src.cards.AssetType"));
+    }
 }
