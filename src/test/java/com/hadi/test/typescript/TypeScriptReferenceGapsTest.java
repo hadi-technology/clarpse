@@ -271,7 +271,7 @@ public class TypeScriptReferenceGapsTest {
     public void aSubpathExportAndAnAliasOfAWorkspacePackageResolveToItsSource() throws Exception {
         final CompileResult result = compileWithConfig(WORKSPACE_CONFIG,
                 "/package.json", "{ \"private\": true, \"workspaces\": { \"packages\": [\"packages/*\"] } }",
-                "/packages/b/package.json", "{ \"name\": \"@x/b\", \"exports\": { \"./shapes\": "
+                "/packages/b/package.json", "{ \"name\": \"@x/b\", \"version\": \"1.2.0\", \"exports\": { \"./shapes\": "
                         + "{ \"types\": \"./dist/shapes.d.ts\" } } }",
                 "/packages/b/src/shapes.ts", PACKAGE_B_SOURCE,
                 "/packages/a/package.json", "{ \"name\": \"@x/a\", \"dependencies\": "
@@ -500,6 +500,14 @@ public class TypeScriptReferenceGapsTest {
         }
         assertEquals("a member the class declares is not copied over it", 1, result.model().components()
                 .filter(component -> component.uniqueName().equals("src.errors.WebError.name")).count());
+        for (final String inherited : new String[] {"message", "stack", "cause"}) {
+            assertTrue(inherited + " is marked external, as inherited from a base the repository does not hold, so it is "
+                            + "not mistaken for a member the class declares",
+                    component(result, "src.errors.WebError." + inherited).modifiers().contains("external"));
+        }
+        assertFalse("a member the class declares is not marked",
+                component(result, "src.errors.WebError.describe()").modifiers().contains("external"));
+        assertFalse(component(result, "src.errors.WebError.name").modifiers().contains("external"));
         assertFalse("a class that extends one of the repository's classes is left alone",
                 result.model().containsComponent("src.errors.NetworkError.message"));
         assertFalse(result.model().containsComponent("src.errors.Plain.message"));
@@ -518,5 +526,77 @@ public class TypeScriptReferenceGapsTest {
                 targets(component(result, "src.shapes.CardUtil")).contains("canvas-lib:BaseUtil"));
         assertTrue(targets(component(result, "src.shapes.describe")).toString(),
                 targets(component(result, "src.shapes.describe")).contains("canvas-lib:TLShape"));
+    }
+
+    private static final String ROOT_WORKSPACES = "{ \"private\": true, \"workspaces\": [\"packages/*\"] }";
+
+    private static boolean reachesPackageSource(final CompileResult result) {
+        return targets(component(result, "packages.a.src.use.measure")).contains("packages.b.src.index.area");
+    }
+
+    @Test
+    public void twoWorkspacePackagesOfOneNameAreNotMappedToEither() throws Exception {
+        final CompileResult result = compileWithConfig(WORKSPACE_CONFIG,
+                "/package.json", ROOT_WORKSPACES,
+                "/packages/b/package.json", "{ \"name\": \"@x/b\", \"types\": \"./dist/index.d.ts\" }",
+                "/packages/b/src/index.ts", PACKAGE_B_SOURCE,
+                "/packages/c/package.json", "{ \"name\": \"@x/b\", \"types\": \"./dist/index.d.ts\" }",
+                "/packages/c/src/index.ts", PACKAGE_B_SOURCE,
+                "/packages/a/src/use.ts", "import { area } from '@x/b';\n"
+                        + "export function measure() { return area({ sides: 1 }); }\n");
+        final Set<String> measured = targets(component(result, "packages.a.src.use.measure"));
+        assertFalse(measured.toString(), measured.contains("packages.b.src.index.area")
+                || measured.contains("packages.c.src.index.area"));
+    }
+
+    @Test
+    public void aPackageNestedInsideAWorkspacePackageIsNotAWorkspaceUnlessListed() throws Exception {
+        final CompileResult result = compileWithConfig(WORKSPACE_CONFIG,
+                "/package.json", ROOT_WORKSPACES,
+                "/packages/b/package.json", "{ \"name\": \"@x/b\", \"types\": \"./dist/index.d.ts\" }",
+                "/packages/b/src/index.ts", PACKAGE_B_SOURCE,
+                "/packages/b/packages/inner/package.json", "{ \"name\": \"@x/inner\", \"types\": \"./dist/index.d.ts\" }",
+                "/packages/b/packages/inner/src/index.ts", PACKAGE_B_SOURCE,
+                "/packages/a/src/use.ts", "import { area } from '@x/inner';\n"
+                        + "export function measure() { return area({ sides: 1 }); }\n");
+        assertFalse(targets(component(result, "packages.a.src.use.measure")).toString(),
+                targets(component(result, "packages.a.src.use.measure"))
+                        .contains("packages.b.packages.inner.src.index.area"));
+    }
+
+    @Test
+    public void anAliasPinningAnotherVersionThanTheWorkspacePackageIsNotMapped() throws Exception {
+        final String[] b = {"/packages/b/package.json", "{ \"name\": \"@x/b\", \"version\": \"2.0.0\", "
+                + "\"types\": \"./dist/index.d.ts\" }", "/packages/b/src/index.ts", PACKAGE_B_SOURCE};
+        for (final String spec : new String[] {"npm:@x/b@^1", "npm:@x/b@1.2.3", "npm:@x/b@>=1 <2"}) {
+            assertFalse(spec + " names a published release", reachesPackageSource(
+                    withAlias(spec, b)));
+        }
+        assertTrue("a range the workspace version satisfies is the workspace package",
+                reachesPackageSource(withAlias("npm:@x/b@^2", b)));
+        assertTrue("workspace: is the workspace package whatever the version",
+                reachesPackageSource(withAlias("workspace:@x/b@*", b)));
+        assertFalse("a version that cannot be read cannot be checked", reachesPackageSource(withAlias("npm:@x/b@^2",
+                "/packages/b/package.json", "{ \"name\": \"@x/b\", \"types\": \"./dist/index.d.ts\" }",
+                "/packages/b/src/index.ts", PACKAGE_B_SOURCE)));
+    }
+
+    private CompileResult withAlias(final String spec, final String... packageFiles) {
+        try {
+            final CompileResult result = compileWithConfig(WORKSPACE_CONFIG,
+                    concat(new String[] {"/package.json", ROOT_WORKSPACES,
+                        "/packages/a/package.json", "{ \"name\": \"@x/a\", \"dependencies\": { \"bee\": \"" + spec + "\" } }",
+                        "/packages/a/src/use.ts", "import { area } from 'bee';\n"
+                                + "export function measure() { return area({ sides: 1 }); }\n"}, packageFiles));
+            return result;
+        } catch (final Exception e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static String[] concat(final String[] first, final String[] second) {
+        final String[] all = java.util.Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, all, first.length, second.length);
+        return all;
     }
 }

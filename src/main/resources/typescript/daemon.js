@@ -357,6 +357,7 @@ function workspacePaths(repoRoot) {
     return {};
   }
   const packages = new Map();
+  const ambiguous = new Set();
   for (const file of findPackageJsonFiles(repoRoot)) {
     const dir = path.dirname(file);
     const relative = path.relative(repoRoot, dir).split(path.sep).join("/");
@@ -365,9 +366,14 @@ function workspacePaths(repoRoot) {
     }
     const manifest = readJson(file);
     if (manifest && typeof manifest.name === "string" && manifest.name) {
+      if (packages.has(manifest.name)) {
+        // Two workspace packages of one name: an import of it could mean either.
+        ambiguous.add(manifest.name);
+      }
       packages.set(manifest.name, { dir, manifest });
     }
   }
+  ambiguous.forEach((name) => packages.delete(name));
   const mapping = {};
   for (const [name, entry] of packages) {
     addPackagePaths(mapping, name, entry);
@@ -377,7 +383,7 @@ function workspacePaths(repoRoot) {
       const dependencies = entry.manifest[field];
       for (const [alias, spec] of Object.entries(dependencies && typeof dependencies === "object" ? dependencies : {})) {
         const target = typeof spec === "string" ? aliasTarget(spec) : null;
-        if (target && packages.has(target) && !mapping[alias]) {
+        if (target && packages.has(target) && !mapping[alias] && aliasIsWorkspace(spec, packages.get(target))) {
           addPackagePaths(mapping, alias, packages.get(target));
         }
       }
@@ -390,6 +396,36 @@ function workspacePaths(repoRoot) {
 function aliasTarget(spec) {
   const match = /^(?:npm|workspace):(@[^/@]+\/[^@/]+|[^@/]+)(?:@.*)?$/.exec(spec);
   return match ? match[1] : null;
+}
+
+/**
+ * Whether a dependency alias names the workspace package itself. A `workspace:` spec does; an
+ * `npm:` spec does only when its version range admits the workspace package's version, because
+ * otherwise it names a published release. A range that cannot be checked does not.
+ */
+function aliasIsWorkspace(spec, workspacePackage) {
+  if (spec.startsWith("workspace:")) {
+    return true;
+  }
+  const at = spec.lastIndexOf("@");
+  const range = at > "npm:".length ? spec.slice(at + 1).trim() : "";
+  if (!range || range === "*" || range === "latest") {
+    return true;
+  }
+  const version = /^(\d+)\.(\d+)\.(\d+)/.exec(String(workspacePackage.manifest.version || ""));
+  const wanted = /^([\^~]?)(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?$/.exec(range);
+  if (!version || !wanted) {
+    return false;
+  }
+  const [, operator, major, minor, patch] = wanted;
+  const exact = (value, actual) => value === undefined || value === "x" || value === "*" || Number(value) === Number(actual);
+  if (Number(major) !== Number(version[1])) {
+    return false;
+  }
+  if (operator === "^") {
+    return true;
+  }
+  return exact(minor, version[2]) && (operator === "~" || exact(patch, version[3]));
 }
 
 function readJson(file) {
@@ -2666,7 +2702,8 @@ function buildBaseExpressionMembers(node, checker, declaredNames) {
 /**
  * The members a class gets from a built-in base class such as `Error`, which its program holds only
  * as the compiler's own declarations and so never models: `class WebError extends Error` has
- * `message`, `name`, `stack` and `cause` without declaring them. Only a base whose declarations are
+ * `message`, `name`, `stack` and `cause` without declaring them. They carry the `external` modifier, so a
+ * rule about the members a class declares can tell them from its own. Only a base whose declarations are
  * all the compiler's library is read this way; a base the repository declares is a component of its
  * own, and one a package declares is named by the reference to it.
  */
@@ -2701,10 +2738,10 @@ function buildLibraryBaseMembers(node, checker, declaredNames) {
   } catch (err) {
     return [];
   }
-  return membersFromProperties(properties, node, checker, declaredNames);
+  return membersFromProperties(properties, node, checker, declaredNames, ["external"]);
 }
 
-function membersFromProperties(properties, node, checker, declaredNames) {
+function membersFromProperties(properties, node, checker, declaredNames, marker) {
   const models = [];
   for (const property of properties) {
     const name = property.getName ? property.getName() : null;
@@ -2742,7 +2779,7 @@ function membersFromProperties(properties, node, checker, declaredNames) {
         signature: `${name}(${paramTypes.join(", ")})`,
         implementationHash: stableImplementationHash(`${name}(${paramTypes.join(", ")}):${returnType}`),
         returnType,
-        modifiers: [],
+        modifiers: (marker || []).slice(),
         jsDoc: "",
         cyclo: 0,
         members: [],
@@ -2756,7 +2793,7 @@ function membersFromProperties(properties, node, checker, declaredNames) {
       name,
       type: typeText,
       implementationHash: stableImplementationHash(`${name}:${typeText}`),
-      modifiers: [],
+      modifiers: (marker || []).slice(),
       jsDoc: "",
       references
     });
