@@ -432,9 +432,11 @@ final class PythonModelAssembler {
         final Component component = new Component();
         component.setPkg(pkg);
         component.setModule(moduleName);
-        component.setComponentType(field.typeAlias
-                ? OOPSourceModelConstants.ComponentType.TYPE_ALIAS
-                : OOPSourceModelConstants.ComponentType.MODULE_FIELD);
+        if (field.typeAlias) {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.TYPE_ALIAS);
+        } else {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.MODULE_FIELD);
+        }
         component.setName(field.name);
         final String base;
         if (packageName == null || packageName.isEmpty()) {

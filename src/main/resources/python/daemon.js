@@ -2899,7 +2899,7 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
    * `for p in _PARSERS`.
    */
   function addModuleLevelRef(name) {
-    if (!name || isLocal(name)) {
+    if (!name || isLocal(name) || (ctx.functionImportNames && ctx.functionImportNames.has(name))) {
       return false;
     }
     if (!(ctx.localFunctions && ctx.localFunctions.has(name))
