@@ -268,6 +268,101 @@ public class TypeScriptBoundedDaemonTest {
                 TypeScriptLimits.MAX_RESTARTS_ENV, TypeScriptLimits.DEFAULT_MAX_RESTARTS));
     }
 
+    @Test
+    public void invalidLimitsAreIgnoredAndTheDefaultUsed() {
+        for (final String invalid : new String[] {"soon", "NaN", "Infinity", "1e999"}) {
+            System.setProperty("clarpse.typescript.compileBudgetSeconds", invalid);
+            assertEquals(invalid, 420.0, TypeScriptLimits.seconds(TypeScriptLimits.COMPILE_BUDGET_PROP,
+                    TypeScriptLimits.COMPILE_BUDGET_ENV, TypeScriptLimits.DEFAULT_COMPILE_BUDGET_SECONDS), 0.0);
+        }
+        System.setProperty("clarpse.typescript.compileBudgetSeconds", " 1.5 ");
+        assertEquals("A fraction of a second is a limit.", 1.5, TypeScriptLimits.seconds(
+                TypeScriptLimits.COMPILE_BUDGET_PROP, TypeScriptLimits.COMPILE_BUDGET_ENV, 420), 0.0);
+        System.setProperty("clarpse.typescript.maxRestarts", "2.9");
+        assertEquals("A count is whole.", 2, TypeScriptLimits.count(TypeScriptLimits.MAX_RESTARTS_PROP,
+                TypeScriptLimits.MAX_RESTARTS_ENV, 3));
+        System.setProperty("clarpse.typescript.maxRestarts", "");
+        assertEquals("An empty value is no value.", 3, TypeScriptLimits.count(TypeScriptLimits.MAX_RESTARTS_PROP,
+                TypeScriptLimits.MAX_RESTARTS_ENV, 3));
+    }
+
+    @Test
+    public void aDaemonThatWasNeverInitialisedCannotBeRestarted() throws Exception {
+        try (TypeScriptDaemon daemon = new TypeScriptDaemon()) {
+            try {
+                daemon.restart();
+                fail("There is no repository to bring a replacement back to.");
+            } catch (final TypeScriptDaemonException e) {
+                assertEquals(TypeScriptDaemonException.CODE_DAEMON_ERROR, e.code());
+            }
+        }
+    }
+
+    @Test
+    public void theConfiguredTimeoutsBoundADaemonMadeWithTheDefaultConstructor() throws Exception {
+        fakeNode("*stuck.ts*", "hang", "0");
+        System.setProperty("clarpse.typescript.requestTimeoutSeconds", "1");
+        System.setProperty("clarpse.typescript.heavyRequestTimeoutSeconds", "30");
+        try (TypeScriptDaemon daemon = new TypeScriptDaemon()) {
+            daemon.start();
+            daemon.initRepo("/repo");
+            daemon.getFileModel("/repo/a.ts");
+            final long started = System.nanoTime();
+            try {
+                daemon.getFileModel("/repo/stuck.ts");
+                fail("The daemon never answers for this file.");
+            } catch (final TypeScriptDaemonException e) {
+                assertEquals(TypeScriptDaemonException.CODE_REQUEST_TIMEOUT, e.code());
+            }
+            assertTrue("The configured second, not the default 120.",
+                    Duration.ofNanos(System.nanoTime() - started).toSeconds() < 20);
+        }
+    }
+
+    @Test
+    public void aTimeoutOffMeansTheDaemonIsWaitedForAndAnswers() throws Exception {
+        fakeNode("*nothing-matches*", "hang", "1.2");
+        System.setProperty("clarpse.typescript.requestTimeoutSeconds", "0");
+        System.setProperty("clarpse.typescript.heavyRequestTimeoutSeconds", "0");
+        try (TypeScriptDaemon daemon = new TypeScriptDaemon()) {
+            daemon.start();
+            daemon.initRepo("/repo");
+            daemon.getFileModel("/repo/a.ts");
+            assertTrue(daemon.getFileModel("/repo/b.ts").declarations.isEmpty());
+        }
+    }
+
+    @Test
+    public void whenGroupingFilesByProgramTimesOutTheFilesAreStillAnalysedInPathOrder() throws Exception {
+        final Path log = fakeNode("*nothing-matches*", "hang", "0", "hang");
+        System.setProperty("clarpse.typescript.heavyRequestTimeoutSeconds", "1");
+        final CompileResult result = TypeScriptTestUtil.compileFixture(FIXTURE);
+        assertTrue("Grouping failing costs no file.", result.failures().isEmpty());
+        final List<String> requests = requestsIn(log);
+        assertEquals("The daemon that did not answer was replaced.", 2,
+                requests.stream().filter("initRepo"::equals).count());
+        assertEquals(11, requests.stream().filter("getFileModel"::equals).count());
+    }
+
+    @Test
+    public void aOneLevelAnalysisRecordsAFileItsDaemonNeverAnsweredFor() throws Exception {
+        final Path log = fakeNode("*app2.ts*", "hang", "0");
+        System.setProperty("clarpse.typescript.requestTimeoutSeconds", "1");
+        final Path fixture = TypeScriptTestUtil.fixturePath(FIXTURE);
+        final CompileResult result = new com.hadi.clarpse.compiler.ClarpseProject(
+                TypeScriptTestUtil.loadProject(FIXTURE), com.hadi.clarpse.compiler.Lang.TYPESCRIPT,
+                List.of(fixture.resolve("src/app/app1.ts").toString(), fixture.resolve("src/app/app2.ts").toString(),
+                        fixture.resolve("src/app/app3.ts").toString()),
+                com.hadi.clarpse.compiler.AnalysisOptions.oneLevel()).result();
+        assertEquals(1, result.failures().size());
+        final CompileFailure failure = result.failures().iterator().next();
+        assertTrue(failure.file().path().endsWith("app2.ts"));
+        assertEquals(Integer.valueOf(FailureCode.TIME_BUDGET_EXCEEDED), failure.errorCode());
+        final List<String> requests = requestsIn(log);
+        assertTrue("The plan was replayed on the replacement: " + requests,
+                requests.stream().filter("planOneLevel"::equals).count() == 2);
+    }
+
     /** Models every file, optionally after asking which program holds each. */
     private static Map<String, String> modelsByFile(final Path root, final List<String> files,
                                                     final boolean groupFirst) throws Exception {
@@ -314,6 +409,11 @@ public class TypeScriptBoundedDaemonTest {
      */
     private Path fakeNode(final String pattern, final String behaviour, final String delaySeconds)
             throws IOException {
+        return fakeNode(pattern, behaviour, delaySeconds, "answer");
+    }
+
+    private Path fakeNode(final String pattern, final String behaviour, final String delaySeconds,
+                          final String ownersBehaviour) throws IOException {
         Assume.assumeTrue(Files.exists(Path.of("/bin/sh")));
         final Path log = scratch.resolve("requests.log");
         Files.write(log, new byte[0]);
@@ -322,6 +422,12 @@ public class TypeScriptBoundedDaemonTest {
             onMatch = "exit 1";
         } else {
             onMatch = "exec sleep 600";
+        }
+        final String ownersReply;
+        if ("hang".equals(ownersBehaviour)) {
+            ownersReply = "exec sleep 600";
+        } else {
+            ownersReply = "echo '{\"jsonrpc\":\"2.0\",\"id\":'$id',\"result\":{\"owners\":{}}}'";
         }
         final String script = String.join("\n",
                 "#!/bin/sh",
@@ -336,7 +442,7 @@ public class TypeScriptBoundedDaemonTest {
                 "      sleep " + delaySeconds,
                 "      echo '{\"jsonrpc\":\"2.0\",\"id\":'$id',\"result\":{\"filePath\":\"f\","
                         + "\"declarations\":[],\"imports\":[],\"unresolvedBases\":[]}}';;",
-                "    ownersOf) echo '{\"jsonrpc\":\"2.0\",\"id\":'$id',\"result\":{\"owners\":{}}}';;",
+                "    ownersOf) " + ownersReply + ";;",
                 "    shutdown) echo '{\"jsonrpc\":\"2.0\",\"id\":'$id',\"result\":{}}'; exit 0;;",
                 "    *) echo '{\"jsonrpc\":\"2.0\",\"id\":'$id',\"result\":{}}';;",
                 "  esac",
