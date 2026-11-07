@@ -6,6 +6,7 @@ import com.hadi.clarpse.compiler.ClarpseCompiler;
 import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
+import com.hadi.clarpse.compiler.ClarpseProperties;
 import com.hadi.clarpse.compiler.CompilerSupport;
 import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.FailureCode;
@@ -75,8 +76,9 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             daemon.start();
             final TypeScriptDaemon.InitResult initResult = daemon.initRepo(persistDir);
             addInvalidConfigFailures(initResult, compileFailures, persistDir);
-            for (final ProjectFile file : tsFiles) {
-                modelFile(daemon, file, persistDir, false, srcModel, compileFailures, null);
+            final ModellingBudget budget = new ModellingBudget();
+            for (final ProjectFile file : inOwnerOrder(daemon, persistDir, tsFiles, budget)) {
+                modelFile(daemon, file, persistDir, false, srcModel, compileFailures, null, budget);
             }
             CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(
                     OOPSourceModelConstants.ComponentType.CLASS,
@@ -114,16 +116,33 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                                   final String persistDir, final boolean boundary,
                                   final OOPSourceCodeModel srcModel,
                                   final Set<CompileFailure> compileFailures,
-                                  final Set<String> inRepositoryNames) throws CompileException {
+                                  final Set<String> inRepositoryNames,
+                                  final ModellingBudget budget) throws CompileException {
         if (Thread.currentThread().isInterrupted()) {
             throw new CompileException("Interrupted while parsing TypeScript files.",
                     new InterruptedException());
+        }
+        if (budget.spent()) {
+            compileFailures.add(new CompileFailure(file,
+                    "TIME_BUDGET_EXCEEDED: the file was not analysed, so nothing is known about what it declares.",
+                    FailureCode.TIME_BUDGET_EXCEEDED));
+            return;
         }
         final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
         final TypeScriptFileModel fileModel;
         try {
             fileModel = daemon.getFileModel(diskPath, boundary);
         } catch (final TypeScriptDaemonException e) {
+            if (e.code() == TypeScriptDaemonException.CODE_REQUEST_TIMEOUT) {
+                // The daemon was killed for sitting on this file. The file is recorded as not
+                // analysed - it is neither absent nor empty - and the rest carries on in a fresh
+                // daemon while restarts remain.
+                compileFailures.add(new CompileFailure(file, "TIME_BUDGET_EXCEEDED: " + e.getMessage(),
+                        FailureCode.TIME_BUDGET_EXCEEDED));
+                LOGGER.warn("TypeScript file {} was not analysed: {}", file.path(), e.getMessage());
+                budget.recoverFrom(daemon);
+                return;
+            }
             if (isFileLevelFailure(e)) {
                 compileFailures.add(new CompileFailure(file, e.getMessage(), e.code()));
                 logFileLevelFailure(file, e);
@@ -260,11 +279,14 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 daemon.start();
                 addInvalidConfigFailures(daemon.initRepo(persistDir), compileFailures, persistDir);
                 daemon.planOneLevel(diskPaths.toDisk(analysed()), diskPaths.toDisk(selection.modelled()));
-                for (final ProjectFile file : analysed()) {
-                    modelFile(daemon, file, persistDir, false, srcModel, compileFailures, inRepositoryNames);
+                final ModellingBudget budget = new ModellingBudget();
+                for (final ProjectFile file : inOwnerOrder(daemon, persistDir, analysed(), budget)) {
+                    modelFile(daemon, file, persistDir, false, srcModel, compileFailures, inRepositoryNames,
+                            budget);
                 }
-                for (final ProjectFile file : selection.modelled()) {
-                    modelFile(daemon, file, persistDir, true, srcModel, compileFailures, inRepositoryNames);
+                for (final ProjectFile file : inOwnerOrder(daemon, persistDir, selection.modelled(), budget)) {
+                    modelFile(daemon, file, persistDir, true, srcModel, compileFailures, inRepositoryNames,
+                            budget);
                 }
             } catch (final TypeScriptDaemonException e) {
                 for (final ProjectFile file : analysed()) {
@@ -340,6 +362,104 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             } catch (final java.io.IOException e) {
                 return Paths.get(path).toAbsolutePath().normalize().toString();
             }
+        }
+    }
+
+    /**
+     * The files grouped by the program that holds them, and by path within a group. Only a few
+     * programs are resident at once, and a program costs far more to build than a file costs to
+     * model in it, so files asked for in an order that alternates between programs rebuild them
+     * over and over. Where the daemon cannot say, the order is the path order.
+     */
+    private static List<ProjectFile> inOwnerOrder(final TypeScriptDaemon daemon, final String persistDir,
+                                                  final List<ProjectFile> files,
+                                                  final ModellingBudget budget) {
+        final List<ProjectFile> ordered = new ArrayList<>(files);
+        ordered.sort(java.util.Comparator.comparing(ProjectFile::path));
+        if (ordered.size() < 2 || budget.spent()) {
+            return ordered;
+        }
+        final Map<String, String> diskByPath = new HashMap<>();
+        final List<String> disk = new ArrayList<>();
+        for (final ProjectFile file : ordered) {
+            final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
+            diskByPath.put(file.path(), diskPath);
+            disk.add(diskPath);
+        }
+        final Map<String, Integer> owners;
+        try {
+            owners = daemon.ownersOf(disk);
+        } catch (final TypeScriptDaemonException e) {
+            LOGGER.warn("Could not group TypeScript files by program, using path order: {}", e.getMessage());
+            if (e.code() == TypeScriptDaemonException.CODE_REQUEST_TIMEOUT) {
+                budget.recoverFrom(daemon);
+            }
+            return ordered;
+        }
+        // A stable sort: files of one program stay in path order.
+        ordered.sort(java.util.Comparator.comparingInt(
+                (ProjectFile file) -> owners.getOrDefault(diskByPath.get(file.path()), -1)));
+        return ordered;
+    }
+
+    /**
+     * How long, and through how many daemon restarts, one analysis of TypeScript may go on. Once it
+     * is spent, the files not yet modelled are recorded as not analysed instead of waited for.
+     */
+    private static final class ModellingBudget {
+
+        private static final String BUDGET_PROP = "clarpse.typescript.compileBudgetSeconds";
+        private static final String BUDGET_ENV = "CLARPSE_TS_COMPILE_BUDGET_SECONDS";
+        private static final String RESTARTS_PROP = "clarpse.typescript.maxRestarts";
+        private static final int DEFAULT_BUDGET_SECONDS = 420;
+        private static final int DEFAULT_MAX_RESTARTS = 3;
+
+        private final long deadlineNanos;
+        private int restartsLeft = ClarpseProperties.getInt(RESTARTS_PROP, DEFAULT_MAX_RESTARTS);
+        private boolean abandoned;
+
+        ModellingBudget() {
+            double seconds = DEFAULT_BUDGET_SECONDS;
+            final String configured = firstNonBlank(System.getProperty(BUDGET_PROP), System.getenv(BUDGET_ENV));
+            if (configured != null) {
+                try {
+                    seconds = Double.parseDouble(configured.trim());
+                } catch (final NumberFormatException e) {
+                    LOGGER.warn("Invalid TypeScript compile budget '{}', using the default.", configured);
+                }
+            } else {
+                seconds = ClarpseProperties.getInt(BUDGET_PROP, DEFAULT_BUDGET_SECONDS);
+            }
+            this.deadlineNanos = seconds > 0 ? System.nanoTime() + (long) (seconds * 1_000_000_000L) : 0L;
+        }
+
+        boolean spent() {
+            return abandoned || (deadlineNanos != 0L && System.nanoTime() - deadlineNanos >= 0L);
+        }
+
+        /** Replaces a daemon that was killed, or gives the rest of the analysis up. */
+        void recoverFrom(final TypeScriptDaemon daemon) {
+            if (restartsLeft <= 0) {
+                abandoned = true;
+                return;
+            }
+            restartsLeft--;
+            try {
+                daemon.restart();
+            } catch (final TypeScriptDaemonException e) {
+                LOGGER.warn("Could not restart the TypeScript daemon; the remaining files are not analysed.", e);
+                abandoned = true;
+            }
+        }
+
+        private static String firstNonBlank(final String first, final String second) {
+            if (first != null && !first.trim().isEmpty()) {
+                return first;
+            }
+            if (second != null && !second.trim().isEmpty()) {
+                return second;
+            }
+            return null;
         }
     }
 

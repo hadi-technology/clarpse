@@ -37,7 +37,8 @@ let state = {
   shallowBody: false,
   sourceFiles: new Map(),
   settingsKeys: new WeakMap(),
-  documentRegistry: null
+  documentRegistry: null,
+  programBuilds: 0
 };
 
 // Standard output carries replies and nothing else: the reader on the other end takes each line
@@ -584,12 +585,24 @@ function programFor(index) {
   }
   let program;
   try {
+    state.programBuilds += 1;
     program = state.ts.createProgram(programSpec(config));
   } catch (err) {
     console.error("[clarpse] PROGRAM_CREATE_FAILED for", config.configPath || config.dir, err.message);
     config.programFailed = true;
     return null;
   }
+  // Which repository files the program holds, kept after the program itself is evicted. A file
+  // asked for later that this config's program never held is answered without building the
+  // program again; without it, every file belonging to no program rebuilds each enclosing config's
+  // program in turn, and a repository with more of them than `maxPrograms` rebuilds them all for
+  // every such file.
+  config.memberFiles = new Set(
+    program
+      .getSourceFiles()
+      .map((source) => normalizePath(state.ts, source.fileName))
+      .filter((fileName) => isInternalFile(fileName))
+  );
   const entry = {
     configPath: config.configPath || config.dir,
     program,
@@ -731,6 +744,10 @@ function configIndicesForFile(filePath) {
 
 function findProgramEntryForFile(filePath) {
   for (const index of configIndicesForFile(filePath)) {
+    const known = state.configs[index];
+    if (known && known.memberFiles && !known.memberFiles.has(filePath)) {
+      continue;
+    }
     const entry = programFor(index);
     if (!entry) {
       continue;
@@ -742,6 +759,39 @@ function findProgramEntryForFile(filePath) {
     }
   }
   return null;
+}
+
+/**
+ * The index of the config whose program holds the file, or -1 where none does. A program is built
+ * only for a config whose members are not yet known, so asking about many files builds each
+ * program once.
+ */
+function ownerIndexOf(filePath) {
+  for (const index of configIndicesForFile(filePath)) {
+    const config = state.configs[index];
+    if (!config) {
+      continue;
+    }
+    if (state.oneLevel || state.fileMap.get(filePath) === index) {
+      return index;
+    }
+    if (!config.memberFiles && !programFor(index)) {
+      continue;
+    }
+    if (config.memberFiles && config.memberFiles.has(filePath)) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function handleOwnersOf(params) {
+  requireReady();
+  const owners = {};
+  for (const file of (params.files || [])) {
+    owners[file] = ownerIndexOf(normalizePath(state.ts, file));
+  }
+  return { owners };
 }
 
 function resolveMaxPrograms(params) {
@@ -2324,7 +2374,8 @@ async function handleInitRepo(params) {
     shallowBody: false,
     sourceFiles: new Map(),
     settingsKeys: new WeakMap(),
-    documentRegistry: null
+    documentRegistry: null,
+    programBuilds: 0
   };
   const fileCount = parsedConfigs.reduce((sum, config) => sum + config.rootNames.length, 0);
   return {
@@ -2677,6 +2728,7 @@ function handlePlanOneLevel(params) {
   }
   for (let i = 0; i < state.configs.length; i += 1) {
     delete state.configs[i].oneLevelRoots;
+    delete state.configs[i].memberFiles;
   }
   for (const [index, roots] of rootsByConfig) {
     const config = state.configs[index];
@@ -2747,6 +2799,18 @@ async function handleRequest(request) {
         writeError(id, ERROR_CODES.PROGRAM_CREATE_FAILED, err.message);
       }
     }
+    return;
+  }
+  if (method === "ownersOf") {
+    try {
+      writeResponse(id, handleOwnersOf(params));
+    } catch (err) {
+      writeError(id, err.code || ERROR_CODES.PROGRAM_CREATE_FAILED, err.message, err.data);
+    }
+    return;
+  }
+  if (method === "stats") {
+    writeResponse(id, { programBuilds: state.programBuilds });
     return;
   }
   if (method === "shutdown") {
