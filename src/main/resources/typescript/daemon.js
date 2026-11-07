@@ -2412,6 +2412,26 @@ function buildParameterModels(parameters, checker) {
   return models;
 }
 
+/**
+ * A member's name as a reader says it: the text of a quoted or computed name, without the brackets
+ * and quotes it is written with. `["~standard"]` is `~standard` and `[Symbol.iterator]` is
+ * `Symbol.iterator`.
+ */
+function memberName(nameNode) {
+  const ts = state.ts;
+  if (ts.isComputedPropertyName(nameNode)) {
+    const expression = nameNode.expression;
+    if (ts.isStringLiteralLike(expression) || ts.isNumericLiteral(expression)) {
+      return expression.text;
+    }
+    return expression.getText();
+  }
+  if (ts.isStringLiteralLike(nameNode) || ts.isNumericLiteral(nameNode)) {
+    return nameNode.text;
+  }
+  return nameNode.getText();
+}
+
 function buildFieldModel(node, checker) {
   if (!node.name) {
     return null;
@@ -2419,7 +2439,7 @@ function buildFieldModel(node, checker) {
   const fieldType = checker.getTypeAtLocation(node);
   return {
     kind: "field",
-    name: node.name.getText(),
+    name: memberName(node.name),
     type: writtenTypeText(node) || typeToString(checker, node),
     implementationHash: stableImplementationHash(node.getText()),
     modifiers: collectModifiers(state.ts, node),
@@ -2435,7 +2455,7 @@ function buildFieldModel(node, checker) {
 }
 
 function buildMethodModel(node, checker, kindLabel) {
-  const name = kindLabel === "constructor" ? "constructor" : node.name.getText();
+  const name = kindLabel === "constructor" ? "constructor" : memberName(node.name);
   const signature = buildSignature(name, node.parameters || [], checker);
   const returnTypeObject = kindLabel === "constructor" ? null : getReturnTypeObject(checker, node);
   const bodyDetails = collectBodyDetails(node.body, checker, kindLabel === "function" ? node : null);
@@ -2462,7 +2482,7 @@ function buildMethodModel(node, checker, kindLabel) {
 }
 
 function buildAccessorModel(node, checker, accessorKind) {
-  const name = node.name.getText();
+  const name = memberName(node.name);
   const signature = buildSignature(name, node.parameters || [], checker);
   const modifiers = collectModifiers(state.ts, node);
   modifiers.push(accessorKind);
@@ -2484,7 +2504,7 @@ function buildAccessorModel(node, checker, accessorKind) {
 function buildEnumModel(node) {
   const members = node.members.map((member) => ({
     kind: "enumMember",
-    name: member.name.getText(),
+    name: memberName(member.name),
     implementationHash: stableImplementationHash(member.getText())
   }));
   return {

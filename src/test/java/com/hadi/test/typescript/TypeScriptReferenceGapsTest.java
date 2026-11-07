@@ -361,4 +361,23 @@ public class TypeScriptReferenceGapsTest {
                 "/src/reexport.ts", "const a = 2;\nexport { a as other } from './other';\n");
         assertFalse(component(result, "src.reexport.a").modifiers().contains("export"));
     }
+
+    @Test
+    public void aComputedOrQuotedMemberIsNamedWithoutItsBracketsAndQuotes() throws Exception {
+        final CompileResult result = compile("/src/names.ts",
+                "export class Q {\n"
+                        + "  get ['~standard'](): number { return 1; }\n"
+                        + "  ['quoted-method'](): void { }\n"
+                        + "  'plain-quoted': string = '';\n"
+                        + "  async [Symbol.asyncIterator](): Promise<void> { }\n"
+                        + "}\n"
+                        + "export interface Disposable2 { [Symbol.iterator](): Iterator<number>; }\n");
+        final java.util.List<String> names = result.model().components().map(Component::uniqueName).toList();
+        for (final String expected : new String[] {"src.names.Q.~standard()", "src.names.Q.quoted-method()",
+            "src.names.Q.plain-quoted", "src.names.Q.Symbol.asyncIterator()",
+            "src.names.Disposable2.Symbol.iterator()"}) {
+            assertTrue(expected + " in " + names, names.contains(expected));
+        }
+        assertFalse(names.toString(), names.stream().anyMatch(name -> name.contains("[") || name.contains("'")));
+    }
 }
