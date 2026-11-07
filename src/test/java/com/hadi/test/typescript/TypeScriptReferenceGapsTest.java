@@ -468,4 +468,19 @@ public class TypeScriptReferenceGapsTest {
         assertTrue(targets(component(result, "src.cards.Holder.items")).contains("src.cards.AssetType"));
         assertTrue(targets(component(result, "src.cards.pick.card")).contains("src.cards.AssetType"));
     }
+
+    @Test
+    public void aRequireMadeByCreateRequireIsAnImportAndNamesWhatItBinds() throws Exception {
+        final CompileResult result = compile("/src/util.ts", UTIL,
+                "/src/cjs.ts", "import { createRequire } from 'node:module';\n"
+                        + "const require = createRequire(import.meta.url);\n"
+                        + "export function locale() {\n"
+                        + "  const { app } = require('electron') as typeof import('electron');\n"
+                        + "  return app.getLocale() + require.resolve('@scope/mcp') + require('./util');\n"
+                        + "}\n");
+        final Component locale = component(result, "src.cjs.locale");
+        assertTrue(locale.imports().toString(), locale.imports().containsAll(Set.of("electron", "@scope/mcp",
+                "src.util")));
+        assertTrue(targets(locale).toString(), targets(locale).contains("electron:app"));
+    }
 }
