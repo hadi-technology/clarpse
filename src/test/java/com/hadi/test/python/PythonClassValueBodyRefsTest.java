@@ -109,7 +109,9 @@ public class PythonClassValueBodyRefsTest {
     @Test
     public void anImportedFunctionUsedAsAValueIsNotAReference() {
         final Component method = method(CLIENT, "function_value");
-        Assert.assertTrue(method.internalDependencies().isEmpty());
+        // `register` is this module's own function, called here; `make_user` is only handed to it.
+        Assert.assertTrue(method.internalDependencies().stream()
+                .allMatch(ref -> ref.invokedComponent().startsWith("app.client.register(")));
         assertNoReferenceTo(method, "pkg.models.make_user");
     }
 

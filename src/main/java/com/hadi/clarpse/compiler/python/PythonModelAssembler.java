@@ -408,6 +408,11 @@ final class PythonModelAssembler {
         typeRef.externalLabel = field.externalLabel;
         typeRef.alternates = field.alternates;
         insertReferences(component, typeRef, false);
+        if (field.valueReferences != null) {
+            for (final PythonTypeRefModel valueRef : field.valueReferences) {
+                insertReferences(component, valueRef, false);
+            }
+        }
         return component;
     }
 
@@ -444,6 +449,11 @@ final class PythonModelAssembler {
         typeRef.externalLabel = field.externalLabel;
         typeRef.alternates = field.alternates;
         insertReferences(component, typeRef, false);
+        if (field.valueReferences != null) {
+            for (final PythonTypeRefModel valueRef : field.valueReferences) {
+                insertReferences(component, valueRef, false);
+            }
+        }
         return component;
     }
 

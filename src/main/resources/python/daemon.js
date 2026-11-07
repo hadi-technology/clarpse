@@ -796,6 +796,34 @@ function classesDefinedIn(filePath) {
   return moduleDeclarations(filePath).classes;
 }
 
+/** The names a module binds at its top level by assignment: its constants and other module fields. */
+function moduleLevelValueNames(parseTree, parseNodeType) {
+  const values = new Set();
+  for (const name of collectTopLevelNames(parseTree, parseNodeType)) {
+    values.add(name);
+  }
+  for (const statement of getStatementsFromSuite(parseTree)) {
+    if (statement && (isClassNode(statement, parseNodeType) || isFunctionNode(statement, parseNodeType))) {
+      values.delete(nameFromNode(statement.d && statement.d.name ? statement.d.name : null));
+    }
+  }
+  return values;
+}
+
+/** The names bound at the top of a module by a function definition. */
+function collectLocalFunctions(parseTree, parseNodeType) {
+  const functions = new Set();
+  for (const statement of getStatementsFromSuite(parseTree)) {
+    if (statement && isFunctionNode(statement, parseNodeType)) {
+      const name = nameFromNode(statement.d && statement.d.name ? statement.d.name : null);
+      if (name) {
+        functions.add(name);
+      }
+    }
+  }
+  return functions;
+}
+
 /** The names bound at the top of a module by a class, a function or an assignment. */
 function collectTopLevelNames(parseTree, parseNodeType) {
   const names = new Set();
@@ -2687,6 +2715,23 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
     return true;
   }
 
+  /**
+   * A function or value declared at the top of this module, used by name where the function does not
+   * bind that name itself, is a dependency on that declaration: `helper()`, `register(helper)`,
+   * `for p in _PARSERS`.
+   */
+  function addModuleLevelRef(name) {
+    if (!name || isLocal(name)) {
+      return false;
+    }
+    if (!(ctx.localFunctions && ctx.localFunctions.has(name))
+      && !(ctx.localValues && ctx.localValues.has(name))) {
+      return false;
+    }
+    pushTarget(name, localUniqueName(name, ctx));
+    return true;
+  }
+
   function pushTarget(raw, target) {
     if (!moduleMemberTargets.has(target)) {
       moduleMemberTargets.add(target);
@@ -2745,6 +2790,7 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
       if (calleeNode && calleeNode.nodeType === parseNodeType.Name) {
         // `User()` is recorded by addRef above, as it always has been.
         calleeNames.add(calleeNode);
+        addModuleLevelRef(nameFromNode(calleeNode));
       }
     }
 
@@ -2764,7 +2810,7 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
     if (parseNodeType && parseNodeType.Name !== undefined && node.nodeType === parseNodeType.Name) {
       if (!calleeNames.has(node)) {
         const name = nameFromNode(node);
-        if (!addClassRef(name, name) && inHeader && name && !isLocal(name)
+        if (!addClassRef(name, name) && !addModuleLevelRef(name) && inHeader && name && !isLocal(name)
           && ctx.importedSymbols && ctx.importedSymbols.has(name)) {
           addRef(name);
         }
@@ -3111,7 +3157,8 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
     implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
     targetUniqueName: ref ? ref.targetUniqueName : null,
     externalLabel: ref ? ref.externalLabel : null,
-    alternates: ref ? ref.alternates : []
+    alternates: ref ? ref.alternates : [],
+    valueReferences: collectValueReferences(statement, ctx, parseNodeType)
   };
 }
 
@@ -3277,6 +3324,50 @@ function isEnumBase(rawBase) {
   }
   const segments = String(rawBase).trim().split('.');
   return ENUM_BASE_NAMES.has(segments[segments.length - 1]);
+}
+
+/** The unique name a top-level declaration of the module being read carries. */
+function localUniqueName(name, ctx) {
+  return (ctx.packageName ? ctx.packageName + '.' : '') + ctx.moduleName + '.' + name;
+}
+
+/**
+ * The module-level functions and values a field's initialiser names -- `_PARSERS = (parse_a, parse_b)`
+ * depends on both functions. Nothing inside a lambda or nested definition is read.
+ */
+function collectValueReferences(statement, ctx, parseNodeType) {
+  const value = statement && statement.d ? statement.d.rightExpr : null;
+  const refs = [];
+  const seen = new Set();
+  function walk(node) {
+    if (!node || typeof node !== 'object' || !node.d) {
+      return;
+    }
+    if (node.nodeType === parseNodeType.Lambda || isFunctionNode(node, parseNodeType)
+      || isClassNode(node, parseNodeType)) {
+      return;
+    }
+    if (node.nodeType === parseNodeType.Name) {
+      const name = nameFromNode(node);
+      if (name && ctx.localFunctions && ctx.localFunctions.has(name) && !seen.has(name)) {
+        seen.add(name);
+        const target = localUniqueName(name, ctx);
+        refs.push({ raw: name, targetUniqueName: target, externalLabel: target, alternates: [] });
+      }
+      return;
+    }
+    for (const key of Object.keys(node.d)) {
+      if (node.nodeType === parseNodeType.MemberAccess && key === 'member') {
+        continue;
+      }
+      const child = node.d[key];
+      for (const item of (Array.isArray(child) ? child : [child])) {
+        walk(item);
+      }
+    }
+  }
+  walk(value);
+  return refs;
 }
 
 function resolveClassUniqueName(className, ctx, parentUniqueName) {
@@ -3541,6 +3632,8 @@ async function handleGetFileModel(params) {
     importedModules: imported.importedModules,
     importedSymbols: imported.importedSymbols,
     localClasses,
+    localFunctions: collectLocalFunctions(parseTree, parseNodeType),
+    localValues: moduleLevelValueNames(parseTree, parseNodeType),
     fileText,
     evaluator: null
   };

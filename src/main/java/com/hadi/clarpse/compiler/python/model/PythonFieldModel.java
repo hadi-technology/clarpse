@@ -15,4 +15,7 @@ public class PythonFieldModel {
 
     /** The remaining arms of a union annotation. See {@link PythonTypeRefModel#alternates}. */
     public java.util.List<PythonTypeRefModel> alternates = new java.util.ArrayList<>();
+
+    /** The module-level functions and values the field's initialiser names. */
+    public java.util.List<PythonTypeRefModel> valueReferences = new java.util.ArrayList<>();
 }
