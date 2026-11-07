@@ -2707,12 +2707,32 @@ function buildBaseExpressionMembers(node, checker, declaredNames) {
   return models;
 }
 
+/** Whether a constructor parameter also declares a field: it carries an accessibility or `readonly` modifier. */
+function isParameterProperty(parameter) {
+  const ts = state.ts;
+  return ts.isIdentifier(parameter.name) && (parameter.modifiers || []).some((modifier) =>
+    modifier.kind === ts.SyntaxKind.PublicKeyword
+    || modifier.kind === ts.SyntaxKind.PrivateKeyword
+    || modifier.kind === ts.SyntaxKind.ProtectedKeyword
+    || modifier.kind === ts.SyntaxKind.ReadonlyKeyword
+    || modifier.kind === ts.SyntaxKind.OverrideKeyword);
+}
+
 function buildClassModel(node, checker, unresolvedBases) {
   const members = [];
   for (const member of node.members) {
     if (state.ts.isConstructorDeclaration(member)) {
       if (member.body) {
         members.push(buildMethodModel(member, checker, "constructor"));
+      }
+      // `constructor(public readonly timeout: number)` declares a field as well as a parameter.
+      for (const parameter of member.parameters) {
+        if (isParameterProperty(parameter)) {
+          const fieldModel = buildFieldModel(parameter, checker);
+          if (fieldModel) {
+            members.push(fieldModel);
+          }
+        }
       }
       continue;
     }

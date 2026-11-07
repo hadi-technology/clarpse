@@ -419,4 +419,25 @@ public class TypeScriptReferenceGapsTest {
                 targets(component(result, "src.arrow.cast")).contains("src.arrow.Result"));
         assertFalse(targets(component(result, "src.arrow.plain")).stream().anyMatch(target -> target.startsWith("src.")));
     }
+
+    @Test
+    public void aConstructorParameterPropertyIsAField() throws Exception {
+        final CompileResult result = compile("/src/errors.ts",
+                "export class Detail { }\n"
+                        + "export class TimeoutError {\n"
+                        + "  declared: string = '';\n"
+                        + "  constructor(public readonly timeout: number, private detail: Detail, plain: string) { }\n"
+                        + "}\n");
+        final Component timeout = component(result, "src.errors.TimeoutError.timeout");
+        assertEquals(com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType.FIELD,
+                timeout.componentType());
+        assertTrue(timeout.modifiers().toString(), timeout.modifiers().contains("readonly"));
+        assertTrue(targets(component(result, "src.errors.TimeoutError.detail")).contains("src.errors.Detail"));
+        assertTrue(component(result, "src.errors.TimeoutError.detail").modifiers().contains("private"));
+        assertFalse("a parameter with no modifier declares no field",
+                result.model().containsComponent("src.errors.TimeoutError.plain"));
+        assertEquals("the constructor's own parameters are unchanged",
+                com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType.CONSTRUCTOR_PARAMETER_COMPONENT,
+                component(result, "src.errors.TimeoutError.constructor(number, Detail, string).timeout").componentType());
+    }
 }
