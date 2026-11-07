@@ -1711,6 +1711,10 @@ function buildCallReferences(node, checker) {
   if (state.ts.isPropertyAccessExpression(expr) || state.ts.isElementAccessExpression(expr)) {
     const receiverType = checker.getTypeAtLocation(expr.expression);
     references.push(...buildReferenceModelsFromType(receiverType, checker, "type"));
+    const libraryMethod = buildLibraryMethodReference(node, checker);
+    if (libraryMethod) {
+      references.push(libraryMethod);
+    }
   }
   return references;
 }
@@ -1808,10 +1812,12 @@ function isModelledValueDeclaration(declaration) {
   return false;
 }
 
-// The references code makes by naming a modelled declaration as a value: a class or function
+// The references a piece of code makes by naming a declaration as a value: a class or function
 // placed in an array or object literal, a constant used in an expression, a function passed as an
-// argument or called, a component named as a JSX tag. A name that
-// resolves to a local, a parameter, a member, or anything outside the program is not recorded.
+// argument, a component named as a JSX tag, a function called. A declaration of the repository is
+// recorded as the component it is. A symbol of a package the code imports is recorded by name, as
+// `package:Symbol`. A name that resolves to a local, a parameter, a member, or the language's own
+// library is not recorded.
 function collectValueReferences(initializer, checker, owner) {
   const references = [];
   if (!initializer || state.shallowBody) {
@@ -1828,10 +1834,182 @@ function collectValueReferences(initializer, checker, owner) {
         references.push(reference);
       }
     }
+    if (ts.isPropertyAccessExpression(node)) {
+      const member = buildNamespaceMemberReference(node, checker);
+      if (member) {
+        references.push(member);
+      }
+    }
     ts.forEachChild(node, visit);
   }
   visit(initializer);
   return references;
+}
+
+function externalNamedReference(packageName, symbolName) {
+  return { kind: "type", external: true, displayName: `${packageName}:${symbolName}` };
+}
+
+/** The module specifier a symbol was imported with, or null where it was not imported. */
+function importedFrom(symbol) {
+  const ts = state.ts;
+  const declaration = symbol && symbol.declarations && symbol.declarations[0];
+  let node = declaration;
+  while (node && !ts.isImportDeclaration(node) && !ts.isImportEqualsDeclaration(node)
+      && !ts.isVariableDeclaration(node)) {
+    node = node.parent;
+  }
+  if (!node) {
+    return null;
+  }
+  if (ts.isImportDeclaration(node)) {
+    return ts.isStringLiteralLike(node.moduleSpecifier) ? node.moduleSpecifier.text : null;
+  }
+  if (ts.isImportEqualsDeclaration(node)) {
+    const reference = node.moduleReference;
+    return ts.isExternalModuleReference(reference) && ts.isStringLiteralLike(reference.expression)
+      ? reference.expression.text
+      : null;
+  }
+  return requiredModule(node.initializer);
+}
+
+/** The module `require("x")` or `(await) import("x")` loads, whatever wraps it, or null. */
+function requiredModule(expression) {
+  const ts = state.ts;
+  let node = expression;
+  while (node && (ts.isAwaitExpression(node) || ts.isParenthesizedExpression(node)
+      || ts.isAsExpression(node) || ts.isNonNullExpression(node))) {
+    node = node.expression;
+  }
+  if (node && ts.isCallExpression(node) && node.arguments.length === 1
+      && ts.isStringLiteralLike(node.arguments[0])) {
+    const callee = node.expression;
+    if (callee.kind === ts.SyntaxKind.ImportKeyword
+        || (ts.isIdentifier(callee) && callee.text === "require")) {
+      return node.arguments[0].text;
+    }
+  }
+  return null;
+}
+
+/** The package a specifier written in an import names: `@scope/pkg/sub` is `@scope/pkg`. */
+function packageOfSpecifier(specifier) {
+  if (!specifier || specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("node:")) {
+    return specifier && specifier.startsWith("node:") ? specifier : null;
+  }
+  const parts = specifier.split("/");
+  return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
+/** The package a file under `node_modules` belongs to, or null where it belongs to none. */
+function packageOfFile(fileName) {
+  const marker = `${path.sep}node_modules${path.sep}`;
+  const at = fileName.lastIndexOf(marker);
+  if (at < 0) {
+    return null;
+  }
+  const parts = fileName.slice(at + marker.length).split(path.sep);
+  if (parts[0] === "@types" && parts.length > 1) {
+    // `@types/scope__name` types `@scope/name`.
+    return parts[1].includes("__") ? `@${parts[1].replace("__", "/")}` : parts[1];
+  }
+  return parts[0].startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
+/** Whether a file is one of the compiler's own library declarations. */
+function isCompilerLibraryFile(fileName) {
+  return /[\\/]typescript[\\/]lib[\\/]lib\.[^\\/]*\.d\.ts$/.test(fileName)
+    || /^lib\.[^\\/]*\.d\.ts$/.test(path.basename(fileName));
+}
+
+/**
+ * A reference to a symbol of a package: the identifier names something the file imported from a
+ * package the repository does not hold, whether or not the package has declarations.
+ */
+function buildExternalValueReference(identifier, imported, actual) {
+  const packageName = packageOfSpecifier(imported);
+  if (!packageName) {
+    return null;
+  }
+  if (actual && actual.declarations && actual.declarations.length) {
+    const fileName = actual.declarations[0].getSourceFile().fileName;
+    if (isInternalFile(fileName) || isCompilerLibraryFile(fileName)) {
+      return null;
+    }
+  }
+  let name = actual && actual.getName ? actual.getName() : identifier.text;
+  if (!name || name === "default" || name === "export=" || name === "unknown" || isInternalSymbolName(name)) {
+    name = identifier.text;
+  }
+  return externalNamedReference(packageName, name);
+}
+
+/** `ns.member` where `ns` is a namespace import of a package: a reference to `package:member`. */
+function buildNamespaceMemberReference(node, checker) {
+  const ts = state.ts;
+  if (!ts.isIdentifier(node.expression)) {
+    return null;
+  }
+  let symbol;
+  try {
+    symbol = checker.getSymbolAtLocation(node.expression);
+  } catch (err) {
+    return null;
+  }
+  const declaration = symbol && symbol.declarations && symbol.declarations[0];
+  if (!declaration || !(ts.isNamespaceImport(declaration) || ts.isImportEqualsDeclaration(declaration))) {
+    return null;
+  }
+  const packageName = packageOfSpecifier(importedFrom(symbol));
+  if (!packageName) {
+    return null;
+  }
+  let target = null;
+  try {
+    target = checker.getAliasedSymbol(symbol);
+  } catch (err) {
+    target = null;
+  }
+  const targetFile = target && target.declarations && target.declarations.length
+    ? target.declarations[0].getSourceFile().fileName
+    : null;
+  if (targetFile && (isInternalFile(targetFile) || isCompilerLibraryFile(targetFile))) {
+    return null;
+  }
+  return externalNamedReference(packageName, node.name.text);
+}
+
+/**
+ * A call to a method of a library object: the object's type, in its package, and the method. A
+ * method of the object's own class would be a member of a declaration this program models; one of a
+ * class a package declares is not, and was otherwise reduced to the type the call returns.
+ */
+function buildLibraryMethodReference(callNode, checker) {
+  const ts = state.ts;
+  const callee = callNode.expression;
+  if (!ts.isPropertyAccessExpression(callee)) {
+    return null;
+  }
+  let type;
+  try {
+    type = checker.getTypeAtLocation(callee.expression);
+  } catch (err) {
+    return null;
+  }
+  const symbol = type && (type.getSymbol ? type.getSymbol() : null);
+  const declaration = symbol && symbol.declarations && symbol.declarations[0];
+  if (!declaration || !declaration.getSourceFile) {
+    return null;
+  }
+  const fileName = declaration.getSourceFile().fileName;
+  const packageName = packageOfFile(fileName);
+  const typeName = symbol.getName();
+  if (!packageName || isCompilerLibraryFile(fileName) || !typeName || isInternalSymbolName(typeName)
+      || typeName === "__type") {
+    return null;
+  }
+  return externalNamedReference(packageName, `${typeName}.${callee.name.text}`);
 }
 
 function buildValueReference(identifier, checker, owner) {
@@ -1841,20 +2019,49 @@ function buildValueReference(identifier, checker, owner) {
     return null;
   }
   let symbol;
+  let imported = null;
+  let boundByRequire = false;
   try {
     symbol = parent && ts.isShorthandPropertyAssignment(parent) && parent.name === identifier
       ? checker.getShorthandAssignmentValueSymbol(parent)
       : checker.getSymbolAtLocation(identifier);
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
+      imported = importedFrom(symbol);
+      const named = symbol.declarations && symbol.declarations[0];
+      const wholeModule = named && (ts.isNamespaceImport(named) || ts.isImportEqualsDeclaration(named));
       symbol = checker.getAliasedSymbol(symbol);
+      if (wholeModule) {
+        // `ns` alone binds a module, which is named by what is read from it (see
+        // `buildNamespaceMemberReference`).
+        return null;
+      }
+    } else if (symbol && symbol.declarations && symbol.declarations.length && !imported) {
+      // A binding made by `const { x } = require("pkg")`.
+      const declaration = symbol.declarations[0];
+      if (ts.isBindingElement(declaration) || ts.isVariableDeclaration(declaration)) {
+        let variable = declaration;
+        while (variable && !ts.isVariableDeclaration(variable)) {
+          variable = variable.parent;
+        }
+        const loaded = variable && variable.initializer ? requiredModule(variable.initializer) : null;
+        if (loaded && ts.isBindingElement(declaration)) {
+          imported = loaded;
+          boundByRequire = true;
+        }
+      }
     }
   } catch (err) {
     return null;
   }
-  if (!symbol || !symbol.declarations || !symbol.declarations.length) {
+  const declarations = symbol && symbol.declarations ? symbol.declarations : [];
+  if (imported && packageOfSpecifier(imported) && (boundByRequire || !declarations.length
+      || !declarations.some((d) => isInternalFile(d.getSourceFile().fileName)))) {
+    return buildExternalValueReference(identifier, imported, boundByRequire ? null : symbol);
+  }
+  if (!declarations.length) {
     return null;
   }
-  const declaration = symbol.declarations.find(isModelledValueDeclaration);
+  const declaration = declarations.find(isModelledValueDeclaration);
   if (!declaration || declaration === owner) {
     return null;
   }

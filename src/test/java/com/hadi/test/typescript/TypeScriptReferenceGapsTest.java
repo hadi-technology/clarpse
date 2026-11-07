@@ -162,4 +162,75 @@ public class TypeScriptReferenceGapsTest {
         assertFalse("the parameter named handler is not the exported function: " + targets,
                 targets.contains("src.consts.handler"));
     }
+
+    private static final String LIB_PACKAGE = "{ \"name\": \"@acme/lib\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }";
+    private static final String LIB_TYPES = "export declare class Client { send(message: string): Promise<void>; }\n"
+            + "export declare function useThing(options: { a?: number }): { data: string };\n"
+            + "export declare const VERSION: string;\n"
+            + "export declare function Widget(props: { title: string }): unknown;\n";
+
+    @Test
+    public void aSymbolOfAPackageIsAReferenceNamedByItsPackage() throws Exception {
+        final CompileResult result = compile("/node_modules/@acme/lib/package.json", LIB_PACKAGE,
+                "/node_modules/@acme/lib/index.d.ts", LIB_TYPES,
+                "/src/use.tsx", "import { useThing, VERSION, Widget } from '@acme/lib';\n"
+                        + "declare namespace JSX { interface IntrinsicElements { [tag: string]: unknown } }\n"
+                        + "export function use() { return [VERSION, useThing({})]; }\n"
+                        + "export function view() { return <Widget title=\"t\" />; }\n");
+        final Set<String> used = targets(component(result, "src.use.use"));
+        assertTrue("a constant of the package: " + used, used.contains("@acme/lib:VERSION"));
+        assertTrue("a function of the package that is called: " + used, used.contains("@acme/lib:useThing"));
+        assertTrue("a component of the package named as a tag: " + targets(component(result, "src.use.view")),
+                targets(component(result, "src.use.view")).contains("@acme/lib:Widget"));
+    }
+
+    @Test
+    public void aMethodCalledOnALibraryObjectIsTheReceiverTypeAndTheMethod() throws Exception {
+        final CompileResult result = compile("/node_modules/@acme/lib/package.json", LIB_PACKAGE,
+                "/node_modules/@acme/lib/index.d.ts", LIB_TYPES,
+                "/src/use.ts", "import { Client } from '@acme/lib';\n"
+                        + "export function send(client: Client) { return client.send('x'); }\n");
+        assertTrue(targets(component(result, "src.use.send")).toString(),
+                targets(component(result, "src.use.send")).contains("@acme/lib:Client.send"));
+    }
+
+    @Test
+    public void aMemberReadFromANamespaceImportOfAPackageIsNamedByItsPackage() throws Exception {
+        final CompileResult result = compile("/node_modules/@acme/lib/package.json", LIB_PACKAGE,
+                "/node_modules/@acme/lib/index.d.ts", LIB_TYPES,
+                "/src/use.ts", "import * as lib from '@acme/lib';\n"
+                        + "export function version() { return lib.VERSION; }\n");
+        assertTrue(targets(component(result, "src.use.version")).toString(),
+                targets(component(result, "src.use.version")).contains("@acme/lib:VERSION"));
+    }
+
+    @Test
+    public void aPackageWithNoDeclarationsIsStillNamed() throws Exception {
+        final CompileResult result = compile("/src/use.ts",
+                "import { useMutation } from '@tanstack/react-query';\n"
+                        + "export function save() { return useMutation({}); }\n");
+        assertTrue(targets(component(result, "src.use.save")).toString(),
+                targets(component(result, "src.use.save")).contains("@tanstack/react-query:useMutation"));
+    }
+
+    @Test
+    public void aNameBoundByRequireIsNamedByItsPackage() throws Exception {
+        final CompileResult result = compile("/src/main.ts",
+                "declare function require(id: string): any;\n"
+                        + "const { app } = require('electron');\n"
+                        + "export function quit() { return app.quit(); }\n");
+        assertTrue(targets(component(result, "src.main.quit")).toString(),
+                targets(component(result, "src.main.quit")).contains("electron:app"));
+    }
+
+    @Test
+    public void aNameOfTheLanguagesOwnLibraryOrOfTheRepositoryIsNotAPackageReference() throws Exception {
+        final CompileResult result = compile("/src/own.ts", "export const LIMIT = 1;\n",
+                "/src/use.ts", "import { LIMIT } from './own';\n"
+                        + "export function use(items: number[]) { return [Math.max(...items), new Map(), LIMIT]; }\n");
+        for (final String target : targets(component(result, "src.use.use"))) {
+            assertFalse("only a package's symbols are named package:Symbol: " + target,
+                    target.contains(":") && !target.startsWith("src."));
+        }
+    }
 }
