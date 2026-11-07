@@ -483,4 +483,25 @@ public class TypeScriptReferenceGapsTest {
                 "src.util")));
         assertTrue(targets(locale).toString(), targets(locale).contains("electron:app"));
     }
+
+    @Test
+    public void aClassExtendingABuiltInClassHasTheMembersTheBuiltInDeclares() throws Exception {
+        final CompileResult result = compile("/src/errors.ts",
+                "export class WebError extends Error {\n"
+                        + "  constructor(message: string, public code: number) { super(message); }\n"
+                        + "  describe(): string { return this.message; }\n"
+                        + "  override name = 'WebError';\n"
+                        + "}\n"
+                        + "export class NetworkError extends WebError { }\n"
+                        + "export class Plain { }\n");
+        for (final String inherited : new String[] {"message", "stack", "cause"}) {
+            assertTrue(inherited + " comes from Error",
+                    result.model().containsComponent("src.errors.WebError." + inherited));
+        }
+        assertEquals("a member the class declares is not copied over it", 1, result.model().components()
+                .filter(component -> component.uniqueName().equals("src.errors.WebError.name")).count());
+        assertFalse("a class that extends one of the repository's classes is left alone",
+                result.model().containsComponent("src.errors.NetworkError.message"));
+        assertFalse(result.model().containsComponent("src.errors.Plain.message"));
+    }
 }

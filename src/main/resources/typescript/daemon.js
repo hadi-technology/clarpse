@@ -2654,9 +2654,55 @@ function buildBaseExpressionMembers(node, checker, declaredNames) {
   } catch (err) {
     return models;
   }
+  return membersFromProperties(properties, node, checker, declaredNames);
+}
+
+/**
+ * The members a class gets from a built-in base class such as `Error`, which its program holds only
+ * as the compiler's own declarations and so never models: `class WebError extends Error` has
+ * `message`, `name`, `stack` and `cause` without declaring them. Only a base whose declarations are
+ * all the compiler's library is read this way; a base the repository declares is a component of its
+ * own, and one a package declares is named by the reference to it.
+ */
+function buildLibraryBaseMembers(node, checker, declaredNames) {
+  const ts = state.ts;
+  const clause = (node.heritageClauses || []).find((candidate) => candidate.token === ts.SyntaxKind.ExtendsKeyword);
+  const typeNode = clause && clause.types[0];
+  if (!typeNode || !ts.isIdentifier(typeNode.expression)) {
+    return [];
+  }
+  let baseSymbol;
+  try {
+    baseSymbol = checker.getSymbolAtLocation(typeNode.expression);
+    if (baseSymbol && (baseSymbol.flags & ts.SymbolFlags.Alias)) {
+      baseSymbol = checker.getAliasedSymbol(baseSymbol);
+    }
+  } catch (err) {
+    return [];
+  }
+  const declarations = baseSymbol && baseSymbol.declarations ? baseSymbol.declarations : [];
+  if (!declarations.length || !(baseSymbol.flags & ts.SymbolFlags.Class)
+      || !declarations.every((declaration) => isCompilerLibraryFile(declaration.getSourceFile().fileName))) {
+    // `Error` is an interface and a variable in the library, not a class: accept either.
+    if (!declarations.length || !declarations.every((declaration) =>
+        isCompilerLibraryFile(declaration.getSourceFile().fileName))) {
+      return [];
+    }
+  }
+  let properties;
+  try {
+    properties = checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(baseSymbol)) || [];
+  } catch (err) {
+    return [];
+  }
+  return membersFromProperties(properties, node, checker, declaredNames);
+}
+
+function membersFromProperties(properties, node, checker, declaredNames) {
+  const models = [];
   for (const property of properties) {
     const name = property.getName ? property.getName() : null;
-    if (!name || declaredNames.has(name) || isInternalSymbolName(name)) {
+    if (!name || declaredNames.has(name) || isInternalSymbolName(name) || name.startsWith("__@")) {
       continue;
     }
     let propertyType;
@@ -2762,6 +2808,8 @@ function buildClassModel(node, checker, unresolvedBases) {
       members.push(buildAccessorModel(member, checker, "set"));
     }
   }
+  const libraryDeclared = new Set(members.filter((member) => member && member.name).map((member) => member.name));
+  members.push(...buildLibraryBaseMembers(node, checker, libraryDeclared));
   const baseExpression = classProducingBaseExpression(node);
   if (baseExpression) {
     const declaredNames = new Set();
