@@ -244,10 +244,21 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         // yields the edge and `import a.*;` yields nothing.
         if (ctx.isAsterisk()) {
             currentWildcardImports.add(fullImportName);
+        } else if (ctx.isStatic() && isConstantName(shortImportName) && fullImportName.indexOf('.') > 0) {
+            // A statically imported constant names a member of the type that declares it, and the
+            // dependency is on that type.
+            currentImportsMap.put(shortImportName,
+                    fullImportName.substring(0, fullImportName.lastIndexOf('.')));
         } else {
             currentImportsMap.put(shortImportName, fullImportName);
         }
         super.visit(ctx, arg);
+    }
+
+    /** Whether a name is written the way a constant is: upper case, digits and underscores. */
+    private static boolean isConstantName(final String name) {
+        return !name.isEmpty() && name.equals(name.toUpperCase(java.util.Locale.ROOT))
+                && Character.isUpperCase(name.codePointAt(0));
     }
 
     /**
@@ -369,6 +380,8 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             recordAnnotations(ctx.getAnnotations(), cmp);
             // A record is implicitly final, which its modifier list does not spell out.
             cmp.insertAccessModifier("final");
+            // A record is modelled as a class; the modifier is what tells it from a final class.
+            cmp.insertAccessModifier("record");
             cmp.setComponentName(ParseUtil.generateComponentName(ctx.getNameAsString(), componentStack));
             cmp.setName(ctx.getNameAsString());
             cmp.setImports(currentImports);
@@ -1230,6 +1243,24 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             // when the type solver confirms the type exists in that package. A prefix that does not
             // resolve is skipped rather than assumed, so this recovers real edges without inventing
             // any -- the same rule the `assumeCurrentPackage` note below is about.
+            // A member type of an enclosing type is in scope before the package and any on-demand
+            // import. Confined to a type position and to candidates that are themselves types: run
+            // over bare identifiers it matched fields, and `return MAX_NOTES;` found the field
+            // `<Type>.MAX_NOTES` and invented a type reference to it.
+            if (assumeCurrentPackage) {
+                final String memberType = memberTypeOfEnclosingType(type);
+                if (memberType != null) {
+                    return memberType;
+                }
+            }
+            // A type of the current package is in scope before any on-demand import.
+            if (currentPkg != null && !type.contains(".")) {
+                final String samePackage = currentPkg.path() + "." + type;
+                if (srcModel.component(samePackage).isPresent() || typeSolver.tryToSolveType(samePackage).isSolved()
+                        || otherLanguageTypes.test(samePackage)) {
+                    return samePackage;
+                }
+            }
             for (final String wildcardPackage : currentWildcardImports) {
                 final String candidate = wildcardPackage + "." + type;
                 if (typeSolver.tryToSolveType(candidate).isSolved() || otherLanguageTypes.test(candidate)) {
@@ -1245,28 +1276,6 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             if (!assumeCurrentPackage) {
                 return null;
             }
-            // A sibling nested type, named plainly from inside the type that declares it:
-            // `class Field { interface Validator {} static class RangeValidator implements Validator {} }`.
-            // The solver cannot see it under a bare name and the current-package assumption below
-            // turns it into `a.Validator`, which does not exist and is dropped as external -- so the
-            // relation vanished rather than being wrong, which is why it read as a coverage gap.
-            //
-            // Confined to a type position and to candidates that are themselves types. Run over
-            // bare identifiers it matched fields: `return MAX_NOTES;` inside a class found the
-            // field `<Type>.MAX_NOTES` and invented a type reference to it, which is the failure
-            // the hygiene tests exist to prevent.
-            for (int i = componentStack.size() - 1; i >= 0; i--) {
-                final Component enclosing = componentStack.get(i);
-                if (!enclosing.componentType().isBaseComponent()) {
-                    continue;
-                }
-                final String nested = enclosing.uniqueName() + "." + type;
-                final boolean isType = srcModel.component(nested)
-                        .map(found -> found.componentType().isBaseComponent()).orElse(false);
-                if (isType || typeSolver.tryToSolveType(nested).isSolved()) {
-                    return nested;
-                }
-            }
             if (currentPkg != null) {
                 resolvedType = currentPkg.path() + "." + type;
             } else {
@@ -1279,6 +1288,31 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         } else {
             return null;
         }
+    }
+
+    /**
+     * A sibling nested type, named plainly from inside the type that declares it:
+     * {@code class Field { interface Validator {} static class RangeValidator implements Validator {} }}.
+     * The solver cannot see it under a bare name, and the current-package assumption would turn it
+     * into {@code a.Validator}, which does not exist.
+     *
+     * @param type A name without type arguments.
+     * @return The nested type's name, or null when no enclosing type declares one by that name.
+     */
+    private String memberTypeOfEnclosingType(final String type) {
+        for (int i = componentStack.size() - 1; i >= 0; i--) {
+            final Component enclosing = componentStack.get(i);
+            if (!enclosing.componentType().isBaseComponent()) {
+                continue;
+            }
+            final String nested = enclosing.uniqueName() + "." + type;
+            final boolean isType = srcModel.component(nested)
+                    .map(found -> found.componentType().isBaseComponent()).orElse(false);
+            if (isType || typeSolver.tryToSolveType(nested).isSolved()) {
+                return nested;
+            }
+        }
+        return null;
     }
 
     /**
@@ -1329,7 +1363,10 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             return null;
         }
         final SymbolReference<ResolvedReferenceTypeDeclaration> symbol = typeSolver.tryToSolveType(dottedName);
-        if (!symbol.isSolved() || namesAValue(firstSegment(access))) {
+        if (!symbol.isSolved()) {
+            return packageQualifiedType(dottedName, access);
+        }
+        if (namesAValue(firstSegment(access))) {
             return null;
         }
         final String resolvedType = extractClassName(symbol.getCorrespondingDeclaration().getQualifiedName());
@@ -1337,6 +1374,48 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             return null;
         }
         return resolvedType;
+    }
+
+    /**
+     * The type a qualified name spells when the type solver cannot see it, as a parameter's or a
+     * return type's qualified name is read. That needs the shape of a package-qualified type: at least
+     * two lowercase package segments and then a capitalised segment, whose first segment is not a
+     * variable. The name stops at that segment, so {@code a.b.Files.CHANGES} and
+     * {@code a.b.Files.Kind.SIZE} both name {@code a.b.Files}.
+     */
+    private String packageQualifiedType(final String dottedName, final FieldAccessExpr access) {
+        if (namesAValue(firstSegment(access))) {
+            return null;
+        }
+        // A type of the parse path further in the name is the one it names, and is reached when
+        // the qualifier is visited: `a.b.Outer.Inner.K` names `a.b.Outer.Inner`.
+        final int lastDot = dottedName.lastIndexOf('.');
+        if (lastDot > 0 && qualifierNamesASolvedType(access.getScope())) {
+            return null;
+        }
+        final String[] segments = dottedName.split("\\.");
+        int typeSegment = 0;
+        while (typeSegment < segments.length && Character.isLowerCase(segments[typeSegment].codePointAt(0))) {
+            typeSegment++;
+        }
+        if (typeSegment < 2 || typeSegment >= segments.length
+                || !Character.isUpperCase(segments[typeSegment].codePointAt(0))) {
+            return null;
+        }
+        return String.join(".", Arrays.copyOfRange(segments, 0, typeSegment + 1));
+    }
+
+    private boolean qualifierNamesASolvedType(final Expression scope) {
+        Expression current = scope;
+        while (current != null && current.isFieldAccessExpr()) {
+            final String name = dottedName(current);
+            if (name != null && Character.isUpperCase(current.asFieldAccessExpr().getNameAsString().codePointAt(0))
+                    && typeSolver.tryToSolveType(name).isSolved()) {
+                return true;
+            }
+            current = current.asFieldAccessExpr().getScope();
+        }
+        return false;
     }
 
     /**
