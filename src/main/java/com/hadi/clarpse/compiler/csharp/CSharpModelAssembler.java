@@ -199,6 +199,7 @@ final class CSharpModelAssembler {
             // order the partial declarations happened to be parsed in.
             existing.implementationHash += typeModel.implementationHash;
             existing.baseTypes.addAll(typeModel.baseTypes);
+            existing.primaryParameterTypes.addAll(typeModel.primaryParameterTypes);
             existing.members.addAll(typeModel.members);
             existing.nestedTypes.addAll(typeModel.nestedTypes);
             existing.modifiers = mergeStrings(existing.modifiers, typeModel.modifiers);
@@ -307,6 +308,9 @@ final class CSharpModelAssembler {
                     final ComponentReference ref;
                     if (!isBase) {
                         ref = new SimpleTypeReference(resolved.name());
+                    } else if ("interface".equals(typeModel.kind)) {
+                        // Every entry of an interface's base list is an interface it extends.
+                        ref = new TypeExtensionReference(resolved.name());
                     } else if (isInterfaceTarget(rawToken, resolved.name(), typeIndex)) {
                         ref = new TypeImplementationReference(resolved.name());
                     } else {
@@ -317,6 +321,7 @@ final class CSharpModelAssembler {
                 }
             }
         }
+        attachTypeReferences(typeComponent, typeModel.primaryParameterTypes, typeIndex, typeModel, null, false);
         final List<CSharpModel.CSharpTypeModel> nestedTypes = new ArrayList<>(typeModel.nestedTypes);
         nestedTypes.sort(Comparator.comparing(type -> type.uniqueName));
         for (final CSharpModel.CSharpTypeModel nested : nestedTypes) {
@@ -405,6 +410,7 @@ final class CSharpModelAssembler {
         }
         attachTypeReferences(component, memberModel.simpleTypeUsages, typeIndex, ownerType, memberModel,
                 "method".equals(memberModel.kind) || "constructor".equals(memberModel.kind));
+        attachStaticReceivers(component, memberModel, typeIndex, ownerType);
         attachMemberReferences(component, memberModel.memberUsages, typeIndex, ownerType);
         if (component.componentType().isMethodComponent()) {
             component.setCyclo(memberModel.cyclo);
@@ -617,6 +623,49 @@ final class CSharpModelAssembler {
         }
     }
 
+    /**
+     * Binds each dotted name written before a member access to the longest of its leading
+     * segments that is a type: {@code Tools.Registry.Inner} in {@code Tools.Registry.Inner.Run()}
+     * is the nested type, and {@code Host.Helper} in {@code Host.Helper.Go()} is {@code Host}.
+     * A name whose segments name no known type is looked up whole, like any other written name.
+     */
+    private static void attachStaticReceivers(final Component component,
+                                              final CSharpModel.CSharpMemberModel memberModel,
+                                              final TypeIndex typeIndex,
+                                              final CSharpModel.CSharpTypeModel ownerType) {
+        final Set<String> seen = new LinkedHashSet<>();
+        for (final String receiver : memberModel.staticReceivers) {
+            if (isLikelyMemberAccess(receiver, ownerType, memberModel, true)) {
+                continue;
+            }
+            Resolution resolved = null;
+            String prefix = receiver;
+            while (true) {
+                final Resolution candidate = typeIndex.resolveType(prefix, ownerType, memberModel);
+                if (candidate != null && (candidate.kind() == ResolutionKind.EXACT
+                        || candidate.kind() == ResolutionKind.UNIQUE_SIMPLE_NAME)) {
+                    resolved = candidate;
+                    break;
+                }
+                final int cut = prefix.lastIndexOf('.');
+                if (cut < 0) {
+                    break;
+                }
+                prefix = prefix.substring(0, cut);
+            }
+            if (resolved == null) {
+                resolved = typeIndex.resolveType(receiver, ownerType, memberModel);
+            }
+            if (resolved == null || resolved.name().equals(component.uniqueName())
+                    || !seen.add(resolved.name())) {
+                continue;
+            }
+            final SimpleTypeReference reference = new SimpleTypeReference(resolved.name());
+            reference.setResolutionKind(resolved.kind());
+            component.insertCmpRef(reference);
+        }
+    }
+
     private static void attachMemberReferences(final Component component,
                                                final Collection<String> memberUsages,
                                                final TypeIndex typeIndex,
@@ -640,10 +689,20 @@ final class CSharpModelAssembler {
     private static boolean isLikelyMemberAccess(final String rawType,
                                                 final CSharpModel.CSharpTypeModel ownerType,
                                                 final CSharpModel.CSharpMemberModel memberModel) {
+        return isLikelyMemberAccess(rawType, ownerType, memberModel, false);
+    }
+
+    private static boolean isLikelyMemberAccess(final String rawType,
+                                                final CSharpModel.CSharpTypeModel ownerType,
+                                                final CSharpModel.CSharpMemberModel memberModel,
+                                                final boolean anyMemberKind) {
         if (rawType == null || rawType.isBlank()) {
             return false;
         }
-        if (memberModel == null || (!"method".equals(memberModel.kind) && !"constructor".equals(memberModel.kind))) {
+        if (memberModel == null) {
+            return false;
+        }
+        if (!anyMemberKind && !"method".equals(memberModel.kind) && !"constructor".equals(memberModel.kind)) {
             return false;
         }
         final String trimmed = rawType.trim();

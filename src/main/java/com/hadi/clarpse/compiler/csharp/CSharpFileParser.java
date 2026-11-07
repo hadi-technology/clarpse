@@ -18,9 +18,11 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -107,7 +109,7 @@ final class CSharpFileParser {
     private static final Pattern THIS_MEMBER_ASSIGN_PATTERN =
             Pattern.compile("\\bthis\\.(\\w+)\\s*=\\s*(\\w+)\\b");
     private static final Pattern STATIC_RECEIVER_PATTERN =
-            Pattern.compile("\\b([A-Z][A-Za-z0-9_\\.]*)\\s*\\.");
+            Pattern.compile("(?<![\\w.@])([A-Z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)\\s*\\.");
 
     private CSharpFileParser() {
     }
@@ -115,13 +117,13 @@ final class CSharpFileParser {
     static CSharpModel.ParseOutcome parseFile(final ProjectFile file, final int index) {
         try {
             final String sourceText = withoutByteOrderMark(file.content());
-            validateBalancedDelimiters(sourceText);
+            final Map<Integer, Integer> braceMatches = validateBalancedDelimiters(sourceText);
             final CSharpModel.CSharpFileModel fileModel = new CSharpModel.CSharpFileModel(
                     file,
                     sourceText,
                     CompilerSupport.moduleNameForFile(file.path())
             );
-            final SyntaxTree tree = parseSyntaxTree(sourceText);
+            final SyntaxTree tree = parseSyntaxTree(sourceText, braceMatches);
             for (final SyntaxNode child : tree.root().children) {
                 parseTopLevelNode(child, fileModel, "", tree.laterAlternatives(), false);
             }
@@ -150,7 +152,7 @@ final class CSharpFileParser {
         return content;
     }
 
-    private static SyntaxTree parseSyntaxTree(final String sourceText) {
+    private static SyntaxTree parseSyntaxTree(final String sourceText, final Map<Integer, Integer> braceMatches) {
         final FleetPsiParser parser = new CSharpFleetParser();
         final Lexer lexer = parser.getLexer();
         final ArrayTokenSequence tokens = new ArrayTokenSequence.Builder(sourceText, lexer).performLexing();
@@ -184,6 +186,7 @@ final class CSharpFileParser {
         if (root == null) {
             throw new IllegalStateException("No syntax nodes produced for source.");
         }
+        closeTypesAtTheirBraces(root, braceMatches);
         attachText(root, new SourceTokens(sourceText, tokens, parser.getWhitespaces(), parser.getComments()));
         return new SyntaxTree(root, laterConditionalAlternatives(tokens));
     }
@@ -311,7 +314,15 @@ final class CSharpFileParser {
         }
     }
 
-    private static void validateBalancedDelimiters(final String sourceText) {
+    /**
+     * Checks that the file's delimiters balance and pairs each opening brace with its closing one.
+     *
+     * @param sourceText The file's source.
+     * @return The offset of every closing brace, keyed by the offset of the opening brace it closes.
+     */
+    private static Map<Integer, Integer> validateBalancedDelimiters(final String sourceText) {
+        final Map<Integer, Integer> matches = new HashMap<>();
+        final Deque<Integer> openBraces = new ArrayDeque<>();
         int braces = 0;
         int parens = 0;
         int brackets = 0;
@@ -375,9 +386,13 @@ final class CSharpFileParser {
             switch (ch) {
                 case '{':
                     braces += 1;
+                    openBraces.push(i);
                     break;
                 case '}':
                     braces -= 1;
+                    if (!openBraces.isEmpty()) {
+                        matches.put(openBraces.pop(), i);
+                    }
                     break;
                 case '(':
                     parens += 1;
@@ -397,6 +412,50 @@ final class CSharpFileParser {
         }
         if (braces != 0 || parens != 0 || brackets != 0) {
             throw new IllegalStateException("Unbalanced delimiters in C# source.");
+        }
+        return matches;
+    }
+
+    /**
+     * Gives a type declaration back the members and types that follow a construct the syntax
+     * parser cannot place.
+     *
+     * <p>Such a construct (a switch expression with list and property patterns, for one) can end
+     * the type's block early. Everything after it then reaches the tree as siblings of the type,
+     * and its members are lost. The braces settle where the block really ends, so the siblings that
+     * start inside it are moved into it.
+     */
+    private static void closeTypesAtTheirBraces(final SyntaxNode node, final Map<Integer, Integer> braceMatches) {
+        int index = 0;
+        while (index < node.children.size()) {
+            final SyntaxNode child = node.children.get(index);
+            if ("cs:namespace-file-scope-declaration".equals(child.type)) {
+                // A file-scoped namespace holds the rest of the file.
+                while (index + 1 < node.children.size()) {
+                    final SyntaxNode absorbed = node.children.remove(index + 1);
+                    absorbed.parent = child;
+                    child.children.add(absorbed);
+                    child.endOffset = Math.max(child.endOffset, absorbed.endOffset);
+                }
+            }
+            if (TYPE_DECLARATIONS.contains(child.type)) {
+                final SyntaxNode block = firstChild(child, "cs:block-list");
+                final Integer close = block == null ? null : braceMatches.get(block.startOffset);
+                if (close != null && block.endOffset < close + 1) {
+                    final int realEnd = close + 1;
+                    while (index + 1 < node.children.size()
+                            && node.children.get(index + 1).startOffset < realEnd
+                            && node.children.get(index + 1).endOffset <= realEnd) {
+                        final SyntaxNode absorbed = node.children.remove(index + 1);
+                        absorbed.parent = block;
+                        block.children.add(absorbed);
+                    }
+                    block.endOffset = Math.max(block.endOffset, realEnd);
+                    child.endOffset = Math.max(child.endOffset, realEnd);
+                }
+            }
+            closeTypesAtTheirBraces(child, braceMatches);
+            index += 1;
         }
     }
 
@@ -539,6 +598,19 @@ final class CSharpFileParser {
         if ("delegate".equals(typeModel.kind)) {
             typeModel.members.addAll(parseParametersAsMembers(node, fileModel, typeModel, "parameter"));
         }
+        if ("class".equals(typeModel.kind) || "struct".equals(typeModel.kind)) {
+            final SyntaxNode parentList = firstChild(node, "cs:parent-list");
+            if (parentList != null) {
+                for (final SyntaxNode child : parentList.children) {
+                    if ("cs:parameter-declaration".equals(child.type)) {
+                        final String parameterType = firstDirectChildText(child, "cs:type-usage-role");
+                        if (parameterType != null && !parameterType.isEmpty()) {
+                            typeModel.primaryParameterTypes.add(trimTypeText(parameterType));
+                        }
+                    }
+                }
+            }
+        }
         if ("record".equals(typeModel.kind) || "recordStruct".equals(typeModel.kind)) {
             final SyntaxNode parentList = firstChild(node, "cs:parent-list");
             if (parentList != null) {
@@ -570,16 +642,14 @@ final class CSharpFileParser {
                 members.addAll(parseFieldLike(node, fileModel, ownerType, "field"));
                 break;
             case "cs:property-declaration":
-                members.add(buildSingleMember(node, fileModel, ownerType, "property",
-                        firstIdentifier(node),
-                        firstDirectChildText(node, "cs:type-usage-role"),
-                        null));
-                break;
             case "cs:event-declaration":
-                members.add(buildSingleMember(node, fileModel, ownerType, "event",
+                final CSharpModel.CSharpMemberModel accessed = buildSingleMember(node, fileModel, ownerType,
+                        "cs:property-declaration".equals(node.type) ? "property" : "event",
                         firstIdentifier(node),
                         firstDirectChildText(node, "cs:type-usage-role"),
-                        null));
+                        null);
+                collectDeclarationBodyRefs(node, accessed, fileModel.sourceText);
+                members.add(accessed);
                 break;
             case "cs:method-declaration":
                 members.add(parseCallable(node, fileModel, ownerType, "method"));
@@ -625,7 +695,10 @@ final class CSharpFileParser {
             }
         }
         for (final String name : new LinkedHashSet<>(names)) {
-            members.add(buildSingleMember(node, fileModel, ownerType, kind, name, declaredType, null));
+            final CSharpModel.CSharpMemberModel field =
+                    buildSingleMember(node, fileModel, ownerType, kind, name, declaredType, null);
+            collectDeclarationBodyRefs(node, field, fileModel.sourceText);
+            members.add(field);
         }
         return members;
     }
@@ -712,6 +785,13 @@ final class CSharpFileParser {
                 if (typeText != null && !typeText.isEmpty()) {
                     member.simpleTypeUsages.add(typeText);
                 }
+            } else if ("cs:type-list-role".equals(descendant.type)) {
+                // The type arguments of a generic call: `Has<Auto>()`.
+                for (final SyntaxNode argument : descendant.children) {
+                    if ("cs:type-usage-role".equals(argument.type) && !argument.text.isBlank()) {
+                        member.simpleTypeUsages.add(argument.text.trim());
+                    }
+                }
             } else if ("cs:field-usage-role".equals(descendant.type)) {
                 final String fieldName = descendant.text.trim();
                 if (!fieldName.isEmpty() && namesAMemberOfTheEnclosingType(sourceText, descendant)) {
@@ -722,12 +802,109 @@ final class CSharpFileParser {
                 while (assignMatcher.find()) {
                     member.memberUsages.add(assignMatcher.group(1));
                 }
-                final Matcher staticReceiverMatcher = STATIC_RECEIVER_PATTERN.matcher(descendant.text);
-                while (staticReceiverMatcher.find()) {
-                    member.simpleTypeUsages.add(staticReceiverMatcher.group(1));
-                }
             }
         }
+        collectStaticReceivers(blockText(block, sourceText), member);
+    }
+
+    /**
+     * The references in what follows a property, event or field's name: accessor bodies,
+     * expression bodies and initializers.
+     */
+    private static void collectDeclarationBodyRefs(final SyntaxNode declaration,
+                                                   final CSharpModel.CSharpMemberModel member,
+                                                   final String sourceText) {
+        collectBodyRefs(declaration, member, sourceText);
+    }
+
+    private static String blockText(final SyntaxNode block, final String sourceText) {
+        final SyntaxNode name = firstChild(block, "cs:id-role");
+        if (name == null || sourceText == null || name.endOffset > block.endOffset
+                || block.endOffset > sourceText.length()) {
+            return block.text;
+        }
+        return sourceText.substring(name.endOffset, block.endOffset);
+    }
+
+    /**
+     * Records every dotted name that is written before a further member access, outside comments
+     * and string literals, and does not itself follow a member access.
+     */
+    private static void collectStaticReceivers(final String text, final CSharpModel.CSharpMemberModel member) {
+        final Matcher matcher = STATIC_RECEIVER_PATTERN.matcher(withoutCommentsAndStrings(text));
+        while (matcher.find()) {
+            member.staticReceivers.add(matcher.group(1));
+        }
+    }
+
+    /** The text with comments and the contents of plain string and character literals blanked out. */
+    static String withoutCommentsAndStrings(final String text) {
+        final StringBuilder out = new StringBuilder(text.length());
+        int i = 0;
+        final int n = text.length();
+        while (i < n) {
+            final char c = text.charAt(i);
+            final char next;
+            if (i + 1 < n) {
+                next = text.charAt(i + 1);
+            } else {
+                next = '\0';
+            }
+            if (c == '/' && next == '/') {
+                while (i < n && text.charAt(i) != '\n') {
+                    out.append(' ');
+                    i += 1;
+                }
+            } else if (c == '/' && next == '*') {
+                final int close = text.indexOf("*/", i + 2);
+                final int end = close < 0 ? n : close + 2;
+                for (; i < end; i++) {
+                    out.append(text.charAt(i) == '\n' ? '\n' : ' ');
+                }
+            } else if (c == '$' && (next == '"' || (next == '@' && i + 2 < n && text.charAt(i + 2) == '"'))
+                    || c == '@' && next == '$') {
+                // An interpolated string holds code in its braces; it is left as written.
+                out.append(c);
+                i += 1;
+            } else if (c == '"' || c == '\'') {
+                final boolean verbatim = i > 0 && text.charAt(i - 1) == '@';
+                final int end = literalEnd(text, i, verbatim);
+                out.append(c);
+                for (int k = i + 1; k < end - 1; k++) {
+                    out.append(text.charAt(k) == '\n' ? '\n' : ' ');
+                }
+                if (end - 1 > i) {
+                    out.append(c);
+                }
+                i = end;
+            } else {
+                out.append(c);
+                i += 1;
+            }
+        }
+        return out.toString();
+    }
+
+    /** The index just past the literal that opens at {@code start}. */
+    private static int literalEnd(final String text, final int start, final boolean verbatim) {
+        final char quote = text.charAt(start);
+        final int n = text.length();
+        int i = start + 1;
+        while (i < n) {
+            final char c = text.charAt(i);
+            if (verbatim && c == quote && i + 1 < n && text.charAt(i + 1) == quote) {
+                i += 2;
+            } else if (!verbatim && c == '\\') {
+                i += 2;
+            } else if (c == quote) {
+                return i + 1;
+            } else if (!verbatim && c == '\n') {
+                return i;
+            } else {
+                i += 1;
+            }
+        }
+        return n;
     }
 
     /**
@@ -1102,7 +1279,7 @@ final class CSharpFileParser {
         final String[] parts = header.split(" ");
         final Set<String> supported = Set.of(
                 "public", "private", "protected", "internal", "static", "abstract", "sealed",
-                "readonly", "partial", "virtual", "override", "async", "const", "unsafe"
+                "readonly", "partial", "virtual", "override", "async", "const", "unsafe", "required"
         );
         for (final String part : parts) {
             final String lower = part.toLowerCase(Locale.ROOT);
@@ -1400,7 +1577,7 @@ final class CSharpFileParser {
     private static final class SyntaxNode {
         private final String type;
         private final int startOffset;
-        private final int endOffset;
+        private int endOffset;
         private final List<SyntaxNode> children = new ArrayList<>();
         private SyntaxNode parent;
         private String text = "";

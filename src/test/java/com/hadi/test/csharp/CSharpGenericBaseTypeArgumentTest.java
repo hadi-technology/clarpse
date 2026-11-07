@@ -65,8 +65,8 @@ public class CSharpGenericBaseTypeArgumentTest {
 
     @Test
     public void interfaceInheritingAGenericInterfaceKeepsItsArgumentPlain() {
-        assertEquals(List.of("Demo.IHandler"), targets("Demo.IChild", TypeReferences.IMPLEMENTATION));
-        assertEquals(List.of(), targets("Demo.IChild", TypeReferences.EXTENSION));
+        assertEquals(List.of("Demo.IHandler"), targets("Demo.IChild", TypeReferences.EXTENSION));
+        assertEquals(List.of(), targets("Demo.IChild", TypeReferences.IMPLEMENTATION));
         assertEquals(List.of("Demo.Arg"), targets("Demo.IChild", TypeReferences.SIMPLE));
     }
 

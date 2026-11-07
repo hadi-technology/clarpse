@@ -119,6 +119,8 @@ final class CSharpModel {
         /** Names of the attributes ({@code [ApiController]}) applied to this type declaration. */
         List<CSharpAttribute> annotations = new ArrayList<>();
         List<String> baseTypes = new ArrayList<>();
+        /** Declared types of the primary-constructor parameters of a class or struct. */
+        List<String> primaryParameterTypes = new ArrayList<>();
         List<CSharpMemberModel> members = new ArrayList<>();
         List<CSharpTypeModel> nestedTypes = new ArrayList<>();
         Set<String> imports = new LinkedHashSet<>();
@@ -145,6 +147,7 @@ final class CSharpModel {
             copy.modifiers = new ArrayList<>(modifiers);
             copy.annotations = new ArrayList<>(annotations);
             copy.baseTypes = new ArrayList<>(baseTypes);
+            copy.primaryParameterTypes = new ArrayList<>(primaryParameterTypes);
             copy.members = new ArrayList<>(members);
             copy.nestedTypes = new ArrayList<>();
             for (final CSharpTypeModel nested : nestedTypes) {
@@ -182,6 +185,11 @@ final class CSharpModel {
         List<CSharpParameterModel> parameters = new ArrayList<>();
         List<CSharpMemberModel> locals = new ArrayList<>();
         List<String> simpleTypeUsages = new ArrayList<>();
+        /**
+         * Dotted names written before a member access in the member's body or initializer; each
+         * denotes a type, or a type followed by members.
+         */
+        List<String> staticReceivers = new ArrayList<>();
         List<String> memberUsages = new ArrayList<>();
         Set<String> imports = new LinkedHashSet<>();
         boolean inferredType;
