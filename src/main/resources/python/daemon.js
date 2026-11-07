@@ -3310,7 +3310,10 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
     if (statement.d && Array.isArray(statement.d.baseClassExpressions)) {
       baseExprs = statement.d.baseClassExpressions;
     } else if (statement.d && Array.isArray(statement.d.arguments)) {
+      // `metaclass=ABCMeta` and other keyword arguments configure the class; only positional
+      // arguments (and `*bases`) are bases.
       baseExprs = statement.d.arguments
+        .filter(arg => !(arg && arg.d && arg.d.name))
         .map(arg => (arg && arg.d && arg.d.valueExpr ? arg.d.valueExpr : arg))
         .filter(Boolean);
     }
