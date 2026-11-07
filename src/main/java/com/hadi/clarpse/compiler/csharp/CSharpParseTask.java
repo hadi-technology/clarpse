@@ -2,6 +2,7 @@ package com.hadi.clarpse.compiler.csharp;
 
 import com.hadi.clarpse.compiler.ProjectFile;
 
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 
@@ -16,10 +17,16 @@ final class CSharpParseTask implements Callable<CSharpModel.ParseOutcome> {
 
     private final ProjectFile file;
     private final int index;
+    private final List<String> implicitNamespaces;
 
     CSharpParseTask(final ProjectFile file, final int index) {
+        this(file, index, List.of());
+    }
+
+    CSharpParseTask(final ProjectFile file, final int index, final List<String> implicitNamespaces) {
         this.file = file;
         this.index = index;
+        this.implicitNamespaces = implicitNamespaces;
     }
 
     @Override
@@ -31,6 +38,6 @@ final class CSharpParseTask implements Callable<CSharpModel.ParseOutcome> {
             }
             throw new CancellationException("C# parse task for " + path + " cancelled before start.");
         }
-        return CSharpFileParser.parseFile(file, index);
+        return CSharpFileParser.parseFile(file, index, implicitNamespaces);
     }
 }

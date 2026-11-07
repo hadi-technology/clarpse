@@ -40,6 +40,7 @@ import java.nio.file.Paths;
 public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
 
     private static final Logger LOGGER = LogManager.getLogger(ClarpseTypeScriptCompiler.class);
+    private static final int OWNERS_BATCH = 1000;
 
     @Override
     public CompileResult compile(final ProjectFiles projectFiles,
@@ -75,9 +76,9 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             daemon.start();
             final TypeScriptDaemon.InitResult initResult = daemon.initRepo(persistDir);
             addInvalidConfigFailures(initResult, compileFailures, persistDir);
-            for (final ProjectFile file : tsFiles) {
-                modelFile(daemon, file, persistDir, false, srcModel, compileFailures, null);
-            }
+            final ModellingBudget budget = new ModellingBudget();
+            modelFiles(daemon, persistDir, tsFiles, false,
+                    new ModelSink(srcModel, compileFailures, null), budget);
             CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(
                     OOPSourceModelConstants.ComponentType.CLASS,
                     OOPSourceModelConstants.ComponentType.ENUM));
@@ -102,40 +103,91 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
     }
 
     /**
-     * Models one file through the daemon into the given model. A failure confined to the file is
-     * recorded and the file skipped; any other daemon failure aborts the compile.
+     * Models the given files through the daemon into the given model. The daemon is asked for the
+     * files grouped by the program that holds them, which is the cheapest order for it, and the
+     * results are put into the model in the order the files were given, so the model does not
+     * depend on how the daemon was asked.
      *
-     * @param boundary          Whether the file is a level-one file of a one-level analysis, whose
-     *                          bodies are not read.
-     * @param inRepositoryNames Collects the names references resolved to inside the repository; may
-     *                          be {@code null}.
+     * <p>A failure confined to a file is recorded and the file skipped. A daemon that stops
+     * answering or dies costs the file it was asked about and, while restarts remain, is replaced;
+     * once it cannot be, the files not yet asked for are recorded as not analysed. Every file
+     * not modelled is therefore on the failure list. An interrupt of the analysing thread still
+     * ends the compile with no result, as does a failure to start the daemon.
+     *
+     * @param boundary Whether the files are level-one files of a one-level analysis, whose bodies
+     *                 are not read.
+     * @param sink     Where the models and the failures go.
      */
-    private static void modelFile(final TypeScriptDaemon daemon, final ProjectFile file,
-                                  final String persistDir, final boolean boundary,
-                                  final OOPSourceCodeModel srcModel,
-                                  final Set<CompileFailure> compileFailures,
-                                  final Set<String> inRepositoryNames) throws CompileException {
+    private static void modelFiles(final TypeScriptDaemon daemon, final String persistDir,
+                                   final List<ProjectFile> files, final boolean boundary,
+                                   final ModelSink sink, final ModellingBudget budget)
+            throws CompileException {
+        final Map<String, TypeScriptFileModel> fetched = new HashMap<>();
+        for (final ProjectFile file : inOwnerOrder(daemon, persistDir, files, budget)) {
+            final TypeScriptFileModel fileModel =
+                    fetchModel(daemon, file, persistDir, boundary, sink.failures(), budget);
+            if (fileModel != null) {
+                fetched.put(file.path(), fileModel);
+            }
+        }
+        for (final ProjectFile file : files) {
+            final TypeScriptFileModel fileModel = fetched.get(file.path());
+            if (fileModel == null) {
+                continue;
+            }
+            final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
+            final Package pkg = TypeScriptModelAssembler.resolvePackage(persistDir, diskPath);
+            final String moduleName = CompilerSupport.moduleNameForFile(diskPath);
+            TypeScriptModelAssembler.insertFileModel(pkg, moduleName, file.path(), persistDir, fileModel,
+                    sink.model(), sink.inRepositoryNames());
+            addUnresolvedBaseFailures(file, fileModel, sink.failures());
+        }
+    }
+
+    /** The model of one file, or {@code null} where the file was recorded as not analysed. */
+    private static TypeScriptFileModel fetchModel(final TypeScriptDaemon daemon, final ProjectFile file,
+                                                  final String persistDir, final boolean boundary,
+                                                  final Set<CompileFailure> compileFailures,
+                                                  final ModellingBudget budget) throws CompileException {
         if (Thread.currentThread().isInterrupted()) {
             throw new CompileException("Interrupted while parsing TypeScript files.",
                     new InterruptedException());
         }
+        if (budget.spent()) {
+            compileFailures.add(new CompileFailure(file, budget.notAnalysedMessage(), budget.notAnalysedCode()));
+            return null;
+        }
         final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
-        final TypeScriptFileModel fileModel;
         try {
-            fileModel = daemon.getFileModel(diskPath, boundary);
+            return daemon.getFileModel(diskPath, boundary);
         } catch (final TypeScriptDaemonException e) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new CompileException("Interrupted while parsing TypeScript files.",
+                        new InterruptedException());
+            }
+            if (e.code() == TypeScriptDaemonException.CODE_REQUEST_TIMEOUT
+                    || e.code() == TypeScriptDaemonException.CODE_DAEMON_ERROR) {
+                // The daemon was killed for sitting on this file, or died on it. The file is
+                // recorded as not analysed - it is neither absent nor empty - and the rest carries
+                // on in a fresh daemon while restarts remain.
+                final int code;
+                if (e.code() == TypeScriptDaemonException.CODE_REQUEST_TIMEOUT) {
+                    code = FailureCode.TIME_BUDGET_EXCEEDED;
+                } else {
+                    code = FailureCode.DAEMON_ERROR;
+                }
+                compileFailures.add(new CompileFailure(file, "NOT_ANALYSED: " + e.getMessage(), code));
+                LOGGER.warn("TypeScript file {} was not analysed: {}", file.path(), e.getMessage());
+                budget.recoverFrom(daemon, e.getMessage(), code);
+                return null;
+            }
             if (isFileLevelFailure(e)) {
                 compileFailures.add(new CompileFailure(file, e.getMessage(), e.code()));
                 logFileLevelFailure(file, e);
-                return;
+                return null;
             }
             throw new CompileException("TypeScript resolver failed: " + e.getMessage(), e);
         }
-        final Package pkg = TypeScriptModelAssembler.resolvePackage(persistDir, diskPath);
-        final String moduleName = CompilerSupport.moduleNameForFile(diskPath);
-        TypeScriptModelAssembler.insertFileModel(pkg, moduleName, file.path(), persistDir, fileModel, srcModel,
-                inRepositoryNames);
-        addUnresolvedBaseFailures(file, fileModel, compileFailures);
     }
 
     /**
@@ -260,12 +312,10 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 daemon.start();
                 addInvalidConfigFailures(daemon.initRepo(persistDir), compileFailures, persistDir);
                 daemon.planOneLevel(diskPaths.toDisk(analysed()), diskPaths.toDisk(selection.modelled()));
-                for (final ProjectFile file : analysed()) {
-                    modelFile(daemon, file, persistDir, false, srcModel, compileFailures, inRepositoryNames);
-                }
-                for (final ProjectFile file : selection.modelled()) {
-                    modelFile(daemon, file, persistDir, true, srcModel, compileFailures, inRepositoryNames);
-                }
+                final ModellingBudget budget = new ModellingBudget();
+                final ModelSink sink = new ModelSink(srcModel, compileFailures, inRepositoryNames);
+                modelFiles(daemon, persistDir, analysed(), false, sink, budget);
+                modelFiles(daemon, persistDir, selection.modelled(), true, sink, budget);
             } catch (final TypeScriptDaemonException e) {
                 for (final ProjectFile file : analysed()) {
                     compileFailures.add(new CompileFailure(file, e.getMessage(), daemonFailureCode(e)));
@@ -340,6 +390,121 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             } catch (final java.io.IOException e) {
                 return Paths.get(path).toAbsolutePath().normalize().toString();
             }
+        }
+    }
+
+    /**
+     * Where a file's model and the failures confined to it go.
+     *
+     * @param model             The model being built.
+     * @param failures          The failures recorded so far.
+     * @param inRepositoryNames Collects the names references resolved to inside the repository; may
+     *                          be {@code null}.
+     */
+    private record ModelSink(OOPSourceCodeModel model, Set<CompileFailure> failures,
+                             Set<String> inRepositoryNames) {
+    }
+
+    /**
+     * The files grouped by the program that holds them, and by path within a group. Only a few
+     * programs are resident at once, and a program costs far more to build than a file costs to
+     * model in it, so files asked for in an order that alternates between programs rebuild them
+     * over and over. The daemon is asked in batches, so that no one request has every program to
+     * build; what a request leaves unanswered is in path order.
+     */
+    private static List<ProjectFile> inOwnerOrder(final TypeScriptDaemon daemon, final String persistDir,
+                                                  final List<ProjectFile> files,
+                                                  final ModellingBudget budget) {
+        final List<ProjectFile> ordered = new ArrayList<>(files);
+        ordered.sort(java.util.Comparator.comparing(ProjectFile::path));
+        if (ordered.size() < 2 || budget.spent()) {
+            return ordered;
+        }
+        final Map<String, String> diskByPath = new HashMap<>();
+        final Map<String, Integer> owners = new HashMap<>();
+        for (int from = 0; from < ordered.size(); from += OWNERS_BATCH) {
+            final List<String> batch = new ArrayList<>();
+            for (final ProjectFile file : ordered.subList(from, Math.min(ordered.size(), from + OWNERS_BATCH))) {
+                final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
+                diskByPath.put(file.path(), diskPath);
+                batch.add(diskPath);
+            }
+            try {
+                owners.putAll(daemon.ownersOf(batch));
+            } catch (final TypeScriptDaemonException e) {
+                LOGGER.warn("Could not group TypeScript files by program, using path order: {}", e.getMessage());
+                if (!Thread.currentThread().isInterrupted()
+                        && (e.code() == TypeScriptDaemonException.CODE_REQUEST_TIMEOUT
+                        || e.code() == TypeScriptDaemonException.CODE_DAEMON_ERROR)) {
+                    budget.recoverFrom(daemon, e.getMessage(), FailureCode.TIME_BUDGET_EXCEEDED);
+                }
+                break;
+            }
+            if (budget.spent()) {
+                break;
+            }
+        }
+        // A stable sort: files of one program stay in path order, and files not asked about go first.
+        ordered.sort(java.util.Comparator.comparingInt(
+                (ProjectFile file) -> owners.getOrDefault(diskByPath.get(file.path()), -1)));
+        return ordered;
+    }
+
+    /**
+     * How long, and through how many daemon restarts, one analysis of TypeScript may go on. Once it
+     * is spent, the files not yet modelled are recorded as not analysed instead of waited for.
+     */
+    private static final class ModellingBudget {
+
+        private final long deadlineNanos;
+        private int restartsLeft = TypeScriptLimits.count(TypeScriptLimits.MAX_RESTARTS_PROP,
+                TypeScriptLimits.MAX_RESTARTS_ENV, TypeScriptLimits.DEFAULT_MAX_RESTARTS);
+        private boolean abandoned;
+        private String abandonedBecause = "the time allowed for the analysis ran out";
+        private int abandonedCode = FailureCode.TIME_BUDGET_EXCEEDED;
+
+        ModellingBudget() {
+            final double seconds = TypeScriptLimits.seconds(TypeScriptLimits.COMPILE_BUDGET_PROP,
+                    TypeScriptLimits.COMPILE_BUDGET_ENV, TypeScriptLimits.DEFAULT_COMPILE_BUDGET_SECONDS);
+            if (seconds > 0) {
+                this.deadlineNanos = System.nanoTime() + (long) (seconds * 1_000_000_000L);
+            } else {
+                this.deadlineNanos = 0L;
+            }
+        }
+
+        boolean spent() {
+            return abandoned || (deadlineNanos != 0L && System.nanoTime() - deadlineNanos >= 0L);
+        }
+
+        String notAnalysedMessage() {
+            return "NOT_ANALYSED: the file was not analysed, so nothing is known about what it declares ("
+                    + abandonedBecause + ").";
+        }
+
+        int notAnalysedCode() {
+            return abandonedCode;
+        }
+
+        /** Replaces a daemon that was killed or died, or gives the rest of the analysis up. */
+        void recoverFrom(final TypeScriptDaemon daemon, final String reason, final int code) {
+            if (restartsLeft <= 0) {
+                giveUp("the TypeScript daemon failed and no restart was left: " + reason, code);
+                return;
+            }
+            restartsLeft--;
+            try {
+                daemon.restart();
+            } catch (final TypeScriptDaemonException e) {
+                LOGGER.warn("Could not restart the TypeScript daemon; the remaining files are not analysed.", e);
+                giveUp("the TypeScript daemon could not be restarted: " + e.getMessage(), code);
+            }
+        }
+
+        private void giveUp(final String because, final int code) {
+            abandoned = true;
+            abandonedBecause = because;
+            abandonedCode = code;
         }
     }
 

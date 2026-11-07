@@ -22,6 +22,9 @@ public class PythonClassModel {
      */
     public List<List<PythonDecoratorArgumentModel>> decoratorArguments = new ArrayList<>();
     public List<PythonTypeRefModel> bases = new ArrayList<>();
+
+    /** The types named inside the type arguments of generic bases, which the class depends on but does not extend. */
+    public List<PythonTypeRefModel> baseArguments = new ArrayList<>();
     public List<PythonMethodModel> methods = new ArrayList<>();
     public List<PythonFieldModel> fields = new ArrayList<>();
     public List<PythonClassModel> classes = new ArrayList<>();

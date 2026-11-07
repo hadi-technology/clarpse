@@ -273,6 +273,11 @@ final class PythonModelAssembler {
                 insertReferences(component, base, true);
             }
         }
+        if (classModel.baseArguments != null) {
+            for (final PythonTypeRefModel argument : classModel.baseArguments) {
+                insertReferences(component, argument, false);
+            }
+        }
         attachDecoratorReferences(component, classModel.decorators, classModel.decoratorArguments);
         return component;
     }
@@ -408,6 +413,11 @@ final class PythonModelAssembler {
         typeRef.externalLabel = field.externalLabel;
         typeRef.alternates = field.alternates;
         insertReferences(component, typeRef, false);
+        if (field.valueReferences != null) {
+            for (final PythonTypeRefModel valueRef : field.valueReferences) {
+                insertReferences(component, valueRef, false);
+            }
+        }
         return component;
     }
 
@@ -422,7 +432,11 @@ final class PythonModelAssembler {
         final Component component = new Component();
         component.setPkg(pkg);
         component.setModule(moduleName);
-        component.setComponentType(OOPSourceModelConstants.ComponentType.MODULE_FIELD);
+        if (field.typeAlias) {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.TYPE_ALIAS);
+        } else {
+            component.setComponentType(OOPSourceModelConstants.ComponentType.MODULE_FIELD);
+        }
         component.setName(field.name);
         final String base;
         if (packageName == null || packageName.isEmpty()) {
@@ -444,6 +458,11 @@ final class PythonModelAssembler {
         typeRef.externalLabel = field.externalLabel;
         typeRef.alternates = field.alternates;
         insertReferences(component, typeRef, false);
+        if (field.valueReferences != null) {
+            for (final PythonTypeRefModel valueRef : field.valueReferences) {
+                insertReferences(component, valueRef, false);
+            }
+        }
         return component;
     }
 

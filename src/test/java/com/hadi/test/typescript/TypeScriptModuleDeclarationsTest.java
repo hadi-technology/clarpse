@@ -110,9 +110,9 @@ public class TypeScriptModuleDeclarationsTest {
     }
 
     @Test
-    public void aFileDeclaringATypeKeepsItsImportsOnTheType() {
+    public void aFileDeclaringATypeHoldsItsImportsOnTheTypeAndOnItsFunctions() {
         assertTrue(component("client", "Client").imports().contains(name("store", "Store")));
-        assertTrue(component("client", "connect").imports().isEmpty());
+        assertTrue(component("client", "connect").imports().contains(name("store", "Store")));
     }
 
     private static Component component(final String module, final String symbol) {

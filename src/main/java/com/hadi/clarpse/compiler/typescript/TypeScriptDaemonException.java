@@ -16,6 +16,7 @@ public class TypeScriptDaemonException extends Exception {
     public static final int CODE_FILE_NOT_FOUND = FailureCode.FILE_NOT_FOUND;
     public static final int CODE_DAEMON_ERROR = FailureCode.DAEMON_ERROR;
     public static final int CODE_RESOLUTION_FAILED = FailureCode.RESOLUTION_FAILED;
+    public static final int CODE_REQUEST_TIMEOUT = FailureCode.TIME_BUDGET_EXCEEDED;
 
     private final int code;
 

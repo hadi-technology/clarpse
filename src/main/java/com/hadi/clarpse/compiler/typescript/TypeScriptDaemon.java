@@ -22,6 +22,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Manages the Node-based TypeScript daemon process and JSON-RPC transport.
@@ -41,6 +45,12 @@ public final class TypeScriptDaemon implements AutoCloseable {
     private static final String UNOWNED_FILES_PROP = "clarpse.typescript.unownedFiles";
     private static final String REPORT_UNOWNED_FILES = "report";
     private static final int LOGGED_LINE_LENGTH = 200;
+    /** Fires the per-request timeouts. One idle daemon thread serves every daemon. */
+    private static final ScheduledExecutorService TIMEOUTS = Executors.newSingleThreadScheduledExecutor(task -> {
+        final Thread thread = new Thread(task, "clarpse-ts-request-timeout");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     /**
      * How many TypeScript programs the daemon may hold at once. A program retains every source file
@@ -118,6 +128,44 @@ public final class TypeScriptDaemon implements AutoCloseable {
     private boolean strayLineLogged;
     private Path tempDir;
     private boolean permitHeld;
+    private final Duration requestTimeout;
+    private final Duration heavyTimeout;
+    // Guards the pairing of a reply with the timeout armed for it: the timeout kills the daemon only
+    // while a request is armed, and a reply cancels it under the same lock, so a timeout that fires
+    // just after a reply cannot kill a daemon whose request has been answered.
+    private final Object timeoutLock = new Object();
+    private boolean timeoutArmed;
+    private volatile boolean timedOut;
+    // Whether the next getFileModel is the first since the daemon started, and so may build the
+    // programs the later ones reuse.
+    private boolean coldDaemon = true;
+    // What a restarted daemon is brought back to.
+    private String initializedRoot;
+    private List<String> plannedFocus;
+    private List<String> plannedLevelOne;
+
+    /** A daemon whose requests are bounded by the configured timeouts. */
+    public TypeScriptDaemon() {
+        this(Duration.ofMillis((long) (1000 * TypeScriptLimits.seconds(TypeScriptLimits.REQUEST_TIMEOUT_PROP,
+                        TypeScriptLimits.REQUEST_TIMEOUT_ENV, TypeScriptLimits.DEFAULT_REQUEST_TIMEOUT_SECONDS))),
+                Duration.ofMillis((long) (1000 * TypeScriptLimits.seconds(TypeScriptLimits.HEAVY_TIMEOUT_PROP,
+                        TypeScriptLimits.HEAVY_TIMEOUT_ENV, TypeScriptLimits.DEFAULT_HEAVY_TIMEOUT_SECONDS))));
+    }
+
+    /**
+     * A daemon whose requests are bounded by the given timeouts. The daemon computes in one thread
+     * and cannot report progress while it does, so a timeout can only be a fixed time; the heavy one
+     * is for requests that read the whole repository or build programs from nothing.
+     *
+     * @param requestTimeout How long a request for one file's model may wait for an answer; zero or
+     *                       less for no limit.
+     * @param heavyTimeout   How long repository-wide requests, and the first file's model after the
+     *                       daemon starts, may wait; zero or less for no limit.
+     */
+    public TypeScriptDaemon(final Duration requestTimeout, final Duration heavyTimeout) {
+        this.requestTimeout = requestTimeout;
+        this.heavyTimeout = heavyTimeout;
+    }
 
     public void start() throws TypeScriptDaemonException {
         if (process != null && process.isAlive()) {
@@ -161,6 +209,9 @@ public final class TypeScriptDaemon implements AutoCloseable {
 
     public InitResult initRepo(final String repoRoot) throws TypeScriptDaemonException {
         ensureStarted();
+        initializedRoot = repoRoot;
+        plannedFocus = null;
+        plannedLevelOne = null;
         ObjectNode params = objectMapper.createObjectNode();
         params.put("repoRoot", repoRoot);
         params.put("maxPrograms", resolveMaxPrograms());
@@ -242,6 +293,63 @@ public final class TypeScriptDaemon implements AutoCloseable {
         final com.fasterxml.jackson.databind.node.ArrayNode levelOne = params.putArray("levelOneFiles");
         levelOneFiles.forEach(levelOne::add);
         request("planOneLevel", params);
+        plannedFocus = List.copyOf(focusFiles);
+        plannedLevelOne = List.copyOf(levelOneFiles);
+    }
+
+    /**
+     * The program that holds each file, as the index of the tsconfig it was built from, or -1 for a
+     * file no program holds. Files that share a program are cheapest asked for together.
+     *
+     * @param filePaths The files' paths on disk.
+     * @return The owning config index of each file, keyed by the path as given.
+     */
+    public java.util.Map<String, Integer> ownersOf(final List<String> filePaths)
+            throws TypeScriptDaemonException {
+        ensureStarted();
+        final ObjectNode params = objectMapper.createObjectNode();
+        final com.fasterxml.jackson.databind.node.ArrayNode files = params.putArray("files");
+        filePaths.forEach(files::add);
+        final JsonNode owners = request("ownersOf", params).path("owners");
+        final java.util.Map<String, Integer> result = new java.util.HashMap<>();
+        owners.fields().forEachRemaining(entry -> result.put(entry.getKey(), entry.getValue().asInt(-1)));
+        return result;
+    }
+
+    /**
+     * How many programs this daemon has built since the repository was initialised. A program is
+     * costly to build, so this is what tells a daemon that rebuilds the same ones over and over from
+     * one that builds each once.
+     *
+     * @return The number of programs built.
+     */
+    public int programBuilds() throws TypeScriptDaemonException {
+        ensureStarted();
+        return request("stats", null).path("programBuilds").asInt(0);
+    }
+
+    /**
+     * Replaces a daemon that was killed, or is stuck, with a fresh one brought back to the state this
+     * one was in: the same repository initialised, and the same one-level plan if one was made.
+     * Programs are rebuilt on first use, so the cost is the rebuilding.
+     *
+     * @throws TypeScriptDaemonException where the replacement cannot be started or initialised.
+     */
+    public void restart() throws TypeScriptDaemonException {
+        final String root = initializedRoot;
+        final List<String> focus = plannedFocus;
+        final List<String> levelOne = plannedLevelOne;
+        if (root == null) {
+            throw new TypeScriptDaemonException("TypeScript daemon was never initialised, so it cannot be restarted.",
+                    TypeScriptDaemonException.CODE_DAEMON_ERROR);
+        }
+        close();
+        coldDaemon = true;
+        start();
+        initRepo(root);
+        if (focus != null) {
+            planOneLevel(focus, levelOne);
+        }
     }
 
     private synchronized JsonNode request(final String method, final JsonNode params)
@@ -262,6 +370,7 @@ public final class TypeScriptDaemon implements AutoCloseable {
             throw new TypeScriptDaemonException("Failed to write JSON-RPC request.",
                     TypeScriptDaemonException.CODE_DAEMON_ERROR, e);
         }
+        final ScheduledFuture<?> timeout = armTimeout(method);
         try {
             String line;
             while (true) {
@@ -293,13 +402,26 @@ public final class TypeScriptDaemon implements AutoCloseable {
                             message = message + " (" + data.toString() + ")";
                         }
                     }
+                    settleReply();
                     throw new TypeScriptDaemonException(message, code);
                 }
+                settleReply();
                 return response.get("result");
             }
         } catch (final IOException e) {
+            if (timedOut) {
+                throw requestTimeoutException();
+            }
             throw new TypeScriptDaemonException("Failed to read JSON-RPC response.",
                     TypeScriptDaemonException.CODE_DAEMON_ERROR, e);
+        } finally {
+            disarmTimeout();
+            if (timeout != null) {
+                timeout.cancel(false);
+            }
+        }
+        if (timedOut) {
+            throw requestTimeoutException();
         }
         throw new TypeScriptDaemonException("TypeScript daemon terminated unexpectedly.",
                 TypeScriptDaemonException.CODE_DAEMON_ERROR);
@@ -334,6 +456,87 @@ public final class TypeScriptDaemon implements AutoCloseable {
             return null;
         }
         return reply;
+    }
+
+    /**
+     * Arms the kill that bounds the request about to be read. The kill is {@link #forceStop()}, the
+     * only thing that frees a thread parked on the daemon's pipe.
+     */
+    private ScheduledFuture<?> armTimeout(final String method) {
+        final Duration limit = limitFor(method);
+        synchronized (timeoutLock) {
+            timedOut = false;
+            timeoutArmed = !limit.isZero() && !limit.isNegative();
+        }
+        if (!timeoutArmed) {
+            return null;
+        }
+        return TIMEOUTS.schedule(() -> {
+            synchronized (timeoutLock) {
+                if (!timeoutArmed) {
+                    return;
+                }
+                timeoutArmed = false;
+                timedOut = true;
+            }
+            forceStop();
+        }, limit.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /** Ends the timeout of a request that was answered, unless it had already fired. */
+    private void settleReply() throws TypeScriptDaemonException {
+        if (!disarmTimeout()) {
+            throw requestTimeoutException();
+        }
+    }
+
+    /**
+     * Ends the armed timeout, because the request was answered or has ended.
+     *
+     * @return Whether the daemon was left alone; false where the timeout had already fired.
+     */
+    private boolean disarmTimeout() {
+        synchronized (timeoutLock) {
+            timeoutArmed = false;
+            return !timedOut;
+        }
+    }
+
+    private Duration limitFor(final String method) {
+        if ("getFileModel".equals(method)) {
+            if (coldDaemon) {
+                coldDaemon = false;
+                return heavyTimeout;
+            }
+            return requestTimeout;
+        }
+        if ("shutdown".equals(method) || "stats".equals(method)) {
+            return requestTimeout;
+        }
+        return heavyTimeout;
+    }
+
+    private TypeScriptDaemonException requestTimeoutException() {
+        awaitProcessExit();
+        return new TypeScriptDaemonException("TypeScript daemon gave no answer within "
+                + requestTimeout.toSeconds() + "s and was stopped.",
+                TypeScriptDaemonException.CODE_REQUEST_TIMEOUT);
+    }
+
+    /**
+     * Waits, for a bounded time, for the process killed by the timeout to be gone, so a caller told
+     * the daemon was stopped can rely on it.
+     */
+    private void awaitProcessExit() {
+        final Process current = process;
+        try {
+            if (current != null && !current.waitFor(SHUTDOWN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+                LOGGER.warn("The TypeScript daemon was still running {}s after it was killed.",
+                        SHUTDOWN_TIMEOUT.toSeconds());
+            }
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void ensureStarted() throws TypeScriptDaemonException {
