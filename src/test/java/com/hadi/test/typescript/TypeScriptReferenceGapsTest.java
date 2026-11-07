@@ -101,4 +101,65 @@ public class TypeScriptReferenceGapsTest {
         assertFalse(component(result, "src.mixed.standalone").imports().isEmpty());
         assertEquals(0, result.failures().size());
     }
+
+    private static final String CONSTS = "export const TOKEN = Symbol.for('token');\n"
+            + "export const LIMIT = 5;\n"
+            + "export function handler(): void { }\n"
+            + "export const Greeting = (name: string): string => 'hi ' + name;\n";
+
+    @Test
+    public void aConstantReadInsideAFunctionBodyIsAReference() throws Exception {
+        final CompileResult result = compile("/src/consts.ts", CONSTS,
+                "/src/use.ts", "import { TOKEN, LIMIT } from './consts';\n"
+                        + "export function use() { return [TOKEN, LIMIT]; }\n"
+                        + "export class Holder { read() { return LIMIT; } }\n");
+        assertTrue(targets(component(result, "src.use.use")).toString(),
+                targets(component(result, "src.use.use")).containsAll(Set.of("src.consts.TOKEN", "src.consts.LIMIT")));
+        assertTrue(targets(component(result, "src.use.Holder.read()")).contains("src.consts.LIMIT"));
+    }
+
+    @Test
+    public void aFunctionPassedAsAValueIsAReference() throws Exception {
+        final CompileResult result = compile("/src/consts.ts", CONSTS,
+                "/src/use.ts", "import { handler } from './consts';\n"
+                        + "export function use(items: number[]) { return items.map(handler); }\n");
+        assertTrue(targets(component(result, "src.use.use")).toString(),
+                targets(component(result, "src.use.use")).contains("src.consts.handler"));
+    }
+
+    @Test
+    public void aJsxTagNamesTheComponentItRenders() throws Exception {
+        final CompileResult result = compile("/src/widget.tsx",
+                "export function Widget(props: { title: string }) { return props.title; }\n",
+                "/src/page.tsx", "import { Widget } from './widget';\n"
+                        + "declare namespace JSX { interface IntrinsicElements { [tag: string]: unknown } }\n"
+                        + "export function Page() { return <section><Widget title=\"t\" /></section>; }\n");
+        assertTrue(targets(component(result, "src.page.Page")).toString(),
+                targets(component(result, "src.page.Page")).contains("src.widget.Widget"));
+    }
+
+    @Test
+    public void aCallToAConstArrowFunctionIsAReference() throws Exception {
+        final CompileResult result = compile("/src/consts.ts", CONSTS,
+                "/src/use.ts", "import { Greeting } from './consts';\n"
+                        + "export function use() { return Greeting('x'); }\n"
+                        + "const local = (n: number) => n + 1;\n"
+                        + "export function twice() { return local(local(1)); }\n");
+        assertTrue(targets(component(result, "src.use.use")).toString(),
+                targets(component(result, "src.use.use")).contains("src.consts.Greeting"));
+        assertTrue(targets(component(result, "src.use.twice")).toString(),
+                targets(component(result, "src.use.twice")).contains("src.use.local"));
+    }
+
+    @Test
+    public void aLocalOrParameterShadowingAModelledNameIsNotAReference() throws Exception {
+        final CompileResult result = compile("/src/consts.ts", CONSTS,
+                "/src/use.ts", "import { LIMIT } from './consts';\n"
+                        + "export function use(handler: () => void) { const LIMIT2 = LIMIT; { const LIMIT = 1; "
+                        + "return [handler, LIMIT, LIMIT2]; } }\n");
+        final Set<String> targets = targets(component(result, "src.use.use"));
+        assertTrue(targets.toString(), targets.contains("src.consts.LIMIT"));
+        assertFalse("the parameter named handler is not the exported function: " + targets,
+                targets.contains("src.consts.handler"));
+    }
 }

@@ -1764,7 +1764,7 @@ function buildTopLevelVariableModel(declaration, statement, checker) {
     // a function or any other value.
     model.references = mergeReferences(
       model.references,
-      collectBodyDetails(declaration.initializer, checker).references,
+      collectBodyDetails(declaration.initializer, checker, declaration).references,
       collectValueReferences(declaration.initializer, checker, declaration)
     );
   }
@@ -1808,8 +1808,9 @@ function isModelledValueDeclaration(declaration) {
   return false;
 }
 
-// The references an initializer makes by naming a modelled declaration as a value: a class or
-// function placed in an array or object literal, a constant used in an expression. A name that
+// The references code makes by naming a modelled declaration as a value: a class or function
+// placed in an array or object literal, a constant used in an expression, a function passed as an
+// argument or called, a component named as a JSX tag. A name that
 // resolves to a local, a parameter, a member, or anything outside the program is not recorded.
 function collectValueReferences(initializer, checker, owner) {
   const references = [];
@@ -1869,7 +1870,7 @@ function buildValueReference(identifier, checker, owner) {
   };
 }
 
-function collectBodyDetails(body, checker) {
+function collectBodyDetails(body, checker, owner) {
   const references = [];
   const locals = [];
   if (state.shallowBody) {
@@ -1906,6 +1907,7 @@ function collectBodyDetails(body, checker) {
   }
   if (body) {
     visit(body);
+    references.push(...collectValueReferences(body, checker, owner || null));
   }
   return { references, locals };
 }
@@ -1986,7 +1988,7 @@ function buildMethodModel(node, checker, kindLabel) {
   const name = kindLabel === "constructor" ? "constructor" : node.name.getText();
   const signature = buildSignature(name, node.parameters || [], checker);
   const returnTypeObject = kindLabel === "constructor" ? null : getReturnTypeObject(checker, node);
-  const bodyDetails = collectBodyDetails(node.body, checker);
+  const bodyDetails = collectBodyDetails(node.body, checker, kindLabel === "function" ? node : null);
   const paramModels = buildParameterModels(node.parameters || [], checker);
   return {
     kind: kindLabel,

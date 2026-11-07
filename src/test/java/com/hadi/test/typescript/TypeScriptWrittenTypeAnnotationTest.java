@@ -72,7 +72,8 @@ public class TypeScriptWrittenTypeAnnotationTest {
                 + "SimpleTypeReference:external:\"gamma\", ";
         Assert.assertEquals("[" + literals
                 + "SimpleTypeReference:external:(\"alpha\" | \"beta\" | \"gamma\")[], "
-                + "SimpleTypeReference:external:Partial, SimpleTypeReference:internal:src.Tokens.Flags]",
+                + "SimpleTypeReference:external:Partial, SimpleTypeReference:internal:src.Tokens.Flags, "
+                + "SimpleTypeReference:internal:src.Tokens.TOKENS]",
                 references("tokensFromFlags"));
         Assert.assertEquals("[" + literals + "SimpleTypeReference:external:\"one\", "
                 + "SimpleTypeReference:external:\"two\", SimpleTypeReference:external:Record, "
