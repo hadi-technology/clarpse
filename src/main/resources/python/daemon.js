@@ -3163,20 +3163,102 @@ function extractInstanceFieldFromStatement(statement, ctx) {
   };
 }
 
+// The properties of a compound statement that hold nested statements: the branches of an
+// if/else, loop, with, try/except/finally and match.
+const NESTED_SUITE_KEYS = ['suite', 'ifSuite', 'elseSuite', 'forSuite', 'whileSuite', 'trySuite',
+  'finallySuite', 'exceptSuite', 'exceptClauses', 'cases'];
+
+/**
+ * Every statement of a suite, descending into the branches of compound statements but not into a
+ * function or class written inside it, whose `self` is not this one's.
+ */
+function collectNestedStatements(suiteNode, out) {
+  for (const statement of getStatementsFromSuite(suiteNode)) {
+    if (!statement || !statement.d) {
+      continue;
+    }
+    out.push(statement);
+    if (statement.d.name && statement.d.suite) {
+      continue;
+    }
+    for (const key of NESTED_SUITE_KEYS) {
+      const child = statement.d[key];
+      for (const node of (Array.isArray(child) ? child : [child])) {
+        if (node && node.d) {
+          if (Array.isArray(node.d.statements)) {
+            collectNestedStatements(node, out);
+          } else if (!(node.d.name && node.d.suite)) {
+            // an `elif` chain is an if statement in the else slot; an except clause or a case
+            // holds its own suite
+            collectNestedStatements({ d: { statements: [node] } }, out);
+          }
+        }
+      }
+    }
+  }
+}
+
+/** The leaf targets of a tuple or list unpacking target, flattening nested and starred ones. */
+function unpackedTargets(node, out) {
+  if (!node || !node.d) {
+    return out;
+  }
+  const items = Array.isArray(node.d.items) ? node.d.items
+    : (Array.isArray(node.d.expressions) ? node.d.expressions : null);
+  if (items) {
+    items.forEach(item => unpackedTargets(item, out));
+  } else if (node.d.expr && !node.d.leftExpr && !node.d.member) {
+    unpackedTargets(node.d.expr, out);
+  } else {
+    out.push(node);
+  }
+  return out;
+}
+
+/** The fields one assignment creates: one for `self.a = v`, one per target for `self.a, self.b = v`. */
+function extractInstanceFieldsFromStatement(statement, ctx) {
+  const target = statement && statement.d ? getNodeProp(statement, ['leftExpr']) : null;
+  const leaves = target && target.d && (Array.isArray(target.d.items) || Array.isArray(target.d.expressions))
+    ? unpackedTargets(target, []) : null;
+  if (!leaves) {
+    const field = extractInstanceFieldFromStatement(statement, ctx);
+    return field ? [field] : [];
+  }
+  const fileText = ctx && ctx.fileText ? ctx.fileText : '';
+  const statementText = textForNode(statement, fileText);
+  const fields = [];
+  for (const leaf of leaves) {
+    const name = instanceFieldNameFromExpression(textForNode(leaf, fileText));
+    if (name) {
+      fields.push({
+        name,
+        rawType: 'Any',
+        implementationHash: stableImplementationHash(statementText),
+        targetUniqueName: null,
+        externalLabel: null,
+        alternates: []
+      });
+    }
+  }
+  return fields;
+}
+
 function extractInstanceFieldsFromMethod(methodNode, ctx) {
   if (!methodNode) {
     return [];
   }
-  const statements = getStatementsFromSuite(methodNode.d ? methodNode.d.suite : null);
+  const statements = [];
+  collectNestedStatements(methodNode.d ? methodNode.d.suite : null, statements);
   const seen = new Set();
   const fields = [];
   for (const statement of statements) {
-    const field = extractInstanceFieldFromStatement(statement, ctx);
-    if (!field || !field.name || seen.has(field.name)) {
-      continue;
+    for (const field of extractInstanceFieldsFromStatement(statement, ctx)) {
+      if (!field || !field.name || seen.has(field.name)) {
+        continue;
+      }
+      seen.add(field.name);
+      fields.push(field);
     }
-    seen.add(field.name);
-    fields.push(field);
   }
   return fields;
 }
@@ -3240,6 +3322,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
     const fields = [];
     const fieldNames = new Set();
     const nestedClasses = [];
+    const otherMethodFields = [];
     for (const node of suiteStatements) {
       if (!node) {
         continue;
@@ -3252,8 +3335,9 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         const method = extractMethod(node, classCtx, parseNodeType);
         if (method) {
           methods.push(method);
+          // `__init__` is read first so its declarations win over a later method's.
+          const instanceFields = extractInstanceFieldsFromMethod(node, functionScope(node, classCtx, parseNodeType));
           if (method.name === '__init__') {
-            const instanceFields = extractInstanceFieldsFromMethod(node, functionScope(node, classCtx, parseNodeType));
             for (const instanceField of instanceFields) {
               if (!instanceField || !instanceField.name || fieldNames.has(instanceField.name)) {
                 continue;
@@ -3261,6 +3345,8 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
               fieldNames.add(instanceField.name);
               fields.push(instanceField);
             }
+          } else {
+            otherMethodFields.push(...instanceFields);
           }
         }
         continue;
@@ -3277,6 +3363,14 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         field.enumConstant = isEnum && !annotationForFieldStatement(node);
         fieldNames.add(field.name);
         fields.push(field);
+      }
+    }
+    // An attribute first assigned in an ordinary method belongs to the class unless the class body
+    // or `__init__` already declared it.
+    for (const instanceField of otherMethodFields) {
+      if (instanceField.name && !fieldNames.has(instanceField.name)) {
+        fieldNames.add(instanceField.name);
+        fields.push(instanceField);
       }
     }
     classes.push({
