@@ -45,46 +45,12 @@ public final class TypeScriptDaemon implements AutoCloseable {
     private static final String UNOWNED_FILES_PROP = "clarpse.typescript.unownedFiles";
     private static final String REPORT_UNOWNED_FILES = "report";
     private static final int LOGGED_LINE_LENGTH = 200;
-    private static final String REQUEST_TIMEOUT_ENV = "CLARPSE_TS_REQUEST_TIMEOUT_SECONDS";
-    private static final String REQUEST_TIMEOUT_PROP = "clarpse.typescript.requestTimeoutSeconds";
-    private static final long DEFAULT_REQUEST_TIMEOUT_SECONDS = 120L;
-
     /** Fires the per-request timeouts. One idle daemon thread serves every daemon. */
     private static final ScheduledExecutorService TIMEOUTS = Executors.newSingleThreadScheduledExecutor(task -> {
         final Thread thread = new Thread(task, "clarpse-ts-request-timeout");
         thread.setDaemon(true);
         return thread;
     });
-
-    /**
-     * How long one request may wait for the daemon's answer before the daemon is taken to be stuck.
-     * A request is one file's model, or one repository-wide step, so this bounds the work of a single
-     * file rather than of the repository.
-     *
-     * @return The limit; zero where none applies.
-     */
-    private static Duration resolveRequestTimeout() {
-        Long seconds = parsePositiveLong(System.getProperty(REQUEST_TIMEOUT_PROP));
-        if (seconds == null) {
-            seconds = parsePositiveLong(System.getenv(REQUEST_TIMEOUT_ENV));
-        }
-        if (seconds == null) {
-            seconds = (long) ClarpseProperties.getInt(REQUEST_TIMEOUT_PROP, (int) DEFAULT_REQUEST_TIMEOUT_SECONDS);
-        }
-        return Duration.ofSeconds(Math.max(0L, seconds));
-    }
-
-    private static Long parsePositiveLong(final String raw) {
-        if (raw == null || raw.trim().isEmpty()) {
-            return null;
-        }
-        try {
-            return Long.parseLong(raw.trim());
-        } catch (final NumberFormatException e) {
-            LOGGER.warn("Invalid TypeScript request timeout '{}', using the default.", raw);
-            return null;
-        }
-    }
 
     /**
      * How many TypeScript programs the daemon may hold at once. A program retains every source file
@@ -163,26 +129,42 @@ public final class TypeScriptDaemon implements AutoCloseable {
     private Path tempDir;
     private boolean permitHeld;
     private final Duration requestTimeout;
-    // Set by the timeout task, read by the thread parked in request(); tells a read that ended
-    // because the daemon was killed for being stuck from one that ended because it died.
+    private final Duration heavyTimeout;
+    // Guards the pairing of a reply with the timeout armed for it: the timeout kills the daemon only
+    // while a request is armed, and a reply cancels it under the same lock, so a timeout that fires
+    // just after a reply cannot kill a daemon whose request has been answered.
+    private final Object timeoutLock = new Object();
+    private boolean timeoutArmed;
     private volatile boolean timedOut;
+    // Whether the next getFileModel is the first since the daemon started, and so may build the
+    // programs the later ones reuse.
+    private boolean coldDaemon = true;
     // What a restarted daemon is brought back to.
     private String initializedRoot;
     private List<String> plannedFocus;
     private List<String> plannedLevelOne;
 
-    /** A daemon whose requests are bounded by the configured request timeout. */
+    /** A daemon whose requests are bounded by the configured timeouts. */
     public TypeScriptDaemon() {
-        this(resolveRequestTimeout());
+        this(Duration.ofMillis((long) (1000 * TypeScriptLimits.seconds(TypeScriptLimits.REQUEST_TIMEOUT_PROP,
+                        TypeScriptLimits.REQUEST_TIMEOUT_ENV, TypeScriptLimits.DEFAULT_REQUEST_TIMEOUT_SECONDS))),
+                Duration.ofMillis((long) (1000 * TypeScriptLimits.seconds(TypeScriptLimits.HEAVY_TIMEOUT_PROP,
+                        TypeScriptLimits.HEAVY_TIMEOUT_ENV, TypeScriptLimits.DEFAULT_HEAVY_TIMEOUT_SECONDS))));
     }
 
     /**
-     * A daemon whose requests are bounded by the given timeout.
+     * A daemon whose requests are bounded by the given timeouts. The daemon computes in one thread
+     * and cannot report progress while it does, so a timeout can only be a fixed time; the heavy one
+     * is for requests that read the whole repository or build programs from nothing.
      *
-     * @param requestTimeout How long one request may wait for an answer; zero or less for no limit.
+     * @param requestTimeout How long a request for one file's model may wait for an answer; zero or
+     *                       less for no limit.
+     * @param heavyTimeout   How long repository-wide requests, and the first file's model after the
+     *                       daemon starts, may wait; zero or less for no limit.
      */
-    public TypeScriptDaemon(final Duration requestTimeout) {
+    public TypeScriptDaemon(final Duration requestTimeout, final Duration heavyTimeout) {
         this.requestTimeout = requestTimeout;
+        this.heavyTimeout = heavyTimeout;
     }
 
     public void start() throws TypeScriptDaemonException {
@@ -362,7 +344,7 @@ public final class TypeScriptDaemon implements AutoCloseable {
                     TypeScriptDaemonException.CODE_DAEMON_ERROR);
         }
         close();
-        timedOut = false;
+        coldDaemon = true;
         start();
         initRepo(root);
         if (focus != null) {
@@ -388,7 +370,7 @@ public final class TypeScriptDaemon implements AutoCloseable {
             throw new TypeScriptDaemonException("Failed to write JSON-RPC request.",
                     TypeScriptDaemonException.CODE_DAEMON_ERROR, e);
         }
-        final ScheduledFuture<?> timeout = armTimeout();
+        final ScheduledFuture<?> timeout = armTimeout(method);
         try {
             String line;
             while (true) {
@@ -420,7 +402,13 @@ public final class TypeScriptDaemon implements AutoCloseable {
                             message = message + " (" + data.toString() + ")";
                         }
                     }
+                    if (!disarmTimeout()) {
+                        throw requestTimeoutException();
+                    }
                     throw new TypeScriptDaemonException(message, code);
+                }
+                if (!disarmTimeout()) {
+                    throw requestTimeoutException();
                 }
                 return response.get("result");
             }
@@ -431,6 +419,7 @@ public final class TypeScriptDaemon implements AutoCloseable {
             throw new TypeScriptDaemonException("Failed to read JSON-RPC response.",
                     TypeScriptDaemonException.CODE_DAEMON_ERROR, e);
         } finally {
+            disarmTimeout();
             if (timeout != null) {
                 timeout.cancel(false);
             }
@@ -477,14 +466,51 @@ public final class TypeScriptDaemon implements AutoCloseable {
      * Arms the kill that bounds the request about to be read. The kill is {@link #forceStop()}, the
      * only thing that frees a thread parked on the daemon's pipe.
      */
-    private ScheduledFuture<?> armTimeout() {
-        if (requestTimeout.isZero() || requestTimeout.isNegative()) {
+    private ScheduledFuture<?> armTimeout(final String method) {
+        final Duration limit = limitFor(method);
+        synchronized (timeoutLock) {
+            timedOut = false;
+            timeoutArmed = !limit.isZero() && !limit.isNegative();
+        }
+        if (!timeoutArmed) {
             return null;
         }
         return TIMEOUTS.schedule(() -> {
-            timedOut = true;
+            synchronized (timeoutLock) {
+                if (!timeoutArmed) {
+                    return;
+                }
+                timeoutArmed = false;
+                timedOut = true;
+            }
             forceStop();
-        }, requestTimeout.toMillis(), TimeUnit.MILLISECONDS);
+        }, limit.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Ends the armed timeout, because the request was answered or has ended.
+     *
+     * @return Whether the daemon was left alone; false where the timeout had already fired.
+     */
+    private boolean disarmTimeout() {
+        synchronized (timeoutLock) {
+            timeoutArmed = false;
+            return !timedOut;
+        }
+    }
+
+    private Duration limitFor(final String method) {
+        if ("getFileModel".equals(method)) {
+            if (coldDaemon) {
+                coldDaemon = false;
+                return heavyTimeout;
+            }
+            return requestTimeout;
+        }
+        if ("shutdown".equals(method) || "stats".equals(method)) {
+            return requestTimeout;
+        }
+        return heavyTimeout;
     }
 
     private TypeScriptDaemonException requestTimeoutException() {

@@ -198,6 +198,24 @@ Entries handed to a `DiscardedEntryObserver` count against these limits like any
   every parsed source file, so each is parsed once however many programs hold it; in a one-level
   analysis up to 16 programs stay resident whatever this is set to. Raise it to trade memory for fewer rebuilds when files are interleaved
   across projects.
+- TypeScript analysis is bounded. A limit of `0` turns it off; a negative or non-numeric value is
+  reported and the default used. Each is also read from `clarpse.properties`.
+  - `CLARPSE_TS_REQUEST_TIMEOUT_SECONDS` or `-Dclarpse.typescript.requestTimeoutSeconds=<s>` (default
+    120): how long the daemon may take to answer for one file before it is killed.
+  - `CLARPSE_TS_HEAVY_REQUEST_TIMEOUT_SECONDS` or `-Dclarpse.typescript.heavyRequestTimeoutSeconds=<s>`
+    (default 600): the same for requests that read the whole repository or build programs from
+    nothing: initialisation, planning, grouping files by program, and the first file after the
+    daemon starts. The daemon cannot report progress while it computes, so these are fixed times.
+  - `CLARPSE_TS_COMPILE_BUDGET_SECONDS` or `-Dclarpse.typescript.compileBudgetSeconds=<s>` (default
+    420): how long the files of one analysis may be asked for. Past it, the files not yet analysed are
+    recorded as failures.
+  - `CLARPSE_TS_MAX_RESTARTS` or `-Dclarpse.typescript.maxRestarts=<n>` (default 3): how many times
+    a killed or dead daemon is replaced during one analysis.
+
+  A file not analysed because the daemon was killed, died, or time ran out is a failure with code
+  `2007` (time) or `2004` (the daemon died), never an absent file. Still ending an analysis with no
+  result: an interrupt of the analysing thread, and a daemon that cannot start or initialise
+  (every file is then recorded as failed, with an empty model).
 
 Example for large projects:
 ```bash

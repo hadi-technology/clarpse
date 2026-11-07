@@ -592,17 +592,19 @@ function programFor(index) {
     config.programFailed = true;
     return null;
   }
-  // Which repository files the program holds, kept after the program itself is evicted. A file
-  // asked for later that this config's program never held is answered without building the
-  // program again; without it, every file belonging to no program rebuilds each enclosing config's
-  // program in turn, and a repository with more of them than `maxPrograms` rebuilds them all for
-  // every such file.
-  config.memberFiles = new Set(
-    program
-      .getSourceFiles()
-      .map((source) => normalizePath(state.ts, source.fileName))
-      .filter((fileName) => isInternalFile(fileName))
-  );
+  // Which repository files the program holds, kept after the program itself is evicted, so a file
+  // it does not hold is later answered without building the program again. Kept only for a config
+  // with no project references: with them, `getSourceFile` can answer for a source path through a
+  // redirect to its output declarations, which the program's file list does not name, and such a
+  // config is asked about each file instead (see `rememberAbsent`).
+  if (!state.oneLevel && !(config.projectReferences && config.projectReferences.length)) {
+    config.memberFiles = new Set(
+      program
+        .getSourceFiles()
+        .map((source) => normalizePath(state.ts, source.fileName))
+        .filter((fileName) => isInternalFile(fileName))
+    );
+  }
   const entry = {
     configPath: config.configPath || config.dir,
     program,
@@ -744,8 +746,8 @@ function configIndicesForFile(filePath) {
 
 function findProgramEntryForFile(filePath) {
   for (const index of configIndicesForFile(filePath)) {
-    const known = state.configs[index];
-    if (known && known.memberFiles && !known.memberFiles.has(filePath)) {
+    const config = state.configs[index];
+    if (knownAbsent(config, filePath)) {
       continue;
     }
     const entry = programFor(index);
@@ -757,39 +759,108 @@ function findProgramEntryForFile(filePath) {
       state.fileMap.set(filePath, index);
       return { entry, source };
     }
+    rememberAbsent(config, filePath);
   }
   return null;
 }
 
 /**
- * The index of the config whose program holds the file, or -1 where none does. A program is built
- * only for a config whose members are not yet known, so asking about many files builds each
- * program once.
+ * Records that a config's program was asked for the file and does not hold it. The answer is the
+ * program's own (`getSourceFile`), so a later request for the file skips the program instead of
+ * building it again, without a second opinion about what the program holds.
  */
-function ownerIndexOf(filePath) {
-  for (const index of configIndicesForFile(filePath)) {
-    const config = state.configs[index];
-    if (!config) {
-      continue;
-    }
-    if (state.oneLevel || state.fileMap.get(filePath) === index) {
-      return index;
-    }
-    if (!config.memberFiles && !programFor(index)) {
-      continue;
-    }
-    if (config.memberFiles && config.memberFiles.has(filePath)) {
-      return index;
-    }
-  }
-  return -1;
+function knownAbsent(config, filePath) {
+  return !!config && ((config.memberFiles && !config.memberFiles.has(filePath))
+    || (config.absentFiles && config.absentFiles.has(filePath)));
 }
 
+function rememberAbsent(config, filePath) {
+  if (!config) {
+    return;
+  }
+  if (!config.absentFiles) {
+    config.absentFiles = new Set();
+  }
+  config.absentFiles.add(filePath);
+}
+
+/**
+ * For each file, the index of the config whose program holds it, or -1 where none does, found the
+ * way a request for the file's model finds it. Files are asked of one config's program together, so
+ * a program is built once for all the files it is asked about, instead of once per file.
+ */
 function handleOwnersOf(params) {
   requireReady();
   const owners = {};
+  let pending = new Map();
   for (const file of (params.files || [])) {
-    owners[file] = ownerIndexOf(normalizePath(state.ts, file));
+    const normalized = normalizePath(state.ts, file);
+    const candidates = configIndicesForFile(normalized);
+    if (state.oneLevel) {
+      owners[file] = candidates.length ? candidates[0] : -1;
+    } else if (state.fileMap.has(normalized)) {
+      owners[file] = state.fileMap.get(normalized);
+    } else {
+      pending.set(file, { normalized, candidates });
+    }
+  }
+  // Each file waits at the first of its candidate configs not yet known to lack it. A pass visits
+  // the configs in order and builds the program of each that has files waiting at it, once, for all
+  // of them; a file the program lacks moves on to its next candidate.
+  const waitingAt = (entry, file) => {
+    const config = () => state.configs[entry.candidates[entry.next]];
+    while (entry.next < entry.candidates.length && knownAbsent(config(), entry.normalized)) {
+      entry.next += 1;
+    }
+    return entry.next < entry.candidates.length ? entry.candidates[entry.next] : -1;
+  };
+  for (const entry of pending.values()) {
+    entry.next = 0;
+  }
+  let moved = true;
+  while (pending.size > 0 && moved) {
+    moved = false;
+    const configsWaited = new Set();
+    for (const [file, entry] of pending) {
+      const index = waitingAt(entry, file);
+      if (index < 0) {
+        owners[file] = -1;
+        pending.delete(file);
+      } else {
+        configsWaited.add(index);
+      }
+    }
+    for (const index of Array.from(configsWaited).sort((a, b) => a - b)) {
+      const waiting = [];
+      for (const [file, entry] of pending) {
+        if (waitingAt(entry, file) === index) {
+          waiting.push(file);
+        }
+      }
+      if (!waiting.length) {
+        continue;
+      }
+      const config = state.configs[index];
+      const known = config.memberFiles;
+      const built = known ? null : programFor(index);
+      for (const file of waiting) {
+        const entry = pending.get(file);
+        if (known ? known.has(entry.normalized)
+            : (built && built.program.getSourceFile(entry.normalized))) {
+          state.fileMap.set(entry.normalized, index);
+          owners[file] = index;
+          pending.delete(file);
+        } else if (known || built) {
+          rememberAbsent(config, entry.normalized);
+        } else {
+          entry.next += 1;
+        }
+        moved = true;
+      }
+    }
+  }
+  for (const file of pending.keys()) {
+    owners[file] = -1;
   }
   return { owners };
 }
@@ -2728,6 +2799,7 @@ function handlePlanOneLevel(params) {
   }
   for (let i = 0; i < state.configs.length; i += 1) {
     delete state.configs[i].oneLevelRoots;
+    delete state.configs[i].absentFiles;
     delete state.configs[i].memberFiles;
   }
   for (const [index, roots] of rootsByConfig) {
