@@ -8,6 +8,9 @@ public class PythonFieldModel {
     public String name;
     /** True for a class-level assignment in an enumeration, which names a member of it. */
     public boolean enumConstant;
+
+    /** Whether the field is a module-level alias of a type or a union of types. */
+    public boolean typeAlias;
     public String rawType;
     public int implementationHash;
     public String targetUniqueName;

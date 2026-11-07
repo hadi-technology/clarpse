@@ -43,7 +43,9 @@ let state = {
   program: null,
   fileUriMap: new Map(),
   moduleDeclarations: new Map(),
-  moduleImports: new Map()
+  moduleImports: new Map(),
+  aliasMembers: new Map(),
+  aliasStack: new Set()
 };
 
 function writeResponse(id, result) {
@@ -761,7 +763,7 @@ function moduleDeclarations(filePath) {
   if (state.moduleDeclarations.has(filePath)) {
     return state.moduleDeclarations.get(filePath);
   }
-  let declarations = { parsed: false, classes: new Set(), names: new Set(), functions: new Set() };
+  let declarations = { parsed: false, classes: new Set(), names: new Set(), functions: new Set(), aliases: new Map() };
   try {
     const api = getPyrightApi();
     const parser = new api.parser.Parser();
@@ -770,7 +772,8 @@ function moduleDeclarations(filePath) {
     if (versionEnum && 'pythonVersion' in parseOptions) {
       parseOptions.pythonVersion = versionEnum;
     }
-    const parseResult = parser.parseSourceFile(fs.readFileSync(filePath, 'utf8'), parseOptions, undefined);
+    const declaredText = fs.readFileSync(filePath, 'utf8');
+    const parseResult = parser.parseSourceFile(declaredText, parseOptions, undefined);
     let parseTree = null;
     if (parseResult && parseResult.parserOutput && parseResult.parserOutput.parseTree) {
       parseTree = parseResult.parserOutput.parseTree;
@@ -783,11 +786,12 @@ function moduleDeclarations(filePath) {
         parsed: true,
         classes: collectLocalClasses(parseTree, parseNodeType),
         names: collectTopLevelNames(parseTree, parseNodeType),
-        functions: collectLocalFunctions(parseTree, parseNodeType)
+        functions: collectLocalFunctions(parseTree, parseNodeType),
+        aliases: collectAliasCandidates(parseTree, parseNodeType, declaredText)
       };
     }
   } catch (err) {
-    declarations = { parsed: false, classes: new Set(), names: new Set(), functions: new Set() };
+    declarations = { parsed: false, classes: new Set(), names: new Set(), functions: new Set(), aliases: new Map() };
   }
   state.moduleDeclarations.set(filePath, declarations);
   return declarations;
@@ -825,6 +829,36 @@ function collectLocalFunctions(parseTree, parseNodeType) {
   return functions;
 }
 
+/** The name a top-level assignment binds, or an empty string when its target is not a plain name. */
+function assignedNameOf(statement) {
+  let target = getNodeProp(statement, ['leftExpr', 'leftExpression', 'valueExpr', 'valueExpression']);
+  // `x: T = v` assigns to an annotation node, whose own value expression is the name.
+  if (target && !nameFromNode(target)) {
+    target = getNodeProp(target, ['valueExpr', 'valueExpression']);
+  }
+  return nameFromNode(target);
+}
+
+/**
+ * The top-level assignments whose value could name a type -- a name, a dotted name, a subscript or a
+ * `|` union -- with the text of that value. Whether each is an alias depends on what the names in it
+ * resolve to, which is settled when one is looked up.
+ */
+function collectAliasCandidates(parseTree, parseNodeType, fileText) {
+  const aliases = new Map();
+  for (const statement of getStatementsFromSuite(parseTree)) {
+    if (!statement || !isAssignmentStatement(statement, parseNodeType)) {
+      continue;
+    }
+    const value = statement.d ? statement.d.rightExpr : null;
+    const name = assignedNameOf(statement);
+    if (name && value && value.d) {
+      aliases.set(name, textForNode(value, fileText));
+    }
+  }
+  return aliases;
+}
+
 /** The names bound at the top of a module by a class, a function or an assignment. */
 function collectTopLevelNames(parseTree, parseNodeType) {
   const names = new Set();
@@ -836,12 +870,7 @@ function collectTopLevelNames(parseTree, parseNodeType) {
     if (isClassNode(statement, parseNodeType) || isFunctionNode(statement, parseNodeType)) {
       name = nameFromNode(statement.d && statement.d.name ? statement.d.name : null);
     } else if (isAssignmentStatement(statement, parseNodeType)) {
-      let target = getNodeProp(statement, ['leftExpr', 'leftExpression', 'valueExpr', 'valueExpression']);
-      // `x: T = v` assigns to an annotation node, whose own value expression is the name.
-      if (target && !nameFromNode(target)) {
-        target = getNodeProp(target, ['valueExpr', 'valueExpression']);
-      }
-      name = nameFromNode(target);
+      name = assignedNameOf(statement);
     }
     if (name) {
       names.add(name);
@@ -2294,7 +2323,150 @@ function resolveTypeWithEvaluator(node, raw, ctx) {
   return null;
 }
 
+/** How many aliases deep an alias of aliases is followed. */
+const ALIAS_MAX_DEPTH = 6;
+
+/** The arms of what an alias is assigned: `A | B`, `Union[A, B]` or `Optional[A]`. */
+function aliasArms(rhs) {
+  const text = String(rhs || '').trim();
+  const wrapped = text.match(/^(?:typing\.)?(Union|Optional)\[([\s\S]*)\]$/);
+  if (wrapped) {
+    return wrapped[1] === 'Optional' ? [wrapped[2]] : splitTopLevelCsv(wrapped[2]);
+  }
+  return splitTopLevelUnion(text);
+}
+
+/** The context a repo module's own names resolve in. */
+function aliasContextFor(filePath) {
+  const { ctx, imports } = moduleImportsOf(filePath);
+  return Object.assign({}, ctx, imports, { localClasses: classesDefinedIn(filePath) });
+}
+
+/** Whether a resolved unique name is a class declared in a repo module. */
+function isRepoClassUnique(unique, ctx) {
+  const parts = String(unique).split('.');
+  for (let i = parts.length - 1; i >= 1; i -= 1) {
+    const file = ctx.moduleIndex.get(parts.slice(0, i).join('.'));
+    if (file) {
+      return i === parts.length - 1 && classesDefinedIn(file).has(parts[i]);
+    }
+  }
+  return false;
+}
+
+/**
+ * The types a module-level assignment names when it is a type alias, or null when it is not.
+ *
+ * An alias is a value written entirely as type names -- `Shape = Circle | Square`,
+ * `Either = Union[A, B]`, `Manager = LocalManager` -- at least one of which is a class declared in the
+ * repo, or another such alias. Anything else assigned at module level is an ordinary value. The members
+ * are returned flattened: an alias of an alias lists the inner alias and what it names.
+ */
+function aliasMembersOf(filePath, symbol) {
+  const key = filePath + '\u0000' + symbol;
+  if (state.aliasMembers.has(key)) {
+    return state.aliasMembers.get(key);
+  }
+  if (state.aliasStack.has(key) || state.aliasStack.size > ALIAS_MAX_DEPTH) {
+    return null;
+  }
+  const rhs = moduleDeclarations(filePath).aliases.get(symbol);
+  let members = null;
+  if (rhs) {
+    state.aliasStack.add(key);
+    try {
+      members = aliasMembersOfValue(rhs, aliasContextFor(filePath));
+    } finally {
+      state.aliasStack.delete(key);
+    }
+  }
+  if (state.aliasStack.size === 0) {
+    state.aliasMembers.set(key, members);
+  }
+  return members;
+}
+
+function aliasMembersOfValue(rhs, ctx) {
+  const arms = aliasArms(rhs).map(arm => arm.trim()).filter(arm => arm && !isUnionNonType(arm));
+  if (!arms.length) {
+    return null;
+  }
+  const members = [];
+  let namesAType = false;
+  for (const arm of arms) {
+    if (!/^[A-Za-z_][A-Za-z0-9_.]*(\[[\s\S]*\])?$/.test(arm)) {
+      return null;
+    }
+    const ref = resolveSingleTypeRef(null, arm, ctx);
+    members.push(ref, ...ref.alternates);
+    const bare = arm.replace(/\[[\s\S]*$/, '');
+    if (ref.targetUniqueName && arm === bare
+      && (isRepoClassUnique(ref.targetUniqueName, ctx) || ref.alternates.length > 0)) {
+      namesAType = true;
+    }
+  }
+  return namesAType ? members.map(member => Object.assign({}, member, { alternates: [] })) : null;
+}
+
+/** The repo declaration a name written in the current file refers to: its file and the name there. */
+function declarationOfName(name, ctx) {
+  const thisFile = ctx.moduleIndex ? ctx.moduleIndex.get(ctx.fullModuleName) : null;
+  if (!name.includes('.')) {
+    return thisFile ? findDeclaration(thisFile, name, 0, new Set()) : null;
+  }
+  const unique = resolveTypeFromRaw(name, ctx);
+  const parts = unique ? unique.split('.') : [];
+  for (let i = parts.length - 1; i >= 1; i -= 1) {
+    const file = ctx.moduleIndex.get(parts.slice(0, i).join('.'));
+    if (file) {
+      return i === parts.length - 1 ? findDeclaration(file, parts[i], 0, new Set()) : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Looks through the type aliases an annotation names. The alias is a dependency in its own right and
+ * so is each type it stands for, recorded as alternates of the annotation's reference.
+ */
+function expandTypeAliases(result, raw, ctx) {
+  const extras = [];
+  for (const candidate of extractCandidateNames(raw)) {
+    const declared = declarationOfName(candidate, ctx);
+    const members = declared ? aliasMembersOf(declared.filePath, declared.symbolName) : null;
+    if (members) {
+      extras.push({
+        raw: candidate,
+        targetUniqueName: uniqueNameInFile(declared.filePath, declared.symbolName, ctx),
+        externalLabel: null,
+        alternates: []
+      }, ...members);
+    }
+  }
+  if (!extras.length) {
+    return result;
+  }
+  if (!result.targetUniqueName && extras[0].raw === raw) {
+    const first = extras.shift();
+    result.targetUniqueName = first.targetUniqueName;
+    result.externalLabel = null;
+  }
+  const keyOf = ref => ref.targetUniqueName || ref.externalLabel || ref.raw;
+  const present = new Set([result].concat(result.alternates).map(keyOf));
+  for (const extra of extras) {
+    if (!present.has(keyOf(extra))) {
+      present.add(keyOf(extra));
+      result.alternates.push(extra);
+    }
+  }
+  return result;
+}
+
 function resolveSingleTypeRef(annotationNode, rawText, ctx) {
+  return expandTypeAliases(resolveSingleTypeRefPlain(annotationNode, rawText, ctx), rawText ? rawText.trim() : '', ctx);
+}
+
+function resolveSingleTypeRefPlain(annotationNode, rawText, ctx) {
   const raw = rawText ? rawText.trim() : '';
   const evaluated = resolveTypeWithEvaluator(annotationNode, raw, ctx);
   if (evaluated && evaluated.targetUniqueName) {
@@ -2338,7 +2510,12 @@ function resolveTypeRef(annotationNode, rawText, ctx) {
     return { raw, targetUniqueName: null, externalLabel: null, alternates: [] };
   }
   const primary = resolvedArms[0];
-  primary.alternates = resolvedArms.slice(1);
+  // Each further arm is an alternate, followed by the types its own alias stands for.
+  const further = [];
+  for (const arm of resolvedArms.slice(1)) {
+    further.push(Object.assign({}, arm, { alternates: [] }), ...arm.alternates);
+  }
+  primary.alternates = primary.alternates.concat(further);
   primary.raw = raw;
   return primary;
 }
@@ -3536,6 +3713,17 @@ function extractModuleFields(parseTree, ctx, parseNodeType) {
     }
     const field = extractFieldFromStatement(statement, ctx, parseNodeType, { requireAnnotation: false });
     if (field) {
+      const thisFile = ctx.moduleIndex ? ctx.moduleIndex.get(ctx.fullModuleName) : null;
+      const members = thisFile && isAssignmentStatement(statement, parseNodeType)
+        ? aliasMembersOf(thisFile, field.name) : null;
+      if (members && members.length) {
+        field.typeAlias = true;
+        field.rawType = moduleDeclarations(thisFile).aliases.get(field.name);
+        field.targetUniqueName = members[0].targetUniqueName;
+        field.externalLabel = members[0].externalLabel;
+        field.alternates = members.slice(1);
+        field.valueReferences = [];
+      }
       fields.push(field);
     }
   }
@@ -3560,6 +3748,8 @@ async function handleInitRepo(params) {
   state.fileUriMap = new Map();
   state.moduleDeclarations = new Map();
   state.moduleImports = new Map();
+  state.aliasMembers = new Map();
+  state.aliasStack = new Set();
   state.program = null;
   state.importResolver = null;
   state.serviceProvider = null;
