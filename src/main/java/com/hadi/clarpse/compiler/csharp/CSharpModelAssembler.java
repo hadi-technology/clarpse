@@ -69,7 +69,9 @@ final class CSharpModelAssembler {
             "Array", "Object", "String", "Exception", "Attribute", "Type", "Guid", "Uri",
             "TimeSpan", "DateTime", "DateTimeOffset", "Version", "Random", "Timer",
             "Stream", "TextReader", "TextWriter", "Encoding", "Regex", "Match",
-            "CancellationToken", "IServiceProvider", "IDisposable", "IAsyncDisposable");
+            "CancellationToken", "IServiceProvider", "IDisposable", "IAsyncDisposable",
+            "File", "Path", "Directory", "Math", "Console", "Convert", "Environment", "Enum", "Process",
+            "Thread");
 
     private CSharpModelAssembler() {
     }
@@ -627,7 +629,7 @@ final class CSharpModelAssembler {
         }
         final Set<String> seen = new LinkedHashSet<>();
         for (final String rawType : rawTypes) {
-            if (applyMemberAccessFilter && isLikelyMemberAccess(rawType, ownerType, memberModel)) {
+            if (applyMemberAccessFilter && isLikelyMemberAccess(rawType, ownerType, memberModel, false, typeIndex)) {
                 continue;
             }
             for (final CSharpFileParser.TypeToken token : CSharpFileParser.extractTypeReferences(rawType)) {
@@ -660,15 +662,19 @@ final class CSharpModelAssembler {
                                               final CSharpModel.CSharpTypeModel ownerType) {
         final Set<String> seen = new LinkedHashSet<>();
         for (final String receiver : memberModel.staticReceivers) {
-            if (isLikelyMemberAccess(receiver, ownerType, memberModel, true)) {
+            if (isLikelyMemberAccess(receiver, ownerType, memberModel, true, typeIndex)) {
                 continue;
             }
             Resolution resolved = null;
             String prefix = receiver;
             while (true) {
                 final Resolution candidate = typeIndex.resolveType(prefix, ownerType, memberModel);
+                // A leading run of segments may be a namespace or a member rather than a type, so
+                // only the whole name may be taken on a unique simple name; a shorter run needs an
+                // exact resolution.
+                final boolean whole = prefix.equals(receiver);
                 if (candidate != null && (candidate.kind() == ResolutionKind.EXACT
-                        || candidate.kind() == ResolutionKind.UNIQUE_SIMPLE_NAME)) {
+                        || (whole && candidate.kind() == ResolutionKind.UNIQUE_SIMPLE_NAME))) {
                     resolved = candidate;
                     break;
                 }
@@ -713,14 +719,9 @@ final class CSharpModelAssembler {
 
     private static boolean isLikelyMemberAccess(final String rawType,
                                                 final CSharpModel.CSharpTypeModel ownerType,
-                                                final CSharpModel.CSharpMemberModel memberModel) {
-        return isLikelyMemberAccess(rawType, ownerType, memberModel, false);
-    }
-
-    private static boolean isLikelyMemberAccess(final String rawType,
-                                                final CSharpModel.CSharpTypeModel ownerType,
                                                 final CSharpModel.CSharpMemberModel memberModel,
-                                                final boolean anyMemberKind) {
+                                                final boolean anyMemberKind,
+                                                final TypeIndex typeIndex) {
         if (rawType == null || rawType.isBlank()) {
             return false;
         }
@@ -755,6 +756,7 @@ final class CSharpModelAssembler {
                     return true;
                 }
             }
+            return typeIndex != null && typeIndex.inheritsMember(ownerType, root);
         }
         return false;
     }
@@ -913,6 +915,7 @@ final class CSharpModelAssembler {
         /** Lookup names by simple name. */
         private final Map<String, Set<String>> typesBySimpleName = new HashMap<>();
         private final Map<String, String> memberByTypeAndName = new HashMap<>();
+        private final Map<String, CSharpModel.CSharpTypeModel> typeModelsByName = new HashMap<>();
         private final Set<String> interfaceTypes = new LinkedHashSet<>();
         private final Set<String> enumTypes = new LinkedHashSet<>();
 
@@ -927,6 +930,7 @@ final class CSharpModelAssembler {
                 typesByLookupName.computeIfAbsent(lookupName, ignored -> new TreeMap<>())
                         .putIfAbsent(type.arity, type.uniqueName);
                 typesBySimpleName.computeIfAbsent(type.name, ignored -> new LinkedHashSet<>()).add(lookupName);
+                typeModelsByName.putIfAbsent(type.uniqueName, type);
                 if ("interface".equals(type.kind)) {
                     interfaceTypes.add(type.uniqueName);
                 }
@@ -947,6 +951,38 @@ final class CSharpModelAssembler {
                     }
                 }
             }
+        }
+
+        /**
+         * Whether a base type of the type, or a base type of that, declares a member of the name.
+         * A member that is inherited is in scope in a body exactly as one declared in the type.
+         */
+        private boolean inheritsMember(final CSharpModel.CSharpTypeModel type, final String memberName) {
+            final Set<String> visited = new LinkedHashSet<>();
+            final java.util.Deque<CSharpModel.CSharpTypeModel> pending = new java.util.ArrayDeque<>();
+            pending.add(type);
+            while (!pending.isEmpty()) {
+                final CSharpModel.CSharpTypeModel current = pending.poll();
+                for (final String baseType : current.baseTypes) {
+                    for (final CSharpFileParser.TypeToken token : CSharpFileParser.extractTypeReferences(baseType)) {
+                        final Resolution resolved = resolveType(token.name(), token.arity(), current, null);
+                        CSharpModel.CSharpTypeModel base = null;
+                        if (resolved != null) {
+                            base = typeModelsByName.get(resolved.name());
+                        }
+                        if (base != null && visited.add(base.uniqueName)) {
+                            for (final CSharpModel.CSharpMemberModel member : base.members) {
+                                if (memberName.equals(member.name)) {
+                                    return true;
+                                }
+                            }
+                            pending.add(base);
+                        }
+                        break;
+                    }
+                }
+            }
+            return false;
         }
 
         private Resolution resolveType(final String rawToken,

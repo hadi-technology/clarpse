@@ -40,9 +40,19 @@ final class CSharpImplicitUsings {
             "Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection",
             "Microsoft.Extensions.Hosting", "Microsoft.Extensions.Logging");
 
-    private static final Pattern ENABLED = Pattern.compile(
-            "<ImplicitUsings>\\s*(enable|true)\\s*</ImplicitUsings>", Pattern.CASE_INSENSITIVE);
-    private static final Pattern SET = Pattern.compile("<ImplicitUsings>", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SETTING = Pattern.compile(
+            "<ImplicitUsings>([^<]*)</ImplicitUsings>", Pattern.CASE_INSENSITIVE);
+    private static final Pattern COMMENT = Pattern.compile("<!--.*?-->", Pattern.DOTALL);
+    private static final Pattern CONDITIONAL_GROUP = Pattern.compile(
+            "<(PropertyGroup|ItemGroup)\\b[^>]*\\bCondition\\s*=[^>]*>.*?</\\1>",
+            Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+    private static final Pattern CONDITIONAL_ELEMENT = Pattern.compile(
+            "<(ImplicitUsings|Using)\\b[^>]*\\bCondition\\s*=[^>]*?(?:/>|>.*?</\\1>)",
+            Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+    private static final Pattern USING_INCLUDE = Pattern.compile(
+            "<Using\\s+Include\\s*=\\s*\"([^\"]+)\"\\s*/?>", Pattern.CASE_INSENSITIVE);
+    private static final Pattern USING_REMOVE = Pattern.compile(
+            "<Using\\s+Remove\\s*=\\s*\"([^\"]+)\"\\s*/?>", Pattern.CASE_INSENSITIVE);
     private static final Pattern SDK = Pattern.compile("<Project\\b[^>]*\\bSdk\\s*=\\s*\"([^\"]+)\"");
 
     private CSharpImplicitUsings() {
@@ -121,11 +131,31 @@ final class CSharpImplicitUsings {
         return path.substring(0, slash);
     }
 
+    /**
+     * The project text that applies under every configuration: without comments, and without the
+     * property and item groups or elements that carry a {@code Condition}, whose outcome is not
+     * known here.
+     */
+    private static String unconditional(final String content) {
+        if (content == null) {
+            return "";
+        }
+        String text = COMMENT.matcher(content).replaceAll("");
+        text = CONDITIONAL_GROUP.matcher(text).replaceAll("");
+        return CONDITIONAL_ELEMENT.matcher(text).replaceAll("");
+    }
+
+    /** Whether the file enables implicit usings, or null when it says nothing that always applies. */
     private static Boolean settingOf(final String content) {
-        if (content == null || !SET.matcher(content).find()) {
+        final Matcher setting = SETTING.matcher(unconditional(content));
+        String value = null;
+        while (setting.find()) {
+            value = setting.group(1).trim();
+        }
+        if (value == null) {
             return null;
         }
-        return ENABLED.matcher(content).find();
+        return "enable".equalsIgnoreCase(value) || "true".equalsIgnoreCase(value);
     }
 
     private static Boolean inheritedSetting(final String projectPath, final Map<String, ProjectFile> props) {
@@ -152,8 +182,9 @@ final class CSharpImplicitUsings {
     }
 
     private static List<String> namespacesFor(final String projectContent) {
+        final String text = unconditional(projectContent);
         final Set<String> namespaces = new LinkedHashSet<>(BASE);
-        final Matcher sdk = SDK.matcher(projectContent == null ? "" : projectContent);
+        final Matcher sdk = SDK.matcher(text);
         if (sdk.find()) {
             final String name = sdk.group(1);
             if ("Microsoft.NET.Sdk.Web".equalsIgnoreCase(name)) {
@@ -161,6 +192,14 @@ final class CSharpImplicitUsings {
             } else if ("Microsoft.NET.Sdk.Worker".equalsIgnoreCase(name)) {
                 namespaces.addAll(WORKER);
             }
+        }
+        final Matcher include = USING_INCLUDE.matcher(text);
+        while (include.find()) {
+            namespaces.add(include.group(1));
+        }
+        final Matcher remove = USING_REMOVE.matcher(text);
+        while (remove.find()) {
+            namespaces.remove(remove.group(1));
         }
         return new ArrayList<>(namespaces);
     }

@@ -511,7 +511,10 @@ final class CSharpFileParser {
             }
             if (TYPE_DECLARATIONS.contains(child.type)) {
                 final SyntaxNode block = firstChild(child, "cs:block-list");
-                final Integer close = block == null ? null : braceMatches.get(block.startOffset);
+                Integer close = null;
+                if (block != null) {
+                    close = braceMatches.get(block.startOffset);
+                }
                 if (close != null && block.endOffset < close + 1) {
                     final int realEnd = close + 1;
                     while (index + 1 < node.children.size()
@@ -751,8 +754,12 @@ final class CSharpFileParser {
                 break;
             case "cs:property-declaration":
             case "cs:event-declaration":
+                String accessedKind = "event";
+                if ("cs:property-declaration".equals(node.type)) {
+                    accessedKind = "property";
+                }
                 final CSharpModel.CSharpMemberModel accessed = buildSingleMember(node, fileModel, ownerType,
-                        "cs:property-declaration".equals(node.type) ? "property" : "event",
+                        accessedKind,
                         firstIdentifier(node),
                         firstDirectChildText(node, "cs:type-usage-role"),
                         null);
@@ -965,9 +972,12 @@ final class CSharpFileParser {
                 }
             } else if (c == '/' && next == '*') {
                 final int close = text.indexOf("*/", i + 2);
-                final int end = close < 0 ? n : close + 2;
+                int end = n;
+                if (close >= 0) {
+                    end = close + 2;
+                }
                 for (; i < end; i++) {
-                    out.append(text.charAt(i) == '\n' ? '\n' : ' ');
+                    appendBlanked(out, text.charAt(i));
                 }
             } else if (c == '$' && (next == '"' || (next == '@' && i + 2 < n && text.charAt(i + 2) == '"'))
                     || c == '@' && next == '$') {
@@ -979,7 +989,7 @@ final class CSharpFileParser {
                 final int end = literalEnd(text, i, verbatim);
                 out.append(c);
                 for (int k = i + 1; k < end - 1; k++) {
-                    out.append(text.charAt(k) == '\n' ? '\n' : ' ');
+                    appendBlanked(out, text.charAt(k));
                 }
                 if (end - 1 > i) {
                     out.append(c);
@@ -991,6 +1001,14 @@ final class CSharpFileParser {
             }
         }
         return out.toString();
+    }
+
+    private static void appendBlanked(final StringBuilder out, final char c) {
+        if (c == '\n') {
+            out.append('\n');
+        } else {
+            out.append(' ');
+        }
     }
 
     /** The index just past the literal that opens at {@code start}. */
@@ -1182,7 +1200,10 @@ final class CSharpFileParser {
     private static Set<String> declaredTypeParameters(final SyntaxNode node) {
         final Set<String> names = new LinkedHashSet<>();
         final SyntaxNode identifier = firstChild(node, "cs:id-role");
-        final SyntaxNode list = identifier == null ? null : firstChild(identifier, "cs:type-list-role");
+        SyntaxNode list = null;
+        if (identifier != null) {
+            list = firstChild(identifier, "cs:type-list-role");
+        }
         if (list != null) {
             for (final SyntaxNode parameter : list.children) {
                 if ("cs:type-usage-role".equals(parameter.type)) {
