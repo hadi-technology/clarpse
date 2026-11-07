@@ -761,7 +761,7 @@ function moduleDeclarations(filePath) {
   if (state.moduleDeclarations.has(filePath)) {
     return state.moduleDeclarations.get(filePath);
   }
-  let declarations = { parsed: false, classes: new Set(), names: new Set() };
+  let declarations = { parsed: false, classes: new Set(), names: new Set(), functions: new Set() };
   try {
     const api = getPyrightApi();
     const parser = new api.parser.Parser();
@@ -782,11 +782,12 @@ function moduleDeclarations(filePath) {
       declarations = {
         parsed: true,
         classes: collectLocalClasses(parseTree, parseNodeType),
-        names: collectTopLevelNames(parseTree, parseNodeType)
+        names: collectTopLevelNames(parseTree, parseNodeType),
+        functions: collectLocalFunctions(parseTree, parseNodeType)
       };
     }
   } catch (err) {
-    declarations = { parsed: false, classes: new Set(), names: new Set() };
+    declarations = { parsed: false, classes: new Set(), names: new Set(), functions: new Set() };
   }
   state.moduleDeclarations.set(filePath, declarations);
   return declarations;
@@ -2732,6 +2733,28 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
     return true;
   }
 
+  /**
+   * A constant imported from a repo module that declares it is a dependency on that declaration
+   * wherever it is used and the function does not bind the name itself: `code in CODES` after `from pkg.errors import CODES`.
+   */
+  function addImportedValueRef(name) {
+    if (!name || isLocal(name) || !ctx.importedSymbols) {
+      return false;
+    }
+    const imported = ctx.importedSymbols.get(name);
+    if (!imported || !imported.moduleName || !imported.symbolName) {
+      return false;
+    }
+    const filePath = moduleFileFor(imported.moduleName, ctx);
+    const declared = filePath ? findDeclaration(filePath, imported.symbolName, 0, new Set()) : null;
+    // A function passed on as a value is not a type or a constant, and is left out.
+    if (!declared || moduleDeclarations(declared.filePath).functions.has(declared.symbolName)) {
+      return false;
+    }
+    pushTarget(name, uniqueNameInFile(declared.filePath, declared.symbolName, ctx));
+    return true;
+  }
+
   function pushTarget(raw, target) {
     if (!moduleMemberTargets.has(target)) {
       moduleMemberTargets.add(target);
@@ -2810,7 +2833,7 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
     if (parseNodeType && parseNodeType.Name !== undefined && node.nodeType === parseNodeType.Name) {
       if (!calleeNames.has(node)) {
         const name = nameFromNode(node);
-        if (!addClassRef(name, name) && !addModuleLevelRef(name) && inHeader && name && !isLocal(name)
+        if (!addClassRef(name, name) && !addModuleLevelRef(name) && !addImportedValueRef(name) && inHeader && name && !isLocal(name)
           && ctx.importedSymbols && ctx.importedSymbols.has(name)) {
           addRef(name);
         }
