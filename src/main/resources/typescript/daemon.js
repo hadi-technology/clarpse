@@ -2956,7 +2956,7 @@ function declaredTypeReference(node, checker) {
 /**
  * A reference, named by its package, to the symbol a type reference names when the file imported it
  * from a package the repository does not hold: `TLShape` in `type S = TLShape<"x">` after
- * `import { TLShape } from "tldraw"` is `tldraw:TLShape`. Null for anything else.
+ * `import { Shape } from "some-lib"` is `some-lib:Shape`. Null for anything else.
  */
 function importedTypeReference(node, checker, kind) {
   const ts = state.ts;
