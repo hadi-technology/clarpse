@@ -273,6 +273,11 @@ final class PythonModelAssembler {
                 insertReferences(component, base, true);
             }
         }
+        if (classModel.baseArguments != null) {
+            for (final PythonTypeRefModel argument : classModel.baseArguments) {
+                insertReferences(component, argument, false);
+            }
+        }
         attachDecoratorReferences(component, classModel.decorators, classModel.decoratorArguments);
         return component;
     }

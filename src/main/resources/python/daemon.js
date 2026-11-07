@@ -3609,6 +3609,24 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         .filter(Boolean);
     }
     const bases = baseExprs.map(expr => resolveTypeRef(expr, textForNode(expr, ctx.fileText), ctx)).filter(Boolean);
+    // The type arguments of a generic base -- `Base[arch.Item]` -- are types the class depends on; only
+    // the generic itself is extended.
+    const baseArguments = [];
+    const baseArgumentTargets = new Set(bases.map(base => base.targetUniqueName));
+    for (const expr of baseExprs) {
+      const written = textForNode(expr, ctx.fileText);
+      const open = written.indexOf('[');
+      if (open <= 0 || !written.endsWith(']')) {
+        continue;
+      }
+      for (const candidate of extractCandidateNames(written.slice(open + 1, -1))) {
+        const target = resolveTypeFromRaw(candidate, ctx);
+        if (target && !baseArgumentTargets.has(target)) {
+          baseArgumentTargets.add(target);
+          baseArguments.push({ raw: candidate, targetUniqueName: target, externalLabel: null, alternates: [] });
+        }
+      }
+    }
     const isEnum = baseExprs.some(expr => isEnumBase(textForNode(expr, ctx.fileText)));
     const classCtx = Object.assign({}, ctx, { className, classUniqueName });
     const suiteStatements = getStatementsFromSuite(statement.d ? statement.d.suite : null);
@@ -3676,6 +3694,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       decorators: classDecorators,
       decoratorArguments: classDecoratorArguments,
       bases,
+      baseArguments,
       methods,
       fields,
       classes: nestedClasses
