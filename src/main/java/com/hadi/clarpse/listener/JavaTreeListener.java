@@ -244,9 +244,10 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         // yields the edge and `import a.*;` yields nothing.
         if (ctx.isAsterisk()) {
             currentWildcardImports.add(fullImportName);
-        } else if (ctx.isStatic() && isConstantName(shortImportName) && fullImportName.indexOf('.') > 0) {
+        } else if (ctx.isStatic() && isConstantName(shortImportName) && fullImportName.indexOf('.') > 0
+                && !typeExists(fullImportName)) {
             // A statically imported constant names a member of the type that declares it, and the
-            // dependency is on that type.
+            // dependency is on that type. An upper-case name that is a nested type is that type.
             currentImportsMap.put(shortImportName,
                     fullImportName.substring(0, fullImportName.lastIndexOf('.')));
         } else {
@@ -1231,41 +1232,34 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         // package and merely make the invention look plausible.
         final String type = TypeNames.erasure(writtenType);
         String resolvedType = "";
-        final SymbolReference<ResolvedReferenceTypeDeclaration> symbol = typeSolver.tryToSolveType(type);
+        // Scope order, JLS 6.4.1 and 7.5: a member type of an enclosing type, declared or inherited,
+        // then a single-type import, then a top-level type of the current package, and last the
+        // types brought in on demand -- java.lang among them. A type-import-on-demand never
+        // shadows another declaration.
+        final String memberType = memberTypeInScope(type);
+        if (memberType != null) {
+            return memberType;
+        }
         if (currentImportsMap.containsKey(type)) {
             resolvedType = currentImportsMap.get(type);
+        } else if (inCurrentPackage(type)) {
+            return currentPkg.path() + "." + type;
         } else if (OOPSourceModelConstants.getJavaDefaultClasses().containsKey(type)) {
             resolvedType = OOPSourceModelConstants.getJavaDefaultClasses().get(type);
-        } else if (symbol.isSolved()) {
-            resolvedType = symbol.getCorrespondingDeclaration().getQualifiedName();
         } else {
-            // On-demand imports, tried only after every exact form has failed and accepted only
-            // when the type solver confirms the type exists in that package. A prefix that does not
-            // resolve is skipped rather than assumed, so this recovers real edges without inventing
-            // any -- the same rule the `assumeCurrentPackage` note below is about.
-            // A member type of an enclosing type is in scope before the package and any on-demand
-            // import. Confined to a type position and to candidates that are themselves types: run
-            // over bare identifiers it matched fields, and `return MAX_NOTES;` found the field
-            // `<Type>.MAX_NOTES` and invented a type reference to it.
-            if (assumeCurrentPackage) {
-                final String memberType = memberTypeOfEnclosingType(type);
-                if (memberType != null) {
-                    return memberType;
-                }
-            }
-            // A type of the current package is in scope before any on-demand import.
-            if (currentPkg != null && !type.contains(".")) {
-                final String samePackage = currentPkg.path() + "." + type;
-                if (srcModel.component(samePackage).isPresent() || typeSolver.tryToSolveType(samePackage).isSolved()
-                        || otherLanguageTypes.test(samePackage)) {
-                    return samePackage;
-                }
-            }
-            for (final String wildcardPackage : currentWildcardImports) {
-                final String candidate = wildcardPackage + "." + type;
-                if (typeSolver.tryToSolveType(candidate).isSolved() || otherLanguageTypes.test(candidate)) {
-                    resolvedType = candidate;
-                    break;
+            final SymbolReference<ResolvedReferenceTypeDeclaration> symbol = typeSolver.tryToSolveType(type);
+            if (symbol.isSolved()) {
+                resolvedType = symbol.getCorrespondingDeclaration().getQualifiedName();
+            } else {
+                // On-demand imports, tried only after every exact form has failed and accepted only
+                // when the type solver confirms the type exists in that package. A prefix that does
+                // not resolve is skipped rather than assumed.
+                for (final String wildcardPackage : currentWildcardImports) {
+                    final String candidate = wildcardPackage + "." + type;
+                    if (typeSolver.tryToSolveType(candidate).isSolved() || otherLanguageTypes.test(candidate)) {
+                        resolvedType = candidate;
+                        break;
+                    }
                 }
             }
         }
@@ -1299,20 +1293,72 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      * @param type A name without type arguments.
      * @return The nested type's name, or null when no enclosing type declares one by that name.
      */
-    private String memberTypeOfEnclosingType(final String type) {
+    private String memberTypeInScope(final String type) {
+        if (type.isEmpty() || type.indexOf('.') >= 0 || !Character.isUpperCase(type.codePointAt(0))) {
+            return null;
+        }
         for (int i = componentStack.size() - 1; i >= 0; i--) {
             final Component enclosing = componentStack.get(i);
             if (!enclosing.componentType().isBaseComponent()) {
                 continue;
             }
             final String nested = enclosing.uniqueName() + "." + type;
-            final boolean isType = srcModel.component(nested)
-                    .map(found -> found.componentType().isBaseComponent()).orElse(false);
-            if (isType || typeSolver.tryToSolveType(nested).isSolved()) {
+            if (typeExists(nested)) {
                 return nested;
+            }
+            final String inherited = inheritedMemberType(enclosing, type);
+            if (inherited != null) {
+                return inherited;
             }
         }
         return null;
+    }
+
+    /** A member type of a supertype of the component, or of a supertype of that. */
+    private String inheritedMemberType(final Component component, final String type) {
+        final Set<String> seen = new HashSet<>();
+        final java.util.ArrayDeque<String> pending = new java.util.ArrayDeque<>();
+        supertypesOf(component, pending);
+        int budget = 32;
+        while (!pending.isEmpty() && budget-- > 0) {
+            final String supertype = pending.poll();
+            if (!seen.add(supertype)) {
+                continue;
+            }
+            final String nested = supertype + "." + type;
+            if (typeExists(nested)) {
+                return nested;
+            }
+            srcModel.component(supertype).ifPresent(found -> supertypesOf(found, pending));
+        }
+        return null;
+    }
+
+    private static void supertypesOf(final Component component, final java.util.Collection<String> into) {
+        for (final com.hadi.clarpse.reference.ComponentReference reference : component.references()) {
+            if (reference instanceof TypeExtensionReference || reference instanceof TypeImplementationReference) {
+                into.add(reference.invokedComponent());
+            }
+        }
+    }
+
+    /** Whether a top-level type of the current package has this simple name. */
+    private boolean inCurrentPackage(final String type) {
+        if (currentPkg == null || type.isEmpty() || type.indexOf('.') >= 0
+                || !Character.isUpperCase(type.codePointAt(0))) {
+            return false;
+        }
+        final String candidate = currentPkg.path() + "." + type;
+        return typeExists(candidate) || otherLanguageTypes.test(candidate);
+    }
+
+    private final Map<String, Boolean> knownTypes = new HashMap<>();
+
+    /** Whether a type of the given qualified name is in the parse path or visible to the type solver. */
+    private boolean typeExists(final String name) {
+        final boolean parsed = srcModel.component(name)
+                .map(found -> found.componentType().isBaseComponent()).orElse(false);
+        return parsed || knownTypes.computeIfAbsent(name, key -> typeSolver.tryToSolveType(key).isSolved());
     }
 
     /**
@@ -1387,6 +1433,11 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         if (namesAValue(firstSegment(access))) {
             return null;
         }
+        // A first segment that is not a package root anything here knows could as well be a field
+        // inherited from a type the solver cannot see, and then no type is named.
+        if (!isKnownPackageRoot(dottedName.substring(0, dottedName.indexOf('.')))) {
+            return null;
+        }
         // A type of the parse path further in the name is the one it names, and is reached when
         // the qualifier is visited: `a.b.Outer.Inner.K` names `a.b.Outer.Inner`.
         final int lastDot = dottedName.lastIndexOf('.');
@@ -1403,6 +1454,26 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             return null;
         }
         return String.join(".", Arrays.copyOfRange(segments, 0, typeSegment + 1));
+    }
+
+    private static final Set<String> PACKAGE_ROOTS = Set.of(
+            "com", "org", "net", "io", "edu", "gov", "java", "javax", "jakarta", "android", "androidx",
+            "kotlin", "kotlinx", "scala", "sun", "jdk", "de", "fr", "uk", "nl", "ch", "se", "cn", "jp",
+            "ru", "br", "in", "co", "dev", "app");
+
+    private boolean isKnownPackageRoot(final String root) {
+        if (PACKAGE_ROOTS.contains(root)) {
+            return true;
+        }
+        if (currentPkg != null && (currentPkg.path().equals(root) || currentPkg.path().startsWith(root + "."))) {
+            return true;
+        }
+        for (final String imported : currentImports) {
+            if (imported.startsWith(root + ".")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean qualifierNamesASolvedType(final Expression scope) {
