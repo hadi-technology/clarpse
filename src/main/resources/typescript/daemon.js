@@ -1709,6 +1709,12 @@ function buildHeritageReferences(node, checker) {
     for (const typeNode of clause.types) {
       const type = checker.getTypeAtLocation(typeNode);
       references.push(...buildReferenceModelsFromType(type, checker, kind, true));
+      const importedBase = state.ts.isExpressionWithTypeArguments(typeNode)
+        ? importedTypeReference(typeNode, checker, kind)
+        : null;
+      if (importedBase) {
+        references.push(importedBase);
+      }
       for (const argument of writtenTypeArguments(type)) {
         references.push(...buildReferenceModelsFromType(argument, checker, "type"));
       }
@@ -2911,6 +2917,58 @@ function declaredTypeReference(node, checker) {
 }
 
 /**
+ * A reference, named by its package, to the symbol a type reference names when the file imported it
+ * from a package the repository does not hold: `TLShape` in `type S = TLShape<"x">` after
+ * `import { TLShape } from "tldraw"` is `tldraw:TLShape`. Null for anything else.
+ */
+function importedTypeReference(node, checker, kind) {
+  const ts = state.ts;
+  const nameNode = ts.isTypeReferenceNode(node) ? node.typeName : node.expression;
+  const identifier = nameNode && ts.isQualifiedName(nameNode) ? leftmostIdentifier(nameNode) : nameNode;
+  if (!identifier || !ts.isIdentifier(identifier)) {
+    return null;
+  }
+  let symbol;
+  try {
+    symbol = checker.getSymbolAtLocation(identifier);
+  } catch (err) {
+    return null;
+  }
+  if (!symbol || !(symbol.flags & ts.SymbolFlags.Alias)) {
+    return null;
+  }
+  const imported = importedFrom(symbol);
+  if (!imported || !packageOfSpecifier(imported)) {
+    return null;
+  }
+  let actual = null;
+  try {
+    actual = checker.getAliasedSymbol(symbol);
+  } catch (err) {
+    actual = null;
+  }
+  const reference = buildExternalValueReference(identifier, imported, actual);
+  if (reference && kind) {
+    reference.kind = kind;
+  }
+  return reference;
+}
+
+function leftmostIdentifier(qualifiedName) {
+  let current = qualifiedName;
+  while (state.ts.isQualifiedName(current)) {
+    current = current.left;
+  }
+  return current;
+}
+
+/** The reference a type reference's written name makes: an alias, a declaration, or a package's symbol. */
+function writtenNameReference(node, checker) {
+  return typeAliasReference(node, checker) || declaredTypeReference(node, checker)
+    || importedTypeReference(node, checker, null);
+}
+
+/**
  * The declarations of the repository a type is written with: `Tracked` in `f(): Tracked`, however
  * deep in a union, an array, a type argument, or the members of an object type. The type an alias
  * stands for is what the checker reports, and for a union or an intersection that is its members,
@@ -2924,7 +2982,7 @@ function writtenAliasReferences(typeNode, checker) {
   }
   function visit(child) {
     if (state.ts.isTypeReferenceNode(child) || state.ts.isExpressionWithTypeArguments(child)) {
-      const named = typeAliasReference(child, checker) || declaredTypeReference(child, checker);
+      const named = writtenNameReference(child, checker);
       if (named) {
         references.push(named);
       }
@@ -2961,7 +3019,7 @@ function typeParameterReferences(node, checker) {
   }
   function visit(child) {
     if (state.ts.isTypeReferenceNode(child) || state.ts.isExpressionWithTypeArguments(child)) {
-      const declared = typeAliasReference(child, checker) || declaredTypeReference(child, checker);
+      const declared = writtenNameReference(child, checker);
       if (declared) {
         references.push(declared);
       }
@@ -2995,6 +3053,13 @@ function buildTypeAliasModel(node, checker) {
         // Another alias, named as written: resolving its type would expand a union or literal
         // alias into its members and lose the name the code was written against.
         references.push(named);
+      } else if (importedTypeReference(child, checker, null)) {
+        // A symbol of a package, which the checker may not be able to see at all.
+        references.push(importedTypeReference(child, checker, null));
+        const referenced = checker.getTypeAtLocation(child);
+        if (!(referenced.flags & state.ts.TypeFlags.TypeParameter)) {
+          references.push(...buildReferenceModelsFromType(referenced, checker, "type"));
+        }
       } else if (declaredTypeReference(child, checker)) {
         // A generic instantiation such as `Shape<"card">` resolves to a type the alias itself
         // names, so the declaration it instantiates is taken from the written name.

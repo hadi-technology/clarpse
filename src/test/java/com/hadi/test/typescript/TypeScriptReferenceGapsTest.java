@@ -504,4 +504,19 @@ public class TypeScriptReferenceGapsTest {
                 result.model().containsComponent("src.errors.NetworkError.message"));
         assertFalse(result.model().containsComponent("src.errors.Plain.message"));
     }
+
+    @Test
+    public void aPackageTypeWrittenInAnAliasOrABaseListIsNamedByItsPackage() throws Exception {
+        final CompileResult result = compile("/src/shapes.ts",
+                "import { TLShape, BaseUtil } from 'canvas-lib';\n"
+                        + "export type CardShape = TLShape<'card'>;\n"
+                        + "export class CardUtil extends BaseUtil<CardShape> { }\n"
+                        + "export function describe(shape: CardShape, other: TLShape<'x'>) { return shape; }\n");
+        assertTrue(targets(component(result, "src.shapes.CardShape")).toString(),
+                targets(component(result, "src.shapes.CardShape")).contains("canvas-lib:TLShape"));
+        assertTrue(targets(component(result, "src.shapes.CardUtil")).toString(),
+                targets(component(result, "src.shapes.CardUtil")).contains("canvas-lib:BaseUtil"));
+        assertTrue(targets(component(result, "src.shapes.describe")).toString(),
+                targets(component(result, "src.shapes.describe")).contains("canvas-lib:TLShape"));
+    }
 }
