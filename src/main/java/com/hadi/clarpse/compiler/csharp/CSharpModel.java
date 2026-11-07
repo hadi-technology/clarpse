@@ -119,6 +119,10 @@ final class CSharpModel {
         /** Names of the attributes ({@code [ApiController]}) applied to this type declaration. */
         List<CSharpAttribute> annotations = new ArrayList<>();
         List<String> baseTypes = new ArrayList<>();
+        /** Types named by {@code where} constraints, which are not supertypes. */
+        List<String> constraintTypes = new ArrayList<>();
+        /** Names of the type parameters this type declares. */
+        Set<String> typeParameters = new LinkedHashSet<>();
         /** Declared types of the primary-constructor parameters of a class or struct. */
         List<String> primaryParameterTypes = new ArrayList<>();
         List<CSharpMemberModel> members = new ArrayList<>();
@@ -147,6 +151,8 @@ final class CSharpModel {
             copy.modifiers = new ArrayList<>(modifiers);
             copy.annotations = new ArrayList<>(annotations);
             copy.baseTypes = new ArrayList<>(baseTypes);
+            copy.constraintTypes = new ArrayList<>(constraintTypes);
+            copy.typeParameters = new LinkedHashSet<>(typeParameters);
             copy.primaryParameterTypes = new ArrayList<>(primaryParameterTypes);
             copy.members = new ArrayList<>(members);
             copy.nestedTypes = new ArrayList<>();
@@ -184,6 +190,8 @@ final class CSharpModel {
         List<CSharpAttribute> annotations = new ArrayList<>();
         List<CSharpParameterModel> parameters = new ArrayList<>();
         List<CSharpMemberModel> locals = new ArrayList<>();
+        /** Names of the type parameters a generic method declares. */
+        Set<String> typeParameters = new LinkedHashSet<>();
         List<String> simpleTypeUsages = new ArrayList<>();
         /**
          * Dotted names written before a member access in the member's body or initializer; each
@@ -192,6 +200,8 @@ final class CSharpModel {
         List<String> staticReceivers = new ArrayList<>();
         List<String> memberUsages = new ArrayList<>();
         Set<String> imports = new LinkedHashSet<>();
+        /** The using aliases of the file that declares this member, which a partial type's other parts lack. */
+        Map<String, String> usingAliases = new LinkedHashMap<>();
         boolean inferredType;
     }
 

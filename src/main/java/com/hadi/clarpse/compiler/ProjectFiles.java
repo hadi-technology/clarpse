@@ -554,6 +554,17 @@ public class ProjectFiles implements AutoCloseable {
         return Set.copyOf(allFiles);
     }
 
+    /**
+     * The configuration files this instance holds, such as {@code tsconfig.json} and C# project files.
+     *
+     * @return The configuration files, in no particular order.
+     */
+    public final Collection<ProjectFile> configFiles() {
+        final List<ProjectFile> result = new ArrayList<>();
+        this.configFiles.forEach((path, content) -> result.add(new ProjectFile(path, content)));
+        return result;
+    }
+
     public String projectDir() {
         if (this.projectDir != null && !this.projectDir.isEmpty()) {
             return this.projectDir;
@@ -712,7 +723,12 @@ public class ProjectFiles implements AutoCloseable {
                 || normalized.equals("pyrightconfig.json")
                 || normalized.endsWith("/pyrightconfig.json")
                 || normalized.equals("pyproject.toml")
-                || normalized.endsWith("/pyproject.toml");
+                || normalized.endsWith("/pyproject.toml")
+                // C# project files carry the settings a project applies to its sources, such as
+                // implicit usings.
+                || normalized.endsWith(".csproj")
+                || normalized.equals("directory.build.props")
+                || normalized.endsWith("/directory.build.props");
     }
 
     private boolean shouldLoadPath(String path) {

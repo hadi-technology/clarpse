@@ -199,11 +199,14 @@ final class CSharpModelAssembler {
             // order the partial declarations happened to be parsed in.
             existing.implementationHash += typeModel.implementationHash;
             existing.baseTypes.addAll(typeModel.baseTypes);
+            existing.constraintTypes.addAll(typeModel.constraintTypes);
+            existing.typeParameters.addAll(typeModel.typeParameters);
             existing.primaryParameterTypes.addAll(typeModel.primaryParameterTypes);
             existing.members.addAll(typeModel.members);
             existing.nestedTypes.addAll(typeModel.nestedTypes);
             existing.modifiers = mergeStrings(existing.modifiers, typeModel.modifiers);
             existing.imports.addAll(typeModel.imports);
+            typeModel.usingAliases.forEach(existing.usingAliases::putIfAbsent);
             if ((existing.comment == null || existing.comment.isEmpty()) && typeModel.comment != null) {
                 existing.comment = typeModel.comment;
             }
@@ -296,6 +299,9 @@ final class CSharpModelAssembler {
                 final boolean isBase = baseTypeToken;
                 baseTypeToken = false;
                 final String rawToken = token.name();
+                if (typeModel.typeParameters.contains(rawToken)) {
+                    continue;
+                }
                 final Resolution resolved = typeIndex.resolveType(rawToken, token.arity(), typeModel, null);
                 if (resolved == null || resolved.name().equals(typeComponent.uniqueName())) {
                     continue;
@@ -319,6 +325,20 @@ final class CSharpModelAssembler {
                     ref.setResolutionKind(resolved.kind());
                     typeComponent.insertCmpRef(ref);
                 }
+            }
+        }
+        for (final String constraint : typeModel.constraintTypes) {
+            for (final CSharpFileParser.TypeToken token : CSharpFileParser.extractTypeReferences(constraint)) {
+                if (typeModel.typeParameters.contains(token.name())) {
+                    continue;
+                }
+                final Resolution resolved = typeIndex.resolveType(token.name(), token.arity(), typeModel, null);
+                if (resolved == null || resolved.name().equals(typeComponent.uniqueName())) {
+                    continue;
+                }
+                final SimpleTypeReference reference = new SimpleTypeReference(resolved.name());
+                reference.setResolutionKind(resolved.kind());
+                typeComponent.insertCmpRef(reference);
             }
         }
         attachTypeReferences(typeComponent, typeModel.primaryParameterTypes, typeIndex, typeModel, null, false);
@@ -611,6 +631,11 @@ final class CSharpModelAssembler {
                 continue;
             }
             for (final CSharpFileParser.TypeToken token : CSharpFileParser.extractTypeReferences(rawType)) {
+                // A type parameter names no type of the repository.
+                if (ownerType.typeParameters.contains(token.name())
+                        || (memberModel != null && memberModel.typeParameters.contains(token.name()))) {
+                    continue;
+                }
                 final Resolution resolved = typeIndex.resolveType(token.name(), token.arity(), ownerType, memberModel);
                 if (resolved == null || resolved.name().equals(component.uniqueName())
                         || !seen.add(resolved.name())) {
@@ -952,7 +977,13 @@ final class CSharpModelAssembler {
             if (builtin != null) {
                 return new Resolution(builtin, ResolutionKind.EXACT);
             }
-            final String aliasTarget = ownerType.usingAliases.get(cleaned);
+            String aliasTarget = null;
+            if (memberModel != null) {
+                aliasTarget = memberModel.usingAliases.get(cleaned);
+            }
+            if (aliasTarget == null) {
+                aliasTarget = ownerType.usingAliases.get(cleaned);
+            }
             if (aliasTarget != null && !aliasTarget.isEmpty()) {
                 return new Resolution(aliasTarget, ResolutionKind.EXACT);
             }

@@ -48,7 +48,8 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
         if (csharpFiles.isEmpty()) {
             return new CompileResult(new OOPSourceCodeModel(), Set.of());
         }
-        final List<CSharpModel.ParseOutcome> parseOutcomes = parseFiles(csharpFiles);
+        final List<CSharpModel.ParseOutcome> parseOutcomes = parseFiles(csharpFiles,
+                CSharpImplicitUsings.forFiles(projectFiles.configFiles(), csharpFiles));
         final List<CSharpModel.CSharpFileModel> successfulFiles = new ArrayList<>();
         final Set<CompileFailure> failures = new HashSet<>();
         for (final CSharpModel.ParseOutcome outcome : parseOutcomes) {
@@ -93,7 +94,8 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
                                                      final AnalysisOptions options) throws CompileException {
         final List<ProjectFile> analysed = ClarpseCompiler.analyzedFiles(projectFiles, Lang.CSHARP, analyzedFilePaths);
         final List<ProjectFile> allFiles = new ArrayList<>(projectFiles.files(Lang.CSHARP));
-        final ParsedFiles files = new ParsedFiles(allFiles);
+        final ParsedFiles files = new ParsedFiles(allFiles,
+                CSharpImplicitUsings.forFiles(projectFiles.configFiles(), allFiles));
         final Set<String> focus = new TreeSet<>();
         for (final ProjectFile file : analysed) {
             focus.add(file.path());
@@ -119,7 +121,10 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
         private final Map<String, CSharpModel.CSharpFileModel> parsed = new LinkedHashMap<>();
         private final Map<String, CompileFailure> failures = new LinkedHashMap<>();
 
-        ParsedFiles(final List<ProjectFile> allFiles) {
+        private final Map<String, List<String>> implicitUsings;
+
+        ParsedFiles(final List<ProjectFile> allFiles, final Map<String, List<String>> implicitUsings) {
+            this.implicitUsings = implicitUsings;
             allFiles.forEach(file -> byPath.put(file.path(), file));
             this.index = new CSharpDeclarationIndex(allFiles);
         }
@@ -143,7 +148,7 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
                     toParse.add(file);
                 }
             }
-            for (final CSharpModel.ParseOutcome outcome : parseFiles(toParse)) {
+            for (final CSharpModel.ParseOutcome outcome : parseFiles(toParse, implicitUsings)) {
                 if (outcome.failure() != null) {
                     failures.put(outcome.failure().file().path(), outcome.failure());
                 } else if (outcome.fileModel() != null) {
@@ -284,7 +289,9 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
         return files;
     }
 
-    private List<CSharpModel.ParseOutcome> parseFiles(final List<ProjectFile> files) throws CompileException {
+    private List<CSharpModel.ParseOutcome> parseFiles(final List<ProjectFile> files,
+                                                      final Map<String, List<String>> implicitUsings)
+            throws CompileException {
         final int parallelism = CompilerParallelismSupport.resolveParallelism(files.size());
         if (parallelism > 1) {
             LOGGER.info("Parsing C# files in parallel using " + parallelism + " threads.");
@@ -302,7 +309,8 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
                             new InterruptedException());
                 }
                 final ProjectFile file = files.get(i);
-                futures.add(executor.submit(new CSharpParseTask(file, i)));
+                futures.add(executor.submit(new CSharpParseTask(file, i,
+                        implicitUsings.getOrDefault(file.path(), List.of()))));
             }
             final List<CSharpModel.ParseOutcome> outcomes = new ArrayList<>();
             for (final Future<CSharpModel.ParseOutcome> future : futures) {

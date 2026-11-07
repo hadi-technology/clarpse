@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -109,12 +110,23 @@ final class CSharpFileParser {
     private static final Pattern THIS_MEMBER_ASSIGN_PATTERN =
             Pattern.compile("\\bthis\\.(\\w+)\\s*=\\s*(\\w+)\\b");
     private static final Pattern STATIC_RECEIVER_PATTERN =
-            Pattern.compile("(?<![\\w.@])([A-Z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)\\s*\\.");
+            Pattern.compile("(?<![\\w.@])([A-Z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)"
+                    + "\\s*(?:<[\\w.,\\s?\\[\\]]*(?:<[\\w.,\\s?\\[\\]]*>[\\w.,\\s?\\[\\]]*)*>)?\\s*\\.");
 
     private CSharpFileParser() {
     }
 
     static CSharpModel.ParseOutcome parseFile(final ProjectFile file, final int index) {
+        return parseFile(file, index, List.of());
+    }
+
+    /**
+     * Parses a file read under implicit usings.
+     *
+     * @param implicitNamespaces The namespaces the project imports into the file without a directive.
+     */
+    static CSharpModel.ParseOutcome parseFile(final ProjectFile file, final int index,
+                                              final List<String> implicitNamespaces) {
         try {
             final String sourceText = withoutByteOrderMark(file.content());
             final Map<Integer, Integer> braceMatches = validateBalancedDelimiters(sourceText);
@@ -123,7 +135,10 @@ final class CSharpFileParser {
                     sourceText,
                     CompilerSupport.moduleNameForFile(file.path())
             );
-            final SyntaxTree tree = parseSyntaxTree(sourceText, braceMatches);
+            for (final String implicitNamespace : implicitNamespaces) {
+                fileModel.usings.add(new CSharpModel.CSharpUsingModel(null, implicitNamespace, false, false, false));
+            }
+            final SyntaxTree tree = parseSyntaxTree(withoutTypeParameterAttributes(sourceText), braceMatches);
             for (final SyntaxNode child : tree.root().children) {
                 parseTopLevelNode(child, fileModel, "", tree.laterAlternatives(), false);
             }
@@ -142,6 +157,32 @@ final class CSharpFileParser {
      * line stops starting a line and the parser folds everything after it into one statement node.
      * All offsets are taken on the returned text.
      */
+    /** An attribute section on a type parameter: {@code [Attr(..)] T} written after {@code <} or a comma. */
+    private static final Pattern TYPE_PARAMETER_ATTRIBUTE = Pattern.compile(
+            "(?<=[<,])(\\s*)(\\[\\s*[A-Za-z_][^\\[\\]]*(?:\\[[^\\]]*\\][^\\[\\]]*)*\\])"
+                    + "(?=\\s*(?:in\\s+|out\\s+)?[A-Za-z_]\\w*\\s*[,>])");
+
+    /**
+     * The source with attribute sections on type parameters replaced by spaces. The syntax parser
+     * cannot place a type-parameter list that holds one, and drops the declarations that follow.
+     * Every offset is kept, so the declarations and the text they are read from still line up.
+     */
+    static String withoutTypeParameterAttributes(final String sourceText) {
+        if (sourceText.indexOf('[') < 0) {
+            return sourceText;
+        }
+        final Matcher matcher = TYPE_PARAMETER_ATTRIBUTE.matcher(sourceText);
+        final StringBuilder out = new StringBuilder(sourceText);
+        while (matcher.find()) {
+            for (int i = matcher.start(2); i < matcher.end(2); i++) {
+                if (out.charAt(i) != '\n') {
+                    out.setCharAt(i, ' ');
+                }
+            }
+        }
+        return out.toString();
+    }
+
     private static String withoutByteOrderMark(final String content) {
         if (content == null) {
             return "";
@@ -329,8 +370,38 @@ final class CSharpFileParser {
         boolean inString = false;
         boolean verbatimString = false;
         char stringDelimiter = 0;
+        int conditionalDepth = 0;
+        int skippedFromDepth = 0;
         for (int i = 0; i < sourceText.length(); i += 1) {
             final char ch = sourceText.charAt(i);
+            if (!inString && ch == '#' && startsLine(sourceText, i)) {
+                // Only the first alternative of a conditional group is counted: each of `#if A {`,
+                // `#else {` opens the same block once under any one configuration.
+                int end = i + 1;
+                while (end < sourceText.length() && Character.isLetter(sourceText.charAt(end))) {
+                    end += 1;
+                }
+                final String directive = sourceText.substring(i + 1, end);
+                if ("if".equals(directive)) {
+                    conditionalDepth += 1;
+                } else if (("else".equals(directive) || "elif".equals(directive))
+                        && skippedFromDepth == 0 && conditionalDepth > 0) {
+                    skippedFromDepth = conditionalDepth;
+                } else if ("endif".equals(directive)) {
+                    if (skippedFromDepth == conditionalDepth) {
+                        skippedFromDepth = 0;
+                    }
+                    conditionalDepth = Math.max(0, conditionalDepth - 1);
+                }
+                while (end < sourceText.length() && sourceText.charAt(end) != '\n') {
+                    end += 1;
+                }
+                i = end - 1;
+                continue;
+            }
+            if (skippedFromDepth != 0) {
+                continue;
+            }
             if (inString) {
                 if (verbatimString) {
                     if (ch == '"' && i + 1 < sourceText.length() && sourceText.charAt(i + 1) == '"') {
@@ -453,10 +524,43 @@ final class CSharpFileParser {
                     block.endOffset = Math.max(block.endOffset, realEnd);
                     child.endOffset = Math.max(child.endOffset, realEnd);
                 }
+                if (close != null && block.endOffset > close + 1) {
+                    // The block runs past its closing brace: what starts after it is declared next
+                    // to the type, not in it.
+                    final int realEnd = close + 1;
+                    int position = index + 1;
+                    final List<SyntaxNode> past = new ArrayList<>();
+                    for (final SyntaxNode member : block.children) {
+                        if (member.startOffset >= realEnd) {
+                            past.add(member);
+                        }
+                    }
+                    for (final SyntaxNode member : past) {
+                        block.children.remove(member);
+                        member.parent = node;
+                        node.children.add(position, member);
+                        position += 1;
+                    }
+                    block.endOffset = realEnd;
+                    child.endOffset = Math.min(child.endOffset, realEnd);
+                }
             }
             closeTypesAtTheirBraces(child, braceMatches);
             index += 1;
         }
+    }
+
+    private static boolean startsLine(final String sourceText, final int index) {
+        for (int i = index - 1; i >= 0; i -= 1) {
+            final char c = sourceText.charAt(i);
+            if (c == '\n') {
+                return true;
+            }
+            if (!Character.isWhitespace(c)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isEscapedByOddBackslashes(final String sourceText, final int index) {
@@ -540,16 +644,10 @@ final class CSharpFileParser {
                                                          final String parentTypeComponentName) {
         final CSharpModel.CSharpTypeModel typeModel = new CSharpModel.CSharpTypeModel();
         typeModel.kind = mapTypeKind(node.type);
-        if ("record".equals(typeModel.kind)) {
-            final String normalized = normalizeWhitespace(node.text).toLowerCase(Locale.ROOT);
-            if (normalized.startsWith("record struct ")
-                    || normalized.contains(" partial record struct ")
-                    || normalized.contains(" public record struct ")
-                    || normalized.contains(" private record struct ")
-                    || normalized.contains(" protected record struct ")
-                    || normalized.contains(" internal record struct ")) {
-                typeModel.kind = "recordStruct";
-            }
+        if ("record".equals(typeModel.kind)
+                && Pattern.compile("(?<![\\w@])record\\s+struct\\b")
+                        .matcher(withoutCommentsAndStrings(headerOf(node, fileModel.sourceText))).find()) {
+            typeModel.kind = "recordStruct";
         }
         final String declaredIdentifier = firstIdentifier(node);
         typeModel.name = eraseTypeParameterList(declaredIdentifier);
@@ -565,6 +663,10 @@ final class CSharpFileParser {
         typeModel.comment = extractLeadingComment(fileModel.sourceText, node.startOffset);
         typeModel.modifiers = parseModifiers(node.text);
         typeModel.annotations = precedingAttributes(node);
+        if (Pattern.compile("(?<![\\w@])ref\\s+(?:readonly\\s+)?(?:record\\s+)?struct\\b")
+                .matcher(withoutCommentsAndStrings(headerOf(node, fileModel.sourceText))).find()) {
+            typeModel.modifiers.add("ref");
+        }
         typeModel.partial = typeModel.modifiers.contains("partial");
         typeModel.startOffset = node.startOffset;
         typeModel.endOffset = node.endOffset;
@@ -578,9 +680,15 @@ final class CSharpFileParser {
         typeModel.codeFragment = buildTypeCodeFragment(node.text);
         typeModel.implementationHash = implementationHash(node.text);
 
+        typeModel.typeParameters = declaredTypeParameters(node);
+        final int constraintsStart = constraintClauseStart(node, fileModel.sourceText);
         for (final SyntaxNode child : node.children) {
             if ("cs:type-usage-role".equals(child.type) && isDirectBaseType(child, node)) {
-                typeModel.baseTypes.add(trimTypeText(child.text));
+                if (child.startOffset < constraintsStart) {
+                    typeModel.baseTypes.add(trimTypeText(child.text));
+                } else {
+                    typeModel.constraintTypes.add(trimTypeText(child.text));
+                }
             }
         }
 
@@ -953,6 +1061,7 @@ final class CSharpFileParser {
         final CSharpModel.CSharpMemberModel member = new CSharpModel.CSharpMemberModel();
         member.kind = kind;
         member.name = name;
+        member.typeParameters = typeParametersOf(name);
         member.declaredType = trimTypeText(declaredType);
         member.returnType = trimTypeText(returnType);
         member.sourcePath = fileModel.sourceFile.path();
@@ -964,6 +1073,7 @@ final class CSharpFileParser {
         member.startOffset = node.startOffset;
         member.endOffset = node.endOffset;
         member.imports = new LinkedHashSet<>(ownerType.imports);
+        member.usingAliases = new LinkedHashMap<>(ownerType.usingAliases);
         member.codeFragment = buildMemberCodeFragment(kind, name, member.declaredType, member.returnType, node.text);
         member.implementationHash = implementationHash(node.text);
         if (member.declaredType != null && !member.declaredType.isEmpty()) {
@@ -1034,6 +1144,78 @@ final class CSharpFileParser {
             }
         }
         return aliases;
+    }
+
+    /** The names in the type-parameter list written in a member's name ({@code T} in {@code Get<T>}). */
+    private static Set<String> typeParametersOf(final String memberName) {
+        final Set<String> names = new LinkedHashSet<>();
+        if (memberName == null) {
+            return names;
+        }
+        final int open = memberName.indexOf('<');
+        final int close = memberName.lastIndexOf('>');
+        if (open > 0 && close > open) {
+            for (final String part : memberName.substring(open + 1, close).split(",")) {
+                final Matcher name = Pattern.compile("([A-Za-z_]\\w*)\\s*$").matcher(part.trim());
+                if (name.find()) {
+                    names.add(name.group(1));
+                }
+            }
+        }
+        return names;
+    }
+
+    /** The text of a type declaration up to its body. */
+    private static String headerOf(final SyntaxNode node, final String sourceText) {
+        final SyntaxNode block = firstChild(node, "cs:block-list");
+        int end = node.endOffset;
+        if (block != null) {
+            end = block.startOffset;
+        }
+        if (sourceText == null || end > sourceText.length() || node.startOffset >= end) {
+            return node.text;
+        }
+        return sourceText.substring(node.startOffset, end);
+    }
+
+    /** The names in the type-parameter list a type declares ({@code TUser} in {@code User<TUser>}). */
+    private static Set<String> declaredTypeParameters(final SyntaxNode node) {
+        final Set<String> names = new LinkedHashSet<>();
+        final SyntaxNode identifier = firstChild(node, "cs:id-role");
+        final SyntaxNode list = identifier == null ? null : firstChild(identifier, "cs:type-list-role");
+        if (list != null) {
+            for (final SyntaxNode parameter : list.children) {
+                if ("cs:type-usage-role".equals(parameter.type)) {
+                    final String text = parameter.text.trim();
+                    final Matcher name = Pattern.compile("([A-Za-z_]\\w*)\\s*$").matcher(text);
+                    if (name.find()) {
+                        names.add(name.group(1));
+                    }
+                }
+            }
+        }
+        return names;
+    }
+
+    /**
+     * The offset where a type's {@code where} constraint clauses begin, or the end of its header
+     * when it has none. Type names after that offset are constraints, not base types.
+     */
+    private static int constraintClauseStart(final SyntaxNode node, final String sourceText) {
+        final SyntaxNode block = firstChild(node, "cs:block-list");
+        int headerEnd = node.endOffset;
+        if (block != null) {
+            headerEnd = block.startOffset;
+        }
+        if (sourceText == null || headerEnd > sourceText.length() || node.startOffset >= headerEnd) {
+            return headerEnd;
+        }
+        final String header = withoutCommentsAndStrings(sourceText.substring(node.startOffset, headerEnd));
+        final Matcher where = Pattern.compile("(?<![\\w@])where\\s+[A-Za-z_@]").matcher(header);
+        if (where.find()) {
+            return node.startOffset + where.start();
+        }
+        return headerEnd;
     }
 
     private static boolean isDirectBaseType(final SyntaxNode child, final SyntaxNode parent) {
