@@ -2475,6 +2475,7 @@ function buildMethodModel(node, checker, kindLabel) {
     references: mergeReferences(
       returnTypeObject ? buildReferenceModelsFromType(returnTypeObject, checker, "type") : [],
       writtenAliasReferences(node.type, checker),
+      typeParameterReferences(node, checker),
       bodyDetails.references,
       buildDecoratorReferences(node, checker)
     )
@@ -2537,7 +2538,7 @@ function buildInterfaceModel(node, checker) {
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
     members,
-    references: buildHeritageReferences(node, checker)
+    references: mergeReferences(buildHeritageReferences(node, checker), typeParameterReferences(node, checker))
   };
 }
 
@@ -2722,6 +2723,7 @@ function buildClassModel(node, checker, unresolvedBases) {
     members,
     references: mergeReferences(
       buildHeritageReferences(node, checker),
+      typeParameterReferences(node, checker),
       buildDecoratorReferences(node, checker)
     )
   };
@@ -2816,6 +2818,36 @@ function writtenAliasReferences(typeNode, checker) {
 }
 
 /**
+ * What the constraints of a declaration's type parameters name: `Ctx` in `f<T extends Ctx>`. A
+ * constraint bounds what a caller may pass, so the declaration depends on the type it names.
+ */
+function typeParameterReferences(node, checker) {
+  const references = [];
+  if (!node || !node.typeParameters || state.shallowBody) {
+    return references;
+  }
+  function visit(child) {
+    if (state.ts.isTypeReferenceNode(child) || state.ts.isExpressionWithTypeArguments(child)) {
+      const declared = typeAliasReference(child, checker) || declaredTypeReference(child, checker);
+      if (declared) {
+        references.push(declared);
+      }
+    }
+    state.ts.forEachChild(child, visit);
+  }
+  for (const parameter of node.typeParameters) {
+    if (parameter.constraint) {
+      visit(parameter.constraint);
+      const constraint = checker.getTypeAtLocation(parameter.constraint);
+      if (!(constraint.flags & state.ts.TypeFlags.TypeParameter)) {
+        references.push(...buildReferenceModelsFromType(constraint, checker, "type"));
+      }
+    }
+  }
+  return references;
+}
+
+/**
  * A type alias: the name a module gives a type expression. Its references are the named types the
  * expression is written with, read from the expression itself so that a type nested inside an
  * object literal, a mapped type or a function type is found as well.
@@ -2859,7 +2891,7 @@ function buildTypeAliasModel(node, checker) {
     modifiers: collectModifiers(state.ts, node),
     jsDoc: getJsDoc(node),
     members: [],
-    references: mergeReferences(references)
+    references: mergeReferences(references, typeParameterReferences(node, checker))
   };
 }
 

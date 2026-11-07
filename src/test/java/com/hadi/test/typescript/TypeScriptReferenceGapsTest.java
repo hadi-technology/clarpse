@@ -380,4 +380,23 @@ public class TypeScriptReferenceGapsTest {
         }
         assertFalse(names.toString(), names.stream().anyMatch(name -> name.contains("[") || name.contains("'")));
     }
+
+    @Test
+    public void aTypeParameterConstraintIsAReference() throws Exception {
+        final CompileResult result = compile("/src/generic.ts",
+                "export interface Config { name: string }\n"
+                        + "export type Base = { id: number };\n"
+                        + "export function parse<T extends Config>(value: T): T { return value; }\n"
+                        + "export class Repo<E extends Base> { find<U extends Config>(u: U): U { return u; } }\n"
+                        + "export interface Store<S extends Config> { held: S }\n"
+                        + "export type Wrap<W extends Base> = W[];\n");
+        assertTrue(targets(component(result, "src.generic.parse")).toString(),
+                targets(component(result, "src.generic.parse")).contains("src.generic.Config"));
+        assertTrue(targets(component(result, "src.generic.Repo")).toString(),
+                targets(component(result, "src.generic.Repo")).contains("src.generic.Base"));
+        assertTrue(targets(component(result, "src.generic.Repo.find(U)")).toString(),
+                targets(component(result, "src.generic.Repo.find(U)")).contains("src.generic.Config"));
+        assertTrue(targets(component(result, "src.generic.Store")).contains("src.generic.Config"));
+        assertTrue(targets(component(result, "src.generic.Wrap")).contains("src.generic.Base"));
+    }
 }
