@@ -399,4 +399,24 @@ public class TypeScriptReferenceGapsTest {
         assertTrue(targets(component(result, "src.generic.Store")).contains("src.generic.Config"));
         assertTrue(targets(component(result, "src.generic.Wrap")).contains("src.generic.Base"));
     }
+
+    @Test
+    public void aConstHoldingAFunctionReferencesTheTypesOfItsSignature() throws Exception {
+        final CompileResult result = compile("/src/arrow.ts",
+                "export interface Opts { n: number }\n"
+                        + "export interface Result { ok: boolean }\n"
+                        + "export type Handler = (o: Opts) => Result;\n"
+                        + "export const connect = (c: Opts = { n: 1 }) => c;\n"
+                        + "export const run = ((o: Opts): Result => ({ ok: true })) as Handler;\n"
+                        + "export const cast = (() => ({ ok: true })) as () => Result;\n"
+                        + "export const plain = 3;\n");
+        assertTrue(targets(component(result, "src.arrow.connect")).toString(),
+                targets(component(result, "src.arrow.connect")).contains("src.arrow.Opts"));
+        assertTrue(targets(component(result, "src.arrow.run")).toString(),
+                targets(component(result, "src.arrow.run")).containsAll(Set.of("src.arrow.Handler", "src.arrow.Opts",
+                        "src.arrow.Result")));
+        assertTrue(targets(component(result, "src.arrow.cast")).toString(),
+                targets(component(result, "src.arrow.cast")).contains("src.arrow.Result"));
+        assertFalse(targets(component(result, "src.arrow.plain")).stream().anyMatch(target -> target.startsWith("src.")));
+    }
 }

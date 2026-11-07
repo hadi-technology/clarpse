@@ -1995,12 +1995,56 @@ function buildLocalVariableModel(declaration, checker) {
   };
 }
 
+/**
+ * The types a function value is declared with: its parameters' and its return type, and the type
+ * aliases they are written as. A `const` holding an arrow function, or cast to a function type, is
+ * a function as much as a declaration is, and its signature is what it depends on.
+ */
+function functionValueSignatureReferences(declaration, checker) {
+  const references = [];
+  if (state.shallowBody) {
+    return references;
+  }
+  const ts = state.ts;
+  let type;
+  try {
+    type = checker.getTypeAtLocation(declaration);
+  } catch (err) {
+    return references;
+  }
+  const signatures = type ? checker.getSignaturesOfType(type, ts.SignatureKind.Call) : [];
+  for (const signature of signatures) {
+    for (const parameter of signature.getParameters()) {
+      const parameterType = checker.getTypeOfSymbolAtLocation(parameter, declaration);
+      references.push(...buildReferenceModelsFromType(parameterType, checker, "type"));
+    }
+    references.push(...buildReferenceModelsFromType(checker.getReturnTypeOfSignature(signature), checker, "type"));
+  }
+  // The signature as written: on the function itself, or on the function type it is cast to.
+  let written = declaration.initializer;
+  while (written && (ts.isParenthesizedExpression(written) || ts.isAsExpression(written)
+      || ts.isSatisfiesExpression(written) || ts.isTypeAssertionExpression(written))) {
+    if (ts.isAsExpression(written) || ts.isSatisfiesExpression(written) || ts.isTypeAssertionExpression(written)) {
+      references.push(...writtenAliasReferences(written.type, checker));
+    }
+    written = written.expression;
+  }
+  if (written && (ts.isArrowFunction(written) || ts.isFunctionExpression(written))) {
+    for (const parameter of written.parameters) {
+      references.push(...writtenAliasReferences(parameter.type, checker));
+    }
+    references.push(...writtenAliasReferences(written.type, checker));
+  }
+  return references;
+}
+
 function buildTopLevelVariableModel(declaration, statement, checker) {
   const model = buildLocalVariableModel(declaration, checker);
   if (!model) {
     return null;
   }
   model.kind = "moduleField";
+  model.references = mergeReferences(model.references, functionValueSignatureReferences(declaration, checker));
   model.type = writtenTypeText(declaration) || model.type;
   if (declaration.initializer) {
     // What the initializer calls or constructs, as for a function body, whether the binding holds
