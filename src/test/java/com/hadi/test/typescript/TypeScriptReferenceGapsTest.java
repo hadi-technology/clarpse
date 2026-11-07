@@ -83,4 +83,22 @@ public class TypeScriptReferenceGapsTest {
         assertTrue(imports.toString(), imports.contains("pkg-x"));
         assertTrue(imports.toString(), imports.contains("node:fs"));
     }
+
+    @Test
+    public void aFunctionInAFileThatAlsoDeclaresATypeHoldsTheFilesImports() throws Exception {
+        final CompileResult result = compile("/src/util.ts", UTIL,
+                "/src/mixed.ts", "import { helper } from './util';\n"
+                        + "export class Holder { run() { return helper(); } }\n"
+                        + "export function standalone() { return helper(); }\n"
+                        + "export const answer = helper();\n");
+        assertTrue(component(result, "src.mixed.Holder").imports().contains("src.util.helper"));
+        assertTrue("a function of the file imports what the file does: "
+                        + component(result, "src.mixed.standalone").imports(),
+                component(result, "src.mixed.standalone").imports().contains("src.util.helper"));
+        assertTrue(component(result, "src.mixed.answer").imports().contains("src.util.helper"));
+        assertTrue("a member does not carry them",
+                component(result, "src.mixed.Holder.run()").imports().isEmpty());
+        assertFalse(component(result, "src.mixed.standalone").imports().isEmpty());
+        assertEquals(0, result.failures().size());
+    }
 }

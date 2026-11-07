@@ -70,12 +70,10 @@ final class TypeScriptModelAssembler {
     }
 
     /**
-     * Attaches the file's imports to the types it declares, and to nothing else; or, for a file
-     * declaring no type, to its module-level functions, constants and type aliases.
-     *
-     * <p>Only type components carry them where there are types, matching Java: a field or method
-     * reporting its file's import list as its own is what made {@code imports()} mean a different
-     * thing in each language (issue #156). Members never carry them. An import the TypeScript compiler resolved inside the repository is recorded as
+     * Attaches the file's imports to what it declares at module level: its types, and its functions,
+     * constants and type aliases. Members never carry them: a field or method reporting its file's
+     * import list as its own is what made {@code imports()} mean a different thing in each language
+     * (issue #156). An import the TypeScript compiler resolved inside the repository is recorded as
      * the component name it refers to, so it lines up with the rest of the model; anything else
      * keeps its specifier verbatim rather than being guessed into a path.
      */
@@ -111,21 +109,15 @@ final class TypeScriptModelAssembler {
         final java.util.List<Component> declared = srcModel.components()
                 .filter(component -> sourcePath.equals(component.sourceFile()))
                 .toList();
-        final boolean declaresAType = declared.stream()
-                .anyMatch(component -> component.componentType().isBaseComponent());
-        // A module of functions, constants and type aliases declares no type to carry its imports,
-        // and left them nowhere: what such a file imports is held by each of its module-level
-        // declarations instead, the same way a type of a file holds the file's imports.
+        // A function or constant of a file that also declares types imports what the file imports
+        // just as much as the types do, so it holds them too.
         declared.stream()
-                .filter(component -> carriesFileImports(component, declaresAType))
+                .filter(TypeScriptModelAssembler::carriesFileImports)
                 .forEach(component -> component.setImports(imports));
     }
 
-    private static boolean carriesFileImports(final Component component, final boolean fileDeclaresAType) {
-        if (fileDeclaresAType) {
-            return component.componentType().isBaseComponent();
-        }
-        return isModuleLevelDeclaration(component);
+    private static boolean carriesFileImports(final Component component) {
+        return component.componentType().isBaseComponent() || isModuleLevelDeclaration(component);
     }
 
     private static boolean isModuleLevelDeclaration(final Component component) {
