@@ -2523,29 +2523,51 @@ async function handleGetFileModel(params) {
 //
 // Resolved through the checker rather than by string manipulation on the specifier, so an import
 // that TypeScript itself cannot resolve is reported as external rather than guessed into a path.
+/**
+ * The repository file a module specifier written in the file resolves to, or null where it does
+ * not resolve to one.
+ */
+function resolveImportedFile(specifierNode, specifier, source, checker) {
+  let resolvedFile = null;
+  try {
+    const moduleSymbol = checker.getSymbolAtLocation(specifierNode);
+    const declaration = moduleSymbol && moduleSymbol.declarations && moduleSymbol.declarations[0];
+    if (declaration && declaration.getSourceFile) {
+      const fileName = declaration.getSourceFile().fileName;
+      if (fileName && isInternalFile(fileName)) resolvedFile = fileName;
+    }
+  } catch (err) {
+    resolvedFile = null;
+  }
+  if (!resolvedFile) {
+    // A one-level program does not load what a boundary file imports, and the checker finds no
+    // module behind the argument of a require() call, so it cannot see the module; its path is
+    // still known without loading it.
+    resolvedFile = resolveInternalModule(specifier, source.fileName);
+  }
+  return resolvedFile;
+}
+
 function collectImports(ts, source, checker) {
   const results = [];
   for (const statement of source.statements) {
+    if (ts.isImportEqualsDeclaration(statement)
+        && ts.isExternalModuleReference(statement.moduleReference)
+        && ts.isStringLiteralLike(statement.moduleReference.expression)) {
+      const specifierNode = statement.moduleReference.expression;
+      results.push({
+        module: specifierNode.text,
+        filePath: resolveImportedFile(specifierNode, specifierNode.text, source, checker),
+        symbolName: null,
+        namespace: true
+      });
+      continue;
+    }
     if (!ts.isImportDeclaration(statement) || !statement.moduleSpecifier) continue;
     const specifier = statement.moduleSpecifier.text;
     if (!specifier) continue;
 
-    let resolvedFile = null;
-    try {
-      const moduleSymbol = checker.getSymbolAtLocation(statement.moduleSpecifier);
-      const declaration = moduleSymbol && moduleSymbol.declarations && moduleSymbol.declarations[0];
-      if (declaration && declaration.getSourceFile) {
-        const fileName = declaration.getSourceFile().fileName;
-        if (fileName && isInternalFile(fileName)) resolvedFile = fileName;
-      }
-    } catch (err) {
-      resolvedFile = null;
-    }
-    if (!resolvedFile && state.oneLevel) {
-      // A one-level program does not load what a boundary file imports, so the checker cannot see
-      // the module; its path is still known without loading it.
-      resolvedFile = resolveInternalModule(specifier, source.fileName);
-    }
+    const resolvedFile = resolveImportedFile(statement.moduleSpecifier, specifier, source, checker);
 
     const names = [];
     const clause = statement.importClause;
@@ -2572,7 +2594,40 @@ function collectImports(ts, source, checker) {
       results.push({ module: specifier, filePath: resolvedFile, symbolName: name });
     }
   }
+  collectLoadedModules(ts, source, checker, results);
   return results;
+}
+
+/**
+ * Modules a file loads from inside its code rather than in an import statement: `import("pkg")` and
+ * `require("pkg")`, wherever they appear. Each binds the whole module.
+ */
+function collectLoadedModules(ts, source, checker, results) {
+  const seen = new Set(results.filter((entry) => entry.namespace).map((entry) => entry.module));
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteralLike(node.arguments[0])) {
+      const callee = node.expression;
+      const dynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
+      const requireCall = (ts.isIdentifier(callee) && callee.text === "require")
+        || (ts.isPropertyAccessExpression(callee) && callee.name.text === "resolve"
+          && ts.isIdentifier(callee.expression) && callee.expression.text === "require");
+      if (dynamicImport || requireCall) {
+        const specifierNode = node.arguments[0];
+        const specifier = specifierNode.text;
+        if (specifier && !seen.has(specifier)) {
+          seen.add(specifier);
+          results.push({
+            module: specifier,
+            filePath: resolveImportedFile(specifierNode, specifier, source, checker),
+            symbolName: null,
+            namespace: true
+          });
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
 }
 
 /**
