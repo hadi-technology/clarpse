@@ -338,4 +338,27 @@ public class TypeScriptReferenceGapsTest {
         assertTrue(targets(component(result, "src.use.current")).toString(),
                 targets(component(result, "src.use.current")).contains("src.types.Tracked"));
     }
+
+    @Test
+    public void declarationsNamedInAnExportListAreExported() throws Exception {
+        final CompileResult result = compile("/src/listed.ts",
+                "const a = 1;\nfunction b(): void { }\nclass C { }\ninterface D { x: number }\n"
+                        + "type E = string;\nenum F { A }\nconst hidden = 2;\nconst g = 3;\n"
+                        + "export { a, b, C, D, E, F, g as renamed };\nexport default C;\n");
+        for (final String name : new String[] {"a", "b", "C", "D", "E", "F", "g"}) {
+            assertTrue(name + " is on the module's surface: " + component(result, "src.listed." + name).modifiers(),
+                    component(result, "src.listed." + name).modifiers().contains("export"));
+            assertTrue(name, component(result, "src.listed." + name).modifiers().contains("public"));
+        }
+        assertTrue(component(result, "src.listed.C").modifiers().contains("default"));
+        assertFalse("a declaration the list leaves out is not exported",
+                component(result, "src.listed.hidden").modifiers().contains("export"));
+    }
+
+    @Test
+    public void aReExportFromAnotherModuleDoesNotExportALocalOfTheSameName() throws Exception {
+        final CompileResult result = compile("/src/other.ts", "export const a = 1;\n",
+                "/src/reexport.ts", "const a = 2;\nexport { a as other } from './other';\n");
+        assertFalse(component(result, "src.reexport.a").modifiers().contains("export"));
+    }
 }

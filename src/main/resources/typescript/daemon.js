@@ -2843,6 +2843,47 @@ function buildTypeAliasModel(node, checker) {
   };
 }
 
+/**
+ * Marks the declarations an export list names as exported: `export { a, b as c }` at the end of a
+ * file, and `export default a`. A declaration is on the module's public surface however the export
+ * is written, so it carries the modifiers an inline `export` gives it.
+ */
+function withListedExports(ts, sourceFile, declarations) {
+  const exported = new Set();
+  let defaultName = null;
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement) && !statement.moduleSpecifier && !statement.isTypeOnly
+        && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      for (const element of statement.exportClause.elements) {
+        exported.add((element.propertyName || element.name).text);
+      }
+    } else if (ts.isExportAssignment(statement) && !statement.isExportEquals
+        && ts.isIdentifier(statement.expression)) {
+      exported.add(statement.expression.text);
+      defaultName = statement.expression.text;
+    }
+  }
+  if (!exported.size) {
+    return declarations;
+  }
+  for (const declaration of declarations) {
+    if (!declaration || !exported.has(declaration.name)) {
+      continue;
+    }
+    const modifiers = declaration.modifiers || (declaration.modifiers = []);
+    if (!modifiers.includes("export")) {
+      modifiers.push("export");
+    }
+    if (declaration.name === defaultName && !modifiers.includes("default")) {
+      modifiers.push("default");
+    }
+    if (!modifiers.includes("public")) {
+      modifiers.push("public");
+    }
+  }
+  return declarations;
+}
+
 function collectTopLevelDeclarations(ts, sourceFile, checker, unresolvedBases) {
   const declarations = [];
   sourceFile.forEachChild((node) => {
@@ -2879,7 +2920,7 @@ function collectTopLevelDeclarations(ts, sourceFile, checker, unresolvedBases) {
       }
     }
   });
-  return withoutShadowedAliases(declarations.filter(Boolean));
+  return withoutShadowedAliases(withListedExports(ts, sourceFile, declarations.filter(Boolean)));
 }
 
 /**
