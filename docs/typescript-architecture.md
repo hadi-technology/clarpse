@@ -110,6 +110,21 @@ twice gives the same model:
   cannot name from where it is printed as `import("<path>")`; the path is written as
   `node_modules/extlib/index`, not as an absolute path.
 
+A declaration inside a `declare module "specifier" { ... }` block (an ambient module, or an
+augmentation of the module the specifier names) is a declaration of the file that holds the block:
+it is named like the file's own declarations (`src.types.GlobalProps`), exported, and kept once when
+the file, or an earlier block, already declares the name. Namespaces and `declare global` are not
+read.
+
+A call on an object whose declared type is imported from a package the program cannot read
+(`editor.getBounds()` with `editor: Editor` from `extlib`, not installed) is the reference
+`extlib:Editor.getBounds`, as it is for a package whose declarations can be read. A class extending a
+global of the language's own library (`Error`, `Map`, `EventTarget`, `Array<string>`) records that name
+as its base, also in a program built without a library.
+
+`require("x")` and the function `createRequire(...)` returns (`const load = createRequire(import.meta.url)`)
+load modules alike: both are imports of the file.
+
 Type text the checker renders puts the members of every union in an order of their own (by their
 text, `null` and `undefined` last). The checker orders members by when it created their types, so
 without this the same signature reads differently in programs that hold different files. A type
