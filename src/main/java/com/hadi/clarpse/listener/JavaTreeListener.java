@@ -20,12 +20,17 @@ import com.github.javaparser.ast.body.RecordDeclaration;
 import com.github.javaparser.ast.body.TypeDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AnnotationExpr;
+import com.github.javaparser.ast.expr.ArrayInitializerExpr;
 import com.github.javaparser.ast.expr.ClassExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
+import com.github.javaparser.ast.expr.MarkerAnnotationExpr;
+import com.github.javaparser.ast.expr.MemberValuePair;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
+import com.github.javaparser.ast.expr.NormalAnnotationExpr;
 import com.github.javaparser.ast.expr.SimpleName;
+import com.github.javaparser.ast.expr.SingleMemberAnnotationExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.nodeTypes.NodeWithTypeParameters;
 import com.github.javaparser.ast.stmt.CatchClause;
@@ -964,6 +969,39 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             // Fall back to the name as written; an unresolvable annotation is still a real fact.
         }
         return writtenName;
+    }
+
+    @Override
+    public final void visit(final MarkerAnnotationExpr ctx, final Object arg) {
+        recordNestedAnnotation(ctx);
+        super.visit(ctx, arg);
+    }
+
+    @Override
+    public final void visit(final SingleMemberAnnotationExpr ctx, final Object arg) {
+        recordNestedAnnotation(ctx);
+        super.visit(ctx, arg);
+    }
+
+    @Override
+    public final void visit(final NormalAnnotationExpr ctx, final Object arg) {
+        recordNestedAnnotation(ctx);
+        super.visit(ctx, arg);
+    }
+
+    /**
+     * An annotation inside another annotation's arguments -- {@code @State(storages = @Storage("x"))}
+     * -- is not applied to the declaration, so it is recorded as a plain type reference on the
+     * component that carries the outer annotation.
+     */
+    private void recordNestedAnnotation(final AnnotationExpr annotation) {
+        final Node parent = annotation.getParentNode().orElse(null);
+        final boolean inArguments = parent instanceof MemberValuePair || parent instanceof ArrayInitializerExpr
+                || parent instanceof SingleMemberAnnotationExpr;
+        if (inArguments && !componentStack.isEmpty()) {
+            ParseUtil.insertCmpRef(componentStack.peek(),
+                    new SimpleTypeReference(resolveAnnotationName(annotation)), this.componentStack);
+        }
     }
 
     @Override
