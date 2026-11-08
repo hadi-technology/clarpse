@@ -7,6 +7,7 @@ import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.PackageDeclaration;
 import com.github.javaparser.ast.body.AnnotationDeclaration;
 import com.github.javaparser.ast.body.AnnotationMemberDeclaration;
+import com.github.javaparser.ast.body.BodyDeclaration;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.CompactConstructorDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
@@ -16,6 +17,7 @@ import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.RecordDeclaration;
+import com.github.javaparser.ast.body.TypeDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.ClassExpr;
@@ -301,6 +303,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             recordAnnotations(ctx.getAnnotations(), cmp);
             cmp.setComponentName(ParseUtil.generateComponentName(ctx.getNameAsString(),
                     componentStack));
+            declareMemberTypes(ctx, cmp);
             cmp.setName(ctx.getNameAsString());
             cmp.setImports(currentImports);
             if (ctx.getComment().isPresent()) {
@@ -384,6 +387,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             // A record is modelled as a class; the modifier is what tells it from a final class.
             cmp.insertAccessModifier("record");
             cmp.setComponentName(ParseUtil.generateComponentName(ctx.getNameAsString(), componentStack));
+            declareMemberTypes(ctx, cmp);
             cmp.setName(ctx.getNameAsString());
             cmp.setImports(currentImports);
             if (ctx.getComment().isPresent()) {
@@ -595,6 +599,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         if (!ParseUtil.componentStackContainsMethod(componentStack)) {
             final Component cmp = createComponent(ctx, ComponentType.ANNOTATION);
             cmp.setComponentName(ParseUtil.generateComponentName(ctx.getNameAsString(), componentStack));
+            declareMemberTypes(ctx, cmp);
             cmp.setName(ctx.getNameAsString());
             cmp.setImports(currentImports);
             cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
@@ -645,6 +650,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             final Component enumCmp = createComponent(ctx, ComponentType.ENUM);
             enumCmp.setComponentName(ParseUtil.generateComponentName(ctx.getNameAsString(),
                     componentStack));
+            declareMemberTypes(ctx, enumCmp);
             enumCmp.setImports(currentImports);
             enumCmp.setName(ctx.getNameAsString());
             enumCmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
@@ -1354,11 +1360,26 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
 
     private final Map<String, Boolean> knownTypes = new HashMap<>();
 
+    /** Qualified names of the member types of every type entered so far, declared before they are visited. */
+    private final Set<String> declaredMemberTypes = new HashSet<>();
+
+    /**
+     * A member type is in scope in the whole body of its enclosing type, including the members above
+     * its declaration, so the enclosing type announces its member types when it is entered.
+     */
+    private void declareMemberTypes(final TypeDeclaration<?> declaration, final Component enclosing) {
+        for (final BodyDeclaration<?> member : declaration.getMembers()) {
+            if (member instanceof TypeDeclaration) {
+                declaredMemberTypes.add(enclosing.uniqueName() + "." + ((TypeDeclaration<?>) member).getNameAsString());
+            }
+        }
+    }
+
     /** Whether a type of the given qualified name is in the parse path or visible to the type solver. */
     private boolean typeExists(final String name) {
         final boolean parsed = srcModel.component(name)
                 .map(found -> found.componentType().isBaseComponent()).orElse(false);
-        return parsed || knownTypes.computeIfAbsent(name, key -> typeSolver.tryToSolveType(key).isSolved());
+        return parsed || declaredMemberTypes.contains(name) || knownTypes.computeIfAbsent(name, key -> typeSolver.tryToSolveType(key).isSolved());
     }
 
     /**
