@@ -17,6 +17,11 @@ public final class FailureCode {
     public static final int DAEMON_ERROR = 2004;
     public static final int FILE_EXCLUDED = 2005;
     public static final int RESOLUTION_FAILED = 2006;
+    /**
+     * The file was not analysed because the time allowed for it, or for the language's whole
+     * analysis, ran out. Nothing is known about what it declares.
+     */
+    public static final int TIME_BUDGET_EXCEEDED = 2007;
 
     private FailureCode() {
     }

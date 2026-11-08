@@ -204,14 +204,23 @@ public class QualifiedTypeReferenceTest {
     }
 
     /**
-     * In an expression a qualified name outside the parse path cannot be told apart from a chain of
-     * field accesses, so it names no type; before, the call became a call on
-     * {@code com.example.app.Util}.
+     * In an expression a qualified name outside the parse path is a type when it has the shape of
+     * one -- two lowercase package segments, then a capitalised segment, with no variable of the
+     * first segment's name -- and is recorded as written, never under the current package; before,
+     * the call became a call on {@code com.example.app.Util}.
      */
     @Test
-    public void anUnresolvableQualifiedNameInAnExpressionInventsNothing() throws Exception {
+    public void anUnresolvableQualifiedNameInAnExpressionIsKeptAsWritten() throws Exception {
         final OOPSourceCodeModel model = model(
                 "public class Client { int m() { org.nowhere.Util.run(); return org.nowhere.Util.LIMIT; } }\n");
+        assertEquals(Set.of("org.nowhere.Util"), refs(model));
+    }
+
+    /** One lowercase segment is as likely a variable's field as a package, so it names no type. */
+    @Test
+    public void aSingleLowercaseSegmentBeforeATypeNameInventsNothing() throws Exception {
+        final OOPSourceCodeModel model = model(
+                "public class Client { int m() { nowhere.Util.run(); return nowhere.Util.LIMIT; } }\n");
         assertEquals(Set.of(), refs(model));
     }
 

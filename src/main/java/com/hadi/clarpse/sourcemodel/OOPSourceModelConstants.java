@@ -217,6 +217,10 @@ public final class OOPSourceModelConstants {
         ACCESS_MODIFIER_MAP.put(AccessModifiers.VIRTUAL, "virtual");
         ACCESS_MODIFIER_MAP.put(AccessModifiers.OVERRIDE, "override");
         ACCESS_MODIFIER_MAP.put(AccessModifiers.UNSAFE, "unsafe");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.REQUIRED, "required");
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.REF, "ref");
+        // Java
+        ACCESS_MODIFIER_MAP.put(AccessModifiers.RECORD, "record");
         // C# and TypeScript
         ACCESS_MODIFIER_MAP.put(AccessModifiers.ASYNC, "async");
         ACCESS_MODIFIER_MAP.put(AccessModifiers.CONST, "const");
@@ -310,7 +314,7 @@ public final class OOPSourceModelConstants {
         INTERNAL("~"), PARTIAL(""), READONLY(""), VIRTUAL(""), OVERRIDE(""), UNSAFE(""),
         ASYNC(""), CONST(""), EXPORT(""), DECLARE(""), LET(""), VAR(""), GET(""), SET(""),
         OPEN(""), DATA(""), INNER(""), COMPANION(""), VALUE(""), LATEINIT(""), SUSPEND(""), INLINE(""),
-        OPERATOR(""), INFIX(""), TAILREC(""), EXTERNAL(""), EXPECT(""), ACTUAL("");
+        OPERATOR(""), INFIX(""), TAILREC(""), EXTERNAL(""), EXPECT(""), ACTUAL(""), REQUIRED(""), RECORD(""), REF("");
 
         private String umlClassDigramSymbol = null;
 
