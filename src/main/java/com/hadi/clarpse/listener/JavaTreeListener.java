@@ -29,6 +29,7 @@ import com.github.javaparser.ast.expr.MemberValuePair;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.NormalAnnotationExpr;
+import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.SimpleName;
 import com.github.javaparser.ast.expr.SingleMemberAnnotationExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
@@ -243,6 +244,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         final String fullImportName = ctx.getNameAsString().trim().replaceAll(";", "");
         final String shortImportName = ctx.getName().getId().trim().replaceAll(";", "");
         currentImports.add(fullImportName);
+        hasStaticImport |= ctx.isStatic();
         // An on-demand import names a package, not a type, so it cannot go in the short-name map:
         // JavaParser reports `import a.*;` as name "a", which would record the useless entry
         // a -> a and leave every type it brings into scope unresolvable. `resolveType` searches
@@ -1494,7 +1496,8 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         }
         // A first segment that is not a package root anything here knows could as well be a field
         // inherited from a type the solver cannot see, and then no type is named.
-        if (!isKnownPackageRoot(dottedName.substring(0, dottedName.indexOf('.')))) {
+        if (!isKnownPackageRoot(dottedName.substring(0, dottedName.indexOf('.')))
+                && !everyVisibleValueIsKnown(access)) {
             return null;
         }
         // A type of the parse path further in the name is the one it names, and is reached when
@@ -1514,6 +1517,35 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         }
         return String.join(".", Arrays.copyOfRange(segments, 0, typeSegment + 1));
     }
+
+    /**
+     * Whether nothing in scope at the access could be a value named by its first segment other than
+     * what {@code namesAValue} already looked at: no static import brings in unseen members, and every
+     * type the access sits in has supertypes the type solver can list in full, so no field can be
+     * inherited from a type this parse cannot see.
+     */
+    private boolean everyVisibleValueIsKnown(final FieldAccessExpr access) {
+        if (hasStaticImport) {
+            return false;
+        }
+        Node current = access;
+        while (current != null) {
+            try {
+                if (current instanceof TypeDeclaration) {
+                    ((TypeDeclaration<?>) current).resolve().getAllAncestors();
+                } else if (current instanceof ObjectCreationExpr
+                        && ((ObjectCreationExpr) current).getAnonymousClassBody().isPresent()) {
+                    ((ObjectCreationExpr) current).getType().resolve();
+                }
+            } catch (final RuntimeException unseen) {
+                return false;
+            }
+            current = current.getParentNode().orElse(null);
+        }
+        return true;
+    }
+
+    private boolean hasStaticImport;
 
     private static final Set<String> PACKAGE_ROOTS = Set.of(
             "com", "org", "net", "io", "edu", "gov", "java", "javax", "jakarta", "android", "androidx",
