@@ -141,14 +141,11 @@ final class CSharpModelAssembler {
                 continue;
             }
             for (final CSharpModel.CSharpMemberModel member : typeModel.members) {
-                if (!"method".equals(member.kind) || member.parameters.isEmpty()) {
+                final String receiverType = extendedTypeOf(member);
+                if (receiverType == null) {
                     continue;
                 }
-                final CSharpModel.CSharpParameterModel receiver = member.parameters.get(0);
-                if (!receiver.extensionReceiver || receiver.declaredType == null) {
-                    continue;
-                }
-                final Resolution extendedType = typeIndex.resolveType(receiver.declaredType, typeModel, member);
+                final Resolution extendedType = typeIndex.resolveType(receiverType, typeModel, member);
                 if (extendedType == null) {
                     continue;
                 }
@@ -168,6 +165,21 @@ final class CSharpModelAssembler {
                 model.insertComponent(component);
             }
         }
+    }
+
+    /**
+     * The type a member extends: the type of the receiver parameter of an extension method, or the type
+     * of the {@code extension} block a member was declared in. Null for a member that extends nothing.
+     */
+    private static String extendedTypeOf(final CSharpModel.CSharpMemberModel member) {
+        if (member.extendedType != null) {
+            return member.extendedType;
+        }
+        if ("method".equals(member.kind) && !member.parameters.isEmpty()
+                && member.parameters.get(0).extensionReceiver) {
+            return member.parameters.get(0).declaredType;
+        }
+        return null;
     }
 
     /**
@@ -440,6 +452,8 @@ final class CSharpModelAssembler {
         attachTypeReferences(component, memberModel.simpleTypeUsages, typeIndex, ownerType, memberModel,
                 "method".equals(memberModel.kind) || "constructor".equals(memberModel.kind));
         attachStaticReceivers(component, memberModel, typeIndex, ownerType);
+        // The operand of typeof is a type whatever else shares its name, so no member-access filter.
+        attachTypeReferences(component, memberModel.typeofOperands, typeIndex, ownerType, memberModel, false);
         attachMemberReferences(component, memberModel.memberUsages, typeIndex, ownerType);
         if (component.componentType().isMethodComponent()) {
             component.setCyclo(memberModel.cyclo);
@@ -452,8 +466,6 @@ final class CSharpModelAssembler {
     private static Component buildMemberComponent(final CSharpModel.CSharpMemberModel memberModel,
                                                   final CSharpModel.CSharpTypeModel ownerType) {
         final OOPSourceModelConstants.ComponentType componentType = mapMemberComponent(memberModel.kind);
-        // The operand of typeof is a type whatever else shares its name, so no member-access filter.
-        attachTypeReferences(component, memberModel.typeofOperands, typeIndex, ownerType, memberModel, false);
         if (componentType == null || memberModel.name == null || memberModel.name.isEmpty()) {
             return null;
         }

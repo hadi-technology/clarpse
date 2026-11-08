@@ -700,6 +700,8 @@ final class CSharpFileParser {
             for (final SyntaxNode child : blockNode.children) {
                 if (TYPE_DECLARATIONS.contains(child.type)) {
                     typeModel.nestedTypes.add(parseType(child, fileModel, namespaceName, typeModel.componentName));
+                } else if (isExtensionBlock(child, typeModel)) {
+                    typeModel.members.addAll(parseExtensionBlock(child, fileModel, typeModel));
                 } else if (MEMBER_DECLARATIONS.contains(child.type)) {
                     typeModel.members.addAll(parseMember(child, fileModel, typeModel));
                 }
@@ -740,6 +742,94 @@ final class CSharpFileParser {
             }
         }
         return typeModel;
+    }
+
+    private static final Pattern GENERIC_EXTENSION_BLOCK = Pattern.compile("^extension\\s*<");
+
+    /**
+     * Whether a node of a type's body is a C# 14 {@code extension(T x) { ... }} block, which the syntax
+     * parser reads as a constructor named {@code extension}, or, when it has type parameters, as a
+     * statement around a call.
+     */
+    private static boolean isExtensionBlock(final SyntaxNode node, final CSharpModel.CSharpTypeModel ownerType) {
+        if ("extension".equals(ownerType.name)) {
+            return false;
+        }
+        if ("cs:ctor-declaration".equals(node.type)) {
+            return "extension".equals(firstIdentifier(node)) && firstChild(node, "cs:block-list") != null;
+        }
+        return "cs:kops-statement".equals(node.type) && GENERIC_EXTENSION_BLOCK.matcher(node.text).find()
+                && firstChild(node, "cs:fun-call-role") != null && firstChild(node, "cs:block-list") != null;
+    }
+
+    /**
+     * The members of an {@code extension(T x) { ... }} block, as members of the static class that holds
+     * the block, modelled the way {@code static R M(this T x, ...)} is: an instance method takes the
+     * receiver as its first parameter, flagged as the extension receiver; any other member records the
+     * type the block extends. The type parameters the block declares are the members' own.
+     */
+    private static List<CSharpModel.CSharpMemberModel> parseExtensionBlock(
+            final SyntaxNode block, final CSharpModel.CSharpFileModel fileModel,
+            final CSharpModel.CSharpTypeModel ownerType) {
+        final Set<String> blockTypeParameters = new LinkedHashSet<>();
+        SyntaxNode receiverNode = null;
+        SyntaxNode parameterList = firstChild(block, "cs:parent-list");
+        if (parameterList == null) {
+            final SyntaxNode call = firstChild(block, "cs:fun-call-role");
+            if (call == null) {
+                return new ArrayList<>();
+            }
+            parameterList = firstChild(call, "cs:parent-list");
+            final SyntaxNode typeList = firstChild(call, "cs:type-list-role");
+            if (typeList != null) {
+                for (final SyntaxNode parameter : typeList.children) {
+                    blockTypeParameters.add(parameter.text.trim());
+                }
+            }
+        }
+        if (parameterList != null) {
+            for (final SyntaxNode child : parameterList.children) {
+                if ("cs:parameter-declaration".equals(child.type) || "cs:var-def-statement".equals(child.type)) {
+                    receiverNode = child;
+                    break;
+                }
+            }
+        }
+        final List<CSharpModel.CSharpMemberModel> members = new ArrayList<>();
+        final SyntaxNode body = firstChild(block, "cs:block-list");
+        if (receiverNode == null || body == null) {
+            return members;
+        }
+        final String receiverType = trimTypeText(firstDirectChildText(receiverNode, "cs:type-usage-role"));
+        if (receiverType == null || receiverType.isEmpty()) {
+            return members;
+        }
+        String receiverName = firstIdentifier(receiverNode);
+        if (receiverName == null || receiverName.isEmpty()) {
+            receiverName = "receiver";
+        }
+        for (final SyntaxNode child : body.children) {
+            if (!MEMBER_DECLARATIONS.contains(child.type)) {
+                continue;
+            }
+            for (final CSharpModel.CSharpMemberModel member : parseMember(child, fileModel, ownerType)) {
+                member.typeParameters.addAll(blockTypeParameters);
+                if ("method".equals(member.kind) && !member.modifiers.contains("static")) {
+                    final CSharpModel.CSharpParameterModel receiver = new CSharpModel.CSharpParameterModel();
+                    receiver.name = receiverName;
+                    receiver.declaredType = receiverType;
+                    receiver.extensionReceiver = true;
+                    receiver.modifiers = parseModifiers(receiverNode.text);
+                    receiver.implementationHash = implementationHash(receiverNode.text);
+                    member.parameters.add(0, receiver);
+                } else {
+                    member.extendedType = receiverType;
+                    member.simpleTypeUsages.add(receiverType);
+                }
+                members.add(member);
+            }
+        }
+        return members;
     }
 
     private static List<CSharpModel.CSharpMemberModel> parseMember(final SyntaxNode node,
@@ -999,6 +1089,18 @@ final class CSharpFileParser {
             }
         }
         collectStaticReceivers(blockText(block, sourceText), member);
+        collectTypeofOperands(blockText(block, sourceText), member);
+    }
+
+    private static final Pattern TYPEOF_OPERAND_PATTERN =
+            Pattern.compile("(?<![\\w.@])typeof\\s*\\(\\s*([^()]+?)\\s*\\)");
+
+    /** Records the operand of every {@code typeof} outside comments and string literals. */
+    private static void collectTypeofOperands(final String text, final CSharpModel.CSharpMemberModel member) {
+        final Matcher matcher = TYPEOF_OPERAND_PATTERN.matcher(withoutCommentsAndStrings(text));
+        while (matcher.find()) {
+            member.typeofOperands.add(matcher.group(1));
+        }
     }
 
     /**
@@ -1089,18 +1191,6 @@ final class CSharpFileParser {
             out.append(' ');
         }
     }
-        collectTypeofOperands(blockText(block, sourceText), member);
-    }
-
-    private static final Pattern TYPEOF_OPERAND_PATTERN =
-            Pattern.compile("(?<![\\w.@])typeof\\s*\\(\\s*([^()]+?)\\s*\\)");
-
-    /** Records the operand of every {@code typeof} outside comments and string literals. */
-    private static void collectTypeofOperands(final String text, final CSharpModel.CSharpMemberModel member) {
-        final Matcher matcher = TYPEOF_OPERAND_PATTERN.matcher(withoutCommentsAndStrings(text));
-        while (matcher.find()) {
-            member.typeofOperands.add(matcher.group(1));
-        }
 
     /** The index just past the literal that opens at {@code start}. */
     private static int literalEnd(final String text, final int start, final boolean verbatim) {

@@ -206,6 +206,11 @@ final class CSharpModel {
         Map<String, String> usingAliases = new LinkedHashMap<>();
         boolean inferredType;
         /**
+         * For a member declared in a C# 14 {@code extension(T x)} block that has no receiver parameter of
+         * its own -- a property, a field, a static member -- the type the block extends, as written.
+         */
+        String extendedType;
+        /**
          * For a {@code var} local initialised from a member access -- {@code a.Member},
          * {@code a?.Method()}, {@code a.B.C} -- the accessed names in order, a name that is called
          * ending in {@code ()}. The first is the receiver; empty for any other local.
