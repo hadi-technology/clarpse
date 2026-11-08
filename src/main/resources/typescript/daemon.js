@@ -1731,6 +1731,44 @@ function writtenTypeArguments(type, depth) {
   return found;
 }
 
+// The classes the language's own library declares as globals, which a heritage clause can name.
+const LIBRARY_GLOBAL_CLASSES = new Set([
+  "Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError",
+  "AggregateError", "Map", "Set", "WeakMap", "WeakSet", "WeakRef", "Array", "Promise", "Date",
+  "RegExp", "Object", "Function", "String", "Number", "Boolean", "EventTarget", "Event",
+  "CustomEvent", "ArrayBuffer", "DataView", "Int8Array", "Uint8Array", "Uint8ClampedArray",
+  "Int16Array", "Uint16Array", "Int32Array", "Uint32Array", "Float32Array", "Float64Array",
+  "BigInt64Array", "BigUint64Array", "AbortController", "AbortSignal", "URL", "URLSearchParams",
+  "Request", "Response", "Headers", "HTMLElement", "Element", "Node"
+]);
+
+/**
+ * The name of the library global a heritage clause extends, or null. A program built without a
+ * library (a repository with no config, or one whose config cannot be read) has no declaration for
+ * `Error`, which then reads as `any`; and a library generic read through its type (`Array<string>`)
+ * names its element type. The name written is the base in both, so long as the name is not one the
+ * program declares itself.
+ */
+function libraryBaseName(typeNode, checker) {
+  const ts = state.ts;
+  if (!ts.isExpressionWithTypeArguments(typeNode) || !ts.isIdentifier(typeNode.expression)
+      || !LIBRARY_GLOBAL_CLASSES.has(typeNode.expression.text)) {
+    return null;
+  }
+  let symbol;
+  try {
+    symbol = checker.getSymbolAtLocation(typeNode.expression);
+  } catch (err) {
+    return null;
+  }
+  const declarations = symbol && symbol.declarations ? symbol.declarations : [];
+  if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
+    return null;
+  }
+  const ownDeclaration = declarations.some((declaration) => isInternalFile(declaration.getSourceFile().fileName));
+  return ownDeclaration ? null : typeNode.expression.text;
+}
+
 /**
  * The references a heritage clause makes. Only the type named in the clause is extended or
  * implemented; the types written as its type arguments (`B<C>`) are ordinary references.
@@ -1743,6 +1781,14 @@ function buildHeritageReferences(node, checker) {
   for (const clause of node.heritageClauses) {
     const kind = clause.token === state.ts.SyntaxKind.ExtendsKeyword ? "extends" : "implements";
     for (const typeNode of clause.types) {
+      const libraryBase = libraryBaseName(typeNode, checker);
+      if (libraryBase) {
+        references.push(externalReference(kind, libraryBase, false));
+        for (const argument of typeNode.typeArguments || []) {
+          references.push(...buildReferenceModelsFromType(checker.getTypeAtLocation(argument), checker, "type"));
+        }
+        continue;
+      }
       const type = checker.getTypeAtLocation(typeNode);
       references.push(...buildReferenceModelsFromType(type, checker, kind, true));
       const importedBase = state.ts.isExpressionWithTypeArguments(typeNode)
