@@ -1089,6 +1089,18 @@ final class CSharpFileParser {
             out.append(' ');
         }
     }
+        collectTypeofOperands(blockText(block, sourceText), member);
+    }
+
+    private static final Pattern TYPEOF_OPERAND_PATTERN =
+            Pattern.compile("(?<![\\w.@])typeof\\s*\\(\\s*([^()]+?)\\s*\\)");
+
+    /** Records the operand of every {@code typeof} outside comments and string literals. */
+    private static void collectTypeofOperands(final String text, final CSharpModel.CSharpMemberModel member) {
+        final Matcher matcher = TYPEOF_OPERAND_PATTERN.matcher(withoutCommentsAndStrings(text));
+        while (matcher.find()) {
+            member.typeofOperands.add(matcher.group(1));
+        }
 
     /** The index just past the literal that opens at {@code start}. */
     private static int literalEnd(final String text, final int start, final boolean verbatim) {

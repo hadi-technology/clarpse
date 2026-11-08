@@ -452,6 +452,8 @@ final class CSharpModelAssembler {
     private static Component buildMemberComponent(final CSharpModel.CSharpMemberModel memberModel,
                                                   final CSharpModel.CSharpTypeModel ownerType) {
         final OOPSourceModelConstants.ComponentType componentType = mapMemberComponent(memberModel.kind);
+        // The operand of typeof is a type whatever else shares its name, so no member-access filter.
+        attachTypeReferences(component, memberModel.typeofOperands, typeIndex, ownerType, memberModel, false);
         if (componentType == null || memberModel.name == null || memberModel.name.isEmpty()) {
             return null;
         }

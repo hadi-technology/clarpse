@@ -198,6 +198,8 @@ final class CSharpModel {
          * denotes a type, or a type followed by members.
          */
         List<String> staticReceivers = new ArrayList<>();
+        /** The operands of {@code typeof} in the member's body or initializer; each is a type as written. */
+        List<String> typeofOperands = new ArrayList<>();
         List<String> memberUsages = new ArrayList<>();
         Set<String> imports = new LinkedHashSet<>();
         /** The using aliases of the file that declares this member, which a partial type's other parts lack. */
