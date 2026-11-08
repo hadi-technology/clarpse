@@ -2249,6 +2249,44 @@ function importedFrom(symbol) {
   return requiredModule(node.initializer);
 }
 
+const requireAliasCache = new WeakMap();
+
+/**
+ * The names a file binds to a `require` function made by `createRequire(...)`, which is how a module
+ * file loads CommonJS: `const require2 = createRequire(import.meta.url)`.
+ */
+function requireAliasesOf(sourceFile) {
+  const ts = state.ts;
+  let aliases = requireAliasCache.get(sourceFile);
+  if (aliases) {
+    return aliases;
+  }
+  aliases = new Set();
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+        && ts.isCallExpression(node.initializer)) {
+      const callee = node.initializer.expression;
+      if ((ts.isIdentifier(callee) && callee.text === "createRequire")
+          || (ts.isPropertyAccessExpression(callee) && callee.name.text === "createRequire")) {
+        aliases.add(node.name.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  requireAliasCache.set(sourceFile, aliases);
+  return aliases;
+}
+
+/** Whether a callee is `require`, or a function `createRequire` made in the same file. */
+function isRequireFunction(callee) {
+  const ts = state.ts;
+  if (!ts.isIdentifier(callee)) {
+    return false;
+  }
+  return callee.text === "require" || requireAliasesOf(callee.getSourceFile()).has(callee.text);
+}
+
 /** The module `require("x")` or `(await) import("x")` loads, whatever wraps it, or null. */
 function requiredModule(expression) {
   const ts = state.ts;
@@ -2261,7 +2299,7 @@ function requiredModule(expression) {
       && ts.isStringLiteralLike(node.arguments[0])) {
     const callee = node.expression;
     if (callee.kind === ts.SyntaxKind.ImportKeyword
-        || (ts.isIdentifier(callee) && callee.text === "require")) {
+        || isRequireFunction(callee)) {
       return node.arguments[0].text;
     }
   }
@@ -3600,7 +3638,7 @@ function collectLoadedModules(ts, source, checker, results) {
     if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteralLike(node.arguments[0])) {
       const callee = node.expression;
       const dynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
-      const requireCall = (ts.isIdentifier(callee) && callee.text === "require")
+      const requireCall = isRequireFunction(callee)
         || (ts.isPropertyAccessExpression(callee) && callee.name.text === "resolve"
           && ts.isIdentifier(callee.expression) && callee.expression.text === "require");
       if (dynamicImport || requireCall) {
