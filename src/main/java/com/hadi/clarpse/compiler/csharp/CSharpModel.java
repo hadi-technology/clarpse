@@ -203,6 +203,12 @@ final class CSharpModel {
         /** The using aliases of the file that declares this member, which a partial type's other parts lack. */
         Map<String, String> usingAliases = new LinkedHashMap<>();
         boolean inferredType;
+        /**
+         * For a {@code var} local initialised from a member access -- {@code a.Member},
+         * {@code a?.Method()}, {@code a.B.C} -- the accessed names in order, a name that is called
+         * ending in {@code ()}. The first is the receiver; empty for any other local.
+         */
+        List<String> initializerAccess = new ArrayList<>();
     }
 
     static final class CSharpParameterModel {

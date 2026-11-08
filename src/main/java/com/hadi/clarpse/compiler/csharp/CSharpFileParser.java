@@ -885,10 +885,89 @@ final class CSharpFileParser {
                         null
                 );
                 local.inferredType = inferred;
+                if (!inferred && (declaredType == null || declaredType.isEmpty()
+                        || "var".equals(trimTypeText(declaredType)))) {
+                    local.initializerAccess = initializerAccess(descendant.text, localName);
+                }
                 locals.add(local);
             }
         }
         return locals;
+    }
+
+    private static final Pattern VAR_INITIALIZER_PATTERN = Pattern.compile(
+            "\\bvar\\s+(\\w+)\\s*=\\s*([^=][\\s\\S]*?);?\\s*$");
+
+    /**
+     * The names a {@code var} declaration's initializer reads when the initializer is nothing but
+     * a receiver and member accesses, {@code ?.} included: {@code context?.Request} is
+     * {@code [context, Request]} and {@code maker.Make()} is {@code [maker, Make()]}. Anything else --
+     * an operator, a cast, a generic call, an {@code await}, a string in the arguments -- gives an empty
+     * list, because the type of such an expression is not the type of a member.
+     */
+    static List<String> initializerAccess(final String declarationText, final String localName) {
+        final Matcher matcher = VAR_INITIALIZER_PATTERN.matcher(declarationText);
+        if (!matcher.find() || !matcher.group(1).equals(localName)) {
+            return new ArrayList<>();
+        }
+        final String text = matcher.group(2).trim();
+        final List<String> names = new ArrayList<>();
+        int i = 0;
+        final int n = text.length();
+        while (i < n) {
+            final int start = i;
+            if (!Character.isJavaIdentifierStart(text.charAt(i))) {
+                return new ArrayList<>();
+            }
+            while (i < n && Character.isJavaIdentifierPart(text.charAt(i))) {
+                i += 1;
+            }
+            String name = text.substring(start, i);
+            if (i < n && text.charAt(i) == '(') {
+                if (names.isEmpty()) {
+                    return new ArrayList<>();
+                }
+                int depth = 0;
+                int j = i;
+                for (; j < n; j++) {
+                    final char c = text.charAt(j);
+                    if (c == '"' || c == '\'') {
+                        return new ArrayList<>();
+                    }
+                    if (c == '(') {
+                        depth += 1;
+                    } else if (c == ')') {
+                        depth -= 1;
+                        if (depth == 0) {
+                            break;
+                        }
+                    }
+                }
+                if (depth != 0) {
+                    return new ArrayList<>();
+                }
+                name = name + "()";
+                i = j + 1;
+            }
+            names.add(name);
+            if (i == n) {
+                break;
+            }
+            if (text.startsWith("?.", i)) {
+                i += 2;
+            } else if (text.charAt(i) == '.') {
+                i += 1;
+            } else {
+                return new ArrayList<>();
+            }
+            if (i >= n) {
+                return new ArrayList<>();
+            }
+        }
+        if (names.size() < 2) {
+            return new ArrayList<>();
+        }
+        return names;
     }
 
     private static void collectBodyRefs(final SyntaxNode block,

@@ -421,11 +421,18 @@ final class CSharpModelAssembler {
                 model.insertComponent(paramComponent);
                 ParseUtil.copyRefsToParents(paramComponent, stack);
             }
+            final Map<CSharpModel.CSharpMemberModel, WrittenType> inferred =
+                    inferLocalTypes(memberModel, ownerType, typeIndex);
             for (final CSharpModel.CSharpMemberModel localModel : memberModel.locals) {
                 final Component localComponent = buildLocalComponent(localModel, ownerType, component);
                 ParseUtil.pointParentsToGivenChild(localComponent, stack);
                 attachTypeReferences(localComponent, singletonType(localModel.declaredType),
                         typeIndex, ownerType, memberModel, false);
+                final WrittenType fromMember = inferred.get(localModel);
+                if (fromMember != null) {
+                    attachTypeReferences(localComponent, singletonType(fromMember.text()),
+                            typeIndex, fromMember.scope(), fromMember.member(), false);
+                }
                 model.insertComponent(localComponent);
                 ParseUtil.copyRefsToParents(localComponent, stack);
             }
@@ -761,6 +768,164 @@ final class CSharpModelAssembler {
         return false;
     }
 
+    /** A type as written in a declaration, with the type and member whose scope the name is read in. */
+    private record WrittenType(String text, CSharpModel.CSharpTypeModel scope, CSharpModel.CSharpMemberModel member) {
+    }
+
+    /** A member found on a type or on a base type of it, with the type that declares it. */
+    private record FoundMember(CSharpModel.CSharpMemberModel member, CSharpModel.CSharpTypeModel declaring) {
+    }
+
+    private static final Set<String> NOT_A_TYPE_WORD = Set.of("return", "throw", "else", "in", "case", "yield",
+            "await", "new", "is", "as", "not", "and", "or", "when", "do", "goto", "using", "lock", "typeof",
+            "nameof", "default", "ref", "out");
+
+    /**
+     * The type a {@code var} local takes from the member it is initialised from: the declared type of
+     * a field or property, the return type of a method, followed through each member of a chain and
+     * through locals that were themselves inferred. A local whose initializer reads a name that cannot
+     * be tied to exactly one declaration, or a member that is not declared once on the receiver's type
+     * or a base of it in the parse, is left without a type.
+     */
+    private static Map<CSharpModel.CSharpMemberModel, WrittenType> inferLocalTypes(
+            final CSharpModel.CSharpMemberModel memberModel,
+            final CSharpModel.CSharpTypeModel ownerType,
+            final TypeIndex typeIndex) {
+        final Map<CSharpModel.CSharpMemberModel, WrittenType> inferred = new java.util.IdentityHashMap<>();
+        for (final CSharpModel.CSharpMemberModel local : memberModel.locals) {
+            if (local.initializerAccess.isEmpty()) {
+                continue;
+            }
+            final WrittenType type = typeOfAccess(local.initializerAccess, memberModel, ownerType, typeIndex, inferred);
+            if (type != null) {
+                inferred.put(local, type);
+            }
+        }
+        return inferred;
+    }
+
+    private static WrittenType typeOfAccess(final List<String> access,
+                                            final CSharpModel.CSharpMemberModel memberModel,
+                                            final CSharpModel.CSharpTypeModel ownerType,
+                                            final TypeIndex typeIndex,
+                                            final Map<CSharpModel.CSharpMemberModel, WrittenType> inferred) {
+        final String root = access.get(0);
+        CSharpModel.CSharpTypeModel current;
+        int next = 1;
+        if ("this".equals(root)) {
+            current = ownerType;
+        } else {
+            final WrittenType receiver = receiverDeclaration(root, memberModel, ownerType, typeIndex, inferred);
+            if (receiver == null) {
+                return null;
+            }
+            current = typeIndex.typeModelOf(receiver);
+        }
+        WrittenType result = null;
+        for (; next < access.size(); next++) {
+            if (current == null) {
+                return null;
+            }
+            final String segment = access.get(next);
+            final boolean call = segment.endsWith("()");
+            final FoundMember found = typeIndex.findMember(current, segment.replace("()", ""), call);
+            if (found == null) {
+                return null;
+            }
+            final String text;
+            if (call) {
+                text = found.member().returnType;
+            } else {
+                text = found.member().declaredType;
+            }
+            if (text == null || text.isBlank() || "void".equals(text.trim())) {
+                return null;
+            }
+            result = new WrittenType(text, found.declaring(), found.member());
+            if (next < access.size() - 1) {
+                current = typeIndex.typeModelOf(result);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * The one declaration a receiver name stands for: a parameter or local of the member, else a field
+     * or property of the type or a base of it. Null when the name is declared more than once with
+     * different types, is a local whose type is not known, or may be re-declared in the body.
+     */
+    private static WrittenType receiverDeclaration(final String name,
+                                                   final CSharpModel.CSharpMemberModel memberModel,
+                                                   final CSharpModel.CSharpTypeModel ownerType,
+                                                   final TypeIndex typeIndex,
+                                                   final Map<CSharpModel.CSharpMemberModel, WrittenType> inferred) {
+        final Set<String> distinct = new LinkedHashSet<>();
+        WrittenType declared = null;
+        int count = 0;
+        for (final CSharpModel.CSharpParameterModel parameter : memberModel.parameters) {
+            if (name.equals(parameter.name)) {
+                count += 1;
+                if (parameter.declaredType == null || parameter.declaredType.isBlank()) {
+                    return null;
+                }
+                distinct.add(parameter.declaredType.trim());
+                declared = new WrittenType(parameter.declaredType, ownerType, memberModel);
+            }
+        }
+        for (final CSharpModel.CSharpMemberModel local : memberModel.locals) {
+            if (!name.equals(local.name)) {
+                continue;
+            }
+            count += 1;
+            final WrittenType fromMember = inferred.get(local);
+            if (fromMember != null) {
+                distinct.add(fromMember.scope().uniqueName + "|" + fromMember.text().trim());
+                declared = fromMember;
+            } else if (local.declaredType != null && !local.declaredType.isBlank()
+                    && !"var".equals(local.declaredType.trim())) {
+                distinct.add(local.declaredType.trim());
+                declared = new WrittenType(local.declaredType, ownerType, memberModel);
+            } else {
+                return null;
+            }
+        }
+        if (count > 0) {
+            if (distinct.size() == 1) {
+                return declared;
+            }
+            return null;
+        }
+        final FoundMember field = typeIndex.findMember(ownerType, name, false);
+        if (field == null || field.member().declaredType == null || field.member().declaredType.isBlank()
+                || bodyMayDeclare(memberModel, name)) {
+            return null;
+        }
+        return new WrittenType(field.member().declaredType, field.declaring(), field.member());
+    }
+
+    /** Whether the member's text could declare another variable of the name: a lambda parameter, a loop or pattern variable. */
+    private static boolean bodyMayDeclare(final CSharpModel.CSharpMemberModel memberModel, final String name) {
+        final String source = memberModel.sourceText;
+        if (source == null || memberModel.startOffset < 0 || memberModel.endOffset > source.length()
+                || memberModel.startOffset > memberModel.endOffset) {
+            return true;
+        }
+        final String body = source.substring(memberModel.startOffset, memberModel.endOffset);
+        final String quoted = java.util.regex.Pattern.quote(name);
+        if (java.util.regex.Pattern.compile("\\b" + quoted + "\\s*=>").matcher(body).find()
+                || java.util.regex.Pattern.compile("[(,]\\s*" + quoted + "\\s*[,)]\\s*=>").matcher(body).find()) {
+            return true;
+        }
+        final java.util.regex.Matcher declaration = java.util.regex.Pattern
+                .compile("(?<![\\w.])([A-Za-z_][\\w.<>,\\[\\]?]*)\\s+" + quoted + "\\b(?!\\s*\\()").matcher(body);
+        while (declaration.find()) {
+            if (!NOT_A_TYPE_WORD.contains(declaration.group(1))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static List<String> singletonType(final String declaredType) {
         if (declaredType == null || declaredType.isBlank()) {
             return List.of();
@@ -983,6 +1148,78 @@ final class CSharpModelAssembler {
                 }
             }
             return false;
+        }
+
+        /** The parsed type a written type names, when it names exactly one and not a type parameter. */
+        private CSharpModel.CSharpTypeModel typeModelOf(final WrittenType written) {
+            final List<CSharpFileParser.TypeToken> tokens = CSharpFileParser.extractTypeReferences(written.text());
+            if (tokens.size() != 1) {
+                return null;
+            }
+            final CSharpFileParser.TypeToken token = tokens.get(0);
+            if (written.scope().typeParameters.contains(token.name())
+                    || (written.member() != null && written.member().typeParameters.contains(token.name()))) {
+                return null;
+            }
+            final Resolution resolved = resolveType(token.name(), token.arity(), written.scope(), written.member());
+            if (resolved == null || resolved.kind() == ResolutionKind.UNRESOLVED
+                    || resolved.kind() == ResolutionKind.AMBIGUOUS) {
+                return null;
+            }
+            return typeModelsByName.get(resolved.name());
+        }
+
+        /**
+         * The field or property -- or, for a call, the method -- of the name that the type or its
+         * nearest base in the parse declares. Methods of one name with different return types, and
+         * names declared in two parts of a partial type, are not decided between.
+         */
+        private FoundMember findMember(final CSharpModel.CSharpTypeModel type, final String name,
+                                       final boolean call) {
+            final Set<String> visited = new LinkedHashSet<>();
+            final java.util.Deque<CSharpModel.CSharpTypeModel> pending = new java.util.ArrayDeque<>();
+            pending.add(type);
+            visited.add(type.uniqueName);
+            while (!pending.isEmpty()) {
+                final CSharpModel.CSharpTypeModel current = pending.poll();
+                FoundMember found = null;
+                final Set<String> returnTypes = new LinkedHashSet<>();
+                for (final CSharpModel.CSharpMemberModel member : current.members) {
+                    if (member.name == null || !name.equals(member.name.replaceAll("<.*$", ""))) {
+                        continue;
+                    }
+                    final boolean isMethod = "method".equals(member.kind);
+                    final boolean isValue = "field".equals(member.kind) || "property".equals(member.kind);
+                    if ((call && !isMethod) || (!call && !isValue)) {
+                        return null;
+                    }
+                    if (found != null && !call) {
+                        return null;
+                    }
+                    found = new FoundMember(member, current);
+                    returnTypes.add(String.valueOf(member.returnType));
+                }
+                if (found != null) {
+                    if (returnTypes.size() > 1) {
+                        return null;
+                    }
+                    return found;
+                }
+                for (final String baseType : current.baseTypes) {
+                    for (final CSharpFileParser.TypeToken token : CSharpFileParser.extractTypeReferences(baseType)) {
+                        final Resolution resolved = resolveType(token.name(), token.arity(), current, null);
+                        CSharpModel.CSharpTypeModel base = null;
+                        if (resolved != null) {
+                            base = typeModelsByName.get(resolved.name());
+                        }
+                        if (base != null && visited.add(base.uniqueName)) {
+                            pending.add(base);
+                        }
+                        break;
+                    }
+                }
+            }
+            return null;
         }
 
         private Resolution resolveType(final String rawToken,
