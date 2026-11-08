@@ -3290,39 +3290,66 @@ function withListedExports(ts, sourceFile, declarations) {
   return declarations;
 }
 
+/**
+ * What a module-level statement declares: a class, interface, enum, type alias, function or the
+ * variables of a variable statement. Anything else declares nothing that is modelled.
+ */
+function declarationsOfStatement(ts, node, checker, unresolvedBases) {
+  if (ts.isClassDeclaration(node) && node.name) {
+    return [buildClassModel(node, checker, unresolvedBases)];
+  }
+  if (ts.isInterfaceDeclaration(node)) {
+    return [buildInterfaceModel(node, checker)];
+  }
+  if (ts.isEnumDeclaration(node)) {
+    return [buildEnumModel(node)];
+  }
+  if (ts.isTypeAliasDeclaration(node)) {
+    return [buildTypeAliasModel(node, checker)];
+  }
+  if (ts.isFunctionDeclaration(node)) {
+    return [buildFunctionModel(node, checker)];
+  }
+  if (ts.isVariableStatement(node)) {
+    return node.declarationList.declarations.map((declaration) => buildTopLevelVariableModel(declaration, node, checker));
+  }
+  return [];
+}
+
+/**
+ * The statements of a `declare module "specifier" { ... }` block: an ambient module, or an
+ * augmentation of the module the specifier names. A namespace (`namespace N { }`) and `declare
+ * global` are not read.
+ */
+function ambientModuleStatements(ts, node) {
+  return ts.isModuleDeclaration(node) && ts.isStringLiteral(node.name) && node.body && ts.isModuleBlock(node.body)
+    ? node.body.statements
+    : [];
+}
+
 function collectTopLevelDeclarations(ts, sourceFile, checker, unresolvedBases) {
   const declarations = [];
   sourceFile.forEachChild((node) => {
-    if (ts.isClassDeclaration(node) && node.name) {
-      declarations.push(buildClassModel(node, checker, unresolvedBases));
-      return;
-    }
-    if (ts.isInterfaceDeclaration(node)) {
-      declarations.push(buildInterfaceModel(node, checker));
-      return;
-    }
-    if (ts.isEnumDeclaration(node)) {
-      declarations.push(buildEnumModel(node));
-      return;
-    }
-    if (ts.isTypeAliasDeclaration(node)) {
-      declarations.push(buildTypeAliasModel(node, checker));
-      return;
-    }
-    if (ts.isFunctionDeclaration(node)) {
-      const model = buildFunctionModel(node, checker);
-      if (model) {
-        declarations.push(model);
-      }
-      return;
-    }
-    if (ts.isVariableStatement(node)) {
-      const list = node.declarationList;
-      for (const declaration of list.declarations) {
-        const model = buildTopLevelVariableModel(declaration, node, checker);
-        if (model) {
-          declarations.push(model);
+    declarations.push(...declarationsOfStatement(ts, node, checker, unresolvedBases));
+  });
+  // What an ambient module block declares is a declaration of this file, named as the file's own are
+  // and exported, since everything an ambient module declares is on its surface. A name the file
+  // already declares, or an earlier block declared, is the same declaration merged, and is kept once.
+  const declared = new Set(declarations.filter(Boolean).map((declaration) => declaration.name));
+  sourceFile.forEachChild((node) => {
+    for (const statement of ambientModuleStatements(ts, node)) {
+      for (const declaration of declarationsOfStatement(ts, statement, checker, unresolvedBases).filter(Boolean)) {
+        if (declared.has(declaration.name)) {
+          continue;
         }
+        declared.add(declaration.name);
+        const modifiers = declaration.modifiers || (declaration.modifiers = []);
+        for (const modifier of ["export", "public"]) {
+          if (!modifiers.includes(modifier)) {
+            modifiers.push(modifier);
+          }
+        }
+        declarations.push(declaration);
       }
     }
   });
