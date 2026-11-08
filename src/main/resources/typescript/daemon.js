@@ -2315,6 +2315,79 @@ function buildNamespaceMemberReference(node, checker) {
  * class a package declares is not, and was otherwise reduced to the type the call returns.
  */
 function buildLibraryMethodReference(callNode, checker) {
+  return buildResolvedLibraryMethodReference(callNode, checker)
+    || buildUnresolvedLibraryMethodReference(callNode, checker);
+}
+
+/**
+ * The type name a declaration's written annotation names, looking through `null` and `undefined`
+ * alternatives: `Editor`, `Editor | null`, `(Editor)`. Null for any other annotation.
+ */
+function writtenReferenceName(typeNode) {
+  const ts = state.ts;
+  let node = typeNode;
+  while (node && ts.isParenthesizedTypeNode(node)) {
+    node = node.type;
+  }
+  if (node && ts.isUnionTypeNode(node)) {
+    const kept = node.types.filter((member) => member.kind !== ts.SyntaxKind.NullKeyword
+      && member.kind !== ts.SyntaxKind.UndefinedKeyword
+      && !(ts.isLiteralTypeNode(member) && member.literal.kind === ts.SyntaxKind.NullKeyword));
+    node = kept.length === 1 ? kept[0] : null;
+    while (node && ts.isParenthesizedTypeNode(node)) {
+      node = node.type;
+    }
+  }
+  return node && ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName) ? node.typeName : null;
+}
+
+/**
+ * A call to a method of an object whose declared type is imported from a package the program cannot
+ * read: the type has no declarations, so the object's type alone names nothing. The annotation the
+ * object was declared with names the import, and the reference is the imported type and the method,
+ * as it is for a package that has declarations. Only a receiver that is an identifier or a property
+ * access, whose declaration carries the annotation, is read.
+ */
+function buildUnresolvedLibraryMethodReference(callNode, checker) {
+  const ts = state.ts;
+  const callee = callNode.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.name)) {
+    return null;
+  }
+  const receiver = callee.expression;
+  if (!ts.isIdentifier(receiver) && !(ts.isPropertyAccessExpression(receiver)
+      && receiver.expression.kind === ts.SyntaxKind.ThisKeyword)) {
+    return null;
+  }
+  try {
+    const receiverSymbol = checker.getSymbolAtLocation(receiver);
+    const declarations = receiverSymbol && receiverSymbol.declarations;
+    if (!declarations || declarations.length !== 1) {
+      return null;
+    }
+    const typeName = writtenReferenceName(declarations[0].type);
+    const imported = typeName ? checker.getSymbolAtLocation(typeName) : null;
+    const specifier = imported && imported.declarations && imported.declarations.length === 1
+      ? imported.declarations[0] : null;
+    if (!specifier || !ts.isImportSpecifier(specifier) || !(imported.flags & ts.SymbolFlags.Alias)) {
+      return null;
+    }
+    const target = checker.getAliasedSymbol(imported);
+    if (target && target.declarations && target.declarations.length) {
+      return null;
+    }
+    const packageName = packageOfSpecifier(importedFrom(imported));
+    const exportedName = (specifier.propertyName || specifier.name).text;
+    if (!packageName || !exportedName || exportedName === "default") {
+      return null;
+    }
+    return externalNamedReference(packageName, `${exportedName}.${callee.name.text}`);
+  } catch (err) {
+    return null;
+  }
+}
+
+function buildResolvedLibraryMethodReference(callNode, checker) {
   const ts = state.ts;
   const callee = callNode.expression;
   if (!ts.isPropertyAccessExpression(callee)) {
