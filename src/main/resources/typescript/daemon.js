@@ -2126,6 +2126,7 @@ function functionValueSignatureReferences(declaration, checker) {
       references.push(...writtenAliasReferences(parameter.type, checker));
     }
     references.push(...writtenAliasReferences(written.type, checker));
+    references.push(...typeParameterReferences(written, checker));
   }
   return references;
 }
