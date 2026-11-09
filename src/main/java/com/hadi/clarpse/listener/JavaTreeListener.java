@@ -340,11 +340,26 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                     insertTypeArgumentRefs(cmp, outerType, typeParameters);
                 }
             }
+            insertTypeParameterBoundRefs(cmp, ctx.getTypeParameters(), typeParameters);
 
             componentStack.push(cmp);
             visitAnnotationValues(ctx.getAnnotations(), arg);
             visitTypeBody(ctx, arg);
             completeComponent();
+        }
+    }
+
+    /**
+     * Records the bounds of a declaration's type parameters -- {@code T extends Cfg & Comparable<T>}
+     * depends on {@code Cfg} -- as the bounds of a method's type parameters already are. A type
+     * variable named in a bound is not a type and records nothing.
+     */
+    private void insertTypeParameterBoundRefs(final Component cmp, final NodeList<TypeParameter> typeParameters,
+                                              final Set<String> typeVariablesInScope) {
+        for (final TypeParameter typeParameter : typeParameters) {
+            for (final ClassOrInterfaceType bound : typeParameter.getTypeBound()) {
+                insertTypeArgumentRef(cmp, bound, typeVariablesInScope);
+            }
         }
     }
 
@@ -411,6 +426,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 }
                 insertTypeArgumentRefs(cmp, implementedType, typeParameters);
             }
+            insertTypeParameterBoundRefs(cmp, ctx.getTypeParameters(), typeParameters);
 
             componentStack.push(cmp);
             visitAnnotationValues(ctx.getAnnotations(), arg);
