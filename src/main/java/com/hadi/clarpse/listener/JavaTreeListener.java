@@ -92,6 +92,8 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     private static final Logger LOGGER = LogManager.getLogger(JavaTreeListener.class);
     private final Stack<Component> componentStack = new Stack<>();
     private final Set<String> currentImports = new HashSet<>();
+    /** The type variables the declaration being visited may legally mention; they name no type. */
+    private Set<String> typeVariables = new HashSet<>();
     private final TypeSolver typeSolver;
     private final JavaAnnotationArgumentReader annotationArguments;
     private final OOPSourceCodeModel srcModel;
@@ -343,8 +345,14 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             insertTypeParameterBoundRefs(cmp, ctx.getTypeParameters(), typeParameters);
 
             componentStack.push(cmp);
-            visitAnnotationValues(ctx.getAnnotations(), arg);
-            visitTypeBody(ctx, arg);
+            final Set<String> enclosingTypeVariables = typeVariables;
+            typeVariables = typeParameters;
+            try {
+                visitAnnotationValues(ctx.getAnnotations(), arg);
+                visitTypeBody(ctx, arg);
+            } finally {
+                typeVariables = enclosingTypeVariables;
+            }
             completeComponent();
         }
     }
@@ -429,11 +437,17 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             insertTypeParameterBoundRefs(cmp, ctx.getTypeParameters(), typeParameters);
 
             componentStack.push(cmp);
-            visitAnnotationValues(ctx.getAnnotations(), arg);
-            insertRecordComponentFields(ctx, arg);
-            insertRecordAccessors(ctx, arg);
-            insertRecordCanonicalConstructor(ctx, arg);
-            visitTypeBody(ctx, arg);
+            final Set<String> enclosingTypeVariables = typeVariables;
+            typeVariables = typeParameters;
+            try {
+                visitAnnotationValues(ctx.getAnnotations(), arg);
+                insertRecordComponentFields(ctx, arg);
+                insertRecordAccessors(ctx, arg);
+                insertRecordCanonicalConstructor(ctx, arg);
+                visitTypeBody(ctx, arg);
+            } finally {
+                typeVariables = enclosingTypeVariables;
+            }
             completeComponent();
         }
     }
@@ -816,6 +830,8 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     @Override
     public final void visit(final MethodDeclaration ctx, final Object arg) {
         if (!ParseUtil.componentStackContainsMethod(componentStack)) {
+            final Set<String> enclosingTypeVariables = typeVariables;
+            typeVariables = typeParameterNamesInScope(ctx);
             final Component currMethodCmp = createComponent(ctx, ComponentType.METHOD);
             currMethodCmp.setName(ctx.getNameAsString());
             currMethodCmp.setCodeFragment(ctx.getType().asString());
@@ -868,6 +884,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
             currCyclomaticComplexity = 1 + countLogicalBinaryOperators(ctx);
             super.visit(ctx, arg);
+            typeVariables = enclosingTypeVariables;
             completeComponent();
         }
     }
@@ -887,6 +904,8 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     @Override
     public final void visit(final ConstructorDeclaration ctx, final Object arg) {
         if (!ParseUtil.componentStackContainsMethod(componentStack)) {
+            final Set<String> enclosingTypeVariables = typeVariables;
+            typeVariables = typeParameterNamesInScope(ctx);
             final Component currMethodCmp = createComponent(ctx, ComponentType.CONSTRUCTOR);
             final String methodName = ctx.getNameAsString();
             currMethodCmp.setName(methodName);
@@ -940,6 +959,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
             currCyclomaticComplexity = 1 + countLogicalBinaryOperators(ctx);
             super.visit(ctx, arg);
+            typeVariables = enclosingTypeVariables;
             completeComponent();
         }
     }
@@ -1322,6 +1342,10 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         // before the lookups, not after: erasing only the recorded name would keep the invented
         // package and merely make the invention look plausible.
         final String type = TypeNames.erasure(writtenType);
+        // A type variable in scope names no type, and shadows any type of the same name.
+        if (typeVariables.contains(type)) {
+            return null;
+        }
         String resolvedType = "";
         // Scope order, JLS 6.4.1 and 7.5: a member type of an enclosing type, declared or inherited,
         // then a single-type import, then a top-level type of the current package, and last the
