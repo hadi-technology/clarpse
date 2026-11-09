@@ -215,6 +215,8 @@ final class CSharpModel {
         /** The using aliases of the file that declares this member, which a partial type's other parts lack. */
         Map<String, String> usingAliases = new LinkedHashMap<>();
         boolean inferredType;
+        /** True when an inferred local is initialised by exactly {@code new T(...)}, and so has type T. */
+        boolean plainNewInitializer;
         /**
          * For a member declared in a C# 14 {@code extension(T x)} block that has no receiver parameter of
          * its own -- a property, a field, a static member -- the type the block extends, as written.

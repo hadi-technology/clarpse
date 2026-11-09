@@ -1144,7 +1144,8 @@ final class CSharpModelAssembler {
 
         /**
          * The unique name of the one static class that declares an extension method the call can be,
-         * or null when there is none, several, or the receiver's own type has a member of that name.
+         * or null when there is none, several, the receiver's declared type is not known from the
+         * source, or its own type has a member of that name.
          */
         private String soleExtensionClass(final CSharpModel.ExtensionCall call,
                                           final CSharpModel.CSharpMemberModel caller,
@@ -1154,15 +1155,12 @@ final class CSharpModelAssembler {
             if (byClass == null) {
                 return null;
             }
-            final List<CSharpModel.CSharpTypeModel> knownTypes = new ArrayList<>();
-            final boolean[] unknown = {false};
-            if (!receiverTypes(call, caller, owner, inferred, knownTypes, unknown)) {
+            final Receiver receiver = receiverOf(call, caller, owner);
+            if (receiver == null) {
                 return null;
             }
-            for (final CSharpModel.CSharpTypeModel known : knownTypes) {
-                if (declaresMemberNamed(known, call.name())) {
-                    return null;
-                }
+            if (receiver.model() != null && declaresMemberNamed(receiver.model(), call.name())) {
+                return null;
             }
             String found = null;
             for (final Map.Entry<String, List<CSharpModel.CSharpMemberModel>> entry : byClass.entrySet()) {
@@ -1173,7 +1171,7 @@ final class CSharpModelAssembler {
                 boolean candidate = false;
                 for (final CSharpModel.CSharpMemberModel method : entry.getValue()) {
                     if (acceptsArguments(method, call.argumentCount())
-                            && canTakeReceiver(method, declaring, knownTypes, unknown[0])) {
+                            && canTakeReceiver(method, declaring, receiver)) {
                         candidate = true;
                         break;
                     }
@@ -1190,114 +1188,86 @@ final class CSharpModelAssembler {
         }
 
         /**
-         * The types the receiver of a call can have, as far as the parse knows them.
-         *
-         * @param knownTypes Receives the parsed types the receiver is declared as.
-         * @param unknown    Set when the receiver may also be of a type that is not known.
-         * @return False when the receiver is a type or namespace name, so the call is no extension call.
+         * The declared type of a call's receiver: a parsed type when it names one, else the type as
+         * written. {@code declared} is null for {@code this}, whose type is the enclosing type.
          */
-        private boolean receiverTypes(final CSharpModel.ExtensionCall call,
-                                      final CSharpModel.CSharpMemberModel caller,
-                                      final CSharpModel.CSharpTypeModel owner,
-                                      final Map<CSharpModel.CSharpMemberModel, WrittenType> inferred,
-                                      final List<CSharpModel.CSharpTypeModel> knownTypes,
-                                      final boolean[] unknown) {
-            final String receiver = call.receiver();
-            if (receiver == null) {
-                unknown[0] = true;
-                return true;
-            }
-            final String[] segments = receiver.split("\\.");
-            final String root = segments[0];
-            if ("this".equals(root) && segments.length == 1) {
-                knownTypes.add(owner);
-                return true;
-            }
-            if (segments.length > 1) {
-                unknown[0] = true;
-            }
-            final boolean variable = "this".equals(root) || "base".equals(root) || isVariableIn(root, caller, owner);
-            if (!variable) {
-                final Resolution whole = resolveType(receiver, owner, caller);
-                final boolean lowerCase = Character.isLowerCase(root.charAt(0));
-                if (!lowerCase || BUILTIN_TYPES.containsKey(root) || (whole != null
-                        && whole.kind() == ResolutionKind.EXACT && typeModelsByName.containsKey(whole.name()))) {
-                    return false;
-                }
-                unknown[0] = true;
-                return true;
-            }
-            if (segments.length > 1) {
-                return true;
-            }
-            final List<WrittenType> written = new ArrayList<>();
-            for (final CSharpModel.CSharpParameterModel parameter : caller.parameters) {
-                if (root.equals(parameter.name)) {
-                    written.add(new WrittenType(parameter.declaredType, owner, caller));
-                }
-            }
-            for (final CSharpModel.CSharpMemberModel local : caller.locals) {
-                if (!root.equals(local.name)) {
-                    continue;
-                }
-                final WrittenType fromMember = inferred.get(local);
-                if (fromMember != null) {
-                    written.add(fromMember);
-                } else if (local.declaredType == null || "var".equals(local.declaredType.trim())) {
-                    unknown[0] = true;
-                } else {
-                    written.add(new WrittenType(local.declaredType, owner, caller));
-                }
-            }
-            final List<String> lambdaTypes = caller.lambdaVariables.get(root);
-            if (lambdaTypes != null) {
-                for (final String type : lambdaTypes) {
-                    if (type == null) {
-                        unknown[0] = true;
-                    } else {
-                        written.add(new WrittenType(type, owner, caller));
-                    }
-                }
-            }
-            final FoundMember field = findMember(owner, root, false);
-            if (field != null && field.member().declaredType != null) {
-                written.add(new WrittenType(field.member().declaredType, field.declaring(), field.member()));
-            }
-            if (written.isEmpty()) {
-                unknown[0] = true;
-            }
-            for (final WrittenType type : written) {
-                final CSharpModel.CSharpTypeModel model = typeModelOf(type);
-                if (model == null) {
-                    unknown[0] = true;
-                } else {
-                    knownTypes.add(model);
-                }
-            }
-            return true;
+        private record Receiver(CSharpModel.CSharpTypeModel model, WrittenType declared) {
         }
 
-        private boolean isVariableIn(final String name, final CSharpModel.CSharpMemberModel caller,
-                                     final CSharpModel.CSharpTypeModel owner) {
+        /**
+         * The declared type of the receiver of a call, or null when it is not certain. Only a simple
+         * name qualifies: {@code this}, or a parameter, local, lambda parameter, field or property whose
+         * declaration writes its type. A call result, a chain of members, an implicitly typed variable
+         * (apart from {@code var x = new T(...)}) and a name that is declared more than once with
+         * different types give null.
+         */
+        private Receiver receiverOf(final CSharpModel.ExtensionCall call,
+                                    final CSharpModel.CSharpMemberModel caller,
+                                    final CSharpModel.CSharpTypeModel owner) {
+            final String name = call.receiver();
+            if (name == null || name.indexOf('.') >= 0) {
+                return null;
+            }
+            if ("this".equals(name)) {
+                return new Receiver(owner, null);
+            }
+            final Set<String> distinct = new LinkedHashSet<>();
+            boolean declared = false;
+            WrittenType written = null;
             for (final CSharpModel.CSharpParameterModel parameter : caller.parameters) {
                 if (name.equals(parameter.name)) {
-                    return true;
+                    declared = true;
+                    if (parameter.declaredType == null || parameter.declaredType.isBlank()) {
+                        return null;
+                    }
+                    distinct.add(parameter.declaredType.trim());
+                    written = new WrittenType(parameter.declaredType, owner, caller);
                 }
             }
             for (final CSharpModel.CSharpMemberModel local : caller.locals) {
-                if (name.equals(local.name)) {
-                    return true;
+                if (!name.equals(local.name)) {
+                    continue;
+                }
+                declared = true;
+                final String type = local.declaredType;
+                if (type == null || type.isBlank() || "var".equals(type.trim())
+                        || (local.inferredType && !local.plainNewInitializer)) {
+                    return null;
+                }
+                distinct.add(type.trim());
+                written = new WrittenType(type, owner, caller);
+            }
+            final List<String> lambdaTypes = caller.lambdaVariables.get(name);
+            if (lambdaTypes != null) {
+                for (final String type : lambdaTypes) {
+                    declared = true;
+                    if (type == null || type.isBlank()) {
+                        return null;
+                    }
+                    distinct.add(type.trim());
+                    written = new WrittenType(type, owner, caller);
                 }
             }
-            if (caller.lambdaVariables.containsKey(name)) {
-                return true;
-            }
-            for (final CSharpModel.CSharpMemberModel member : owner.members) {
-                if (name.equals(member.name)) {
-                    return true;
+            if (!declared) {
+                final FoundMember field = findMember(owner, name, false);
+                if (field == null || field.member().declaredType == null || field.member().declaredType.isBlank()
+                        || bodyMayDeclare(caller, name)) {
+                    return null;
                 }
+                return receiverOfType(new WrittenType(field.member().declaredType, field.declaring(), field.member()));
             }
-            return inheritsMember(owner, name);
+            if (distinct.size() != 1) {
+                return null;
+            }
+            return receiverOfType(written);
+        }
+
+        private Receiver receiverOfType(final WrittenType written) {
+            final String text = written.text().trim();
+            if ("var".equals(text) || "dynamic".equals(text)) {
+                return null;
+            }
+            return new Receiver(typeModelOf(written), written);
         }
 
         /** Whether the type, or a parsed base of it, has any member of the name. */
@@ -1388,32 +1358,52 @@ final class CSharpModelAssembler {
         }
 
         /**
-         * Whether the extension method's receiver type can be the receiver's. Only a receiver of known
-         * parsed types, none of which is or derives from the parsed type the method extends, rules it out.
+         * Whether the receiver's declared type fits the type the method extends: the extended type is
+         * a type parameter of the method, or the same type, or a parsed base type or interface of the
+         * receiver's. Two parsed types are compared as types; two types the parse does not hold are
+         * compared by simple name with generic arguments dropped; a parsed type against an unparsed
+         * one does not fit.
          */
         private boolean canTakeReceiver(final CSharpModel.CSharpMemberModel method,
                                         final CSharpModel.CSharpTypeModel declaring,
-                                        final List<CSharpModel.CSharpTypeModel> knownTypes,
-                                        final boolean unknown) {
-            if (unknown || knownTypes.isEmpty()) {
-                return true;
-            }
+                                        final Receiver receiver) {
             final String extended = method.parameters.get(0).declaredType;
-            if (extended == null || method.typeParameters.stream().anyMatch(extended.trim()::equals)) {
+            if (extended == null || extended.isBlank()) {
+                return false;
+            }
+            if (method.typeParameters.stream().anyMatch(extended.trim()::equals)) {
                 return true;
             }
             final CSharpModel.CSharpTypeModel extendedModel = typeModelOf(new WrittenType(extended, declaring, method));
-            if (extendedModel == null) {
-                return true;
-            }
-            for (final CSharpModel.CSharpTypeModel known : knownTypes) {
-                for (final CSharpModel.CSharpTypeModel ancestor : ancestorsAndSelf(known)) {
+            if (receiver.model() != null) {
+                if (extendedModel == null) {
+                    return false;
+                }
+                for (final CSharpModel.CSharpTypeModel ancestor : ancestorsAndSelf(receiver.model())) {
                     if (ancestor.uniqueName.equals(extendedModel.uniqueName)) {
                         return true;
                     }
                 }
+                return false;
             }
-            return false;
+            if (extendedModel != null) {
+                return false;
+            }
+            final String received = simpleTypeName(receiver.declared().text());
+            return received != null && received.equals(simpleTypeName(extended));
+        }
+
+        /** The last name of a written type with generic arguments and a nullable mark dropped, or null for a compound type. */
+        private static String simpleTypeName(final String written) {
+            String text = written.trim().replaceAll("\\s+", "");
+            text = text.replaceAll("<.*>", "");
+            if (text.endsWith("?")) {
+                text = text.substring(0, text.length() - 1);
+            }
+            if (!text.matches("[A-Za-z_@][\\w@]*(\\.[A-Za-z_@][\\w@]*)*")) {
+                return null;
+            }
+            return text.substring(text.lastIndexOf('.') + 1);
         }
 
         /** Whether the repository declares the named type as an enum. */

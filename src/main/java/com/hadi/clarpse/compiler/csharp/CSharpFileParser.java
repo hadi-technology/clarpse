@@ -1004,6 +1004,7 @@ final class CSharpFileParser {
                         null
                 );
                 local.inferredType = inferred;
+                local.plainNewInitializer = inferred && isPlainNewInitializer(descendant.text, localName);
                 if (!inferred && (declaredType == null || declaredType.isEmpty()
                         || "var".equals(trimTypeText(declaredType)))) {
                     local.initializerAccess = initializerAccess(descendant.text, localName);
@@ -1012,6 +1013,55 @@ final class CSharpFileParser {
             }
         }
         return locals;
+    }
+
+    /**
+     * Whether a {@code var} declaration is initialised by nothing but {@code new T(...)}, with an
+     * optional object or collection initializer, so that the local has exactly the type T. A
+     * conditional, a call on the new object, an array creation or an anonymous type is not.
+     */
+    static boolean isPlainNewInitializer(final String declarationText, final String localName) {
+        final String clean = withoutCommentsAndStrings(declarationText);
+        final Matcher head = Pattern.compile("\\bvar\\s+" + Pattern.quote(localName)
+                + "\\s*=\\s*new\\s+[A-Za-z_@][\\w.@]*\\s*(?:<[\\w.,\\s?\\[\\]<>]*>)?\\s*").matcher(clean);
+        if (!head.find()) {
+            return false;
+        }
+        int i = head.end();
+        final int n = clean.length();
+        if (i < n && clean.charAt(i) == '(') {
+            i = skipBalanced(clean, i);
+            while (i >= 0 && i < n && Character.isWhitespace(clean.charAt(i))) {
+                i += 1;
+            }
+        }
+        if (i >= 0 && i < n && clean.charAt(i) == '{') {
+            i = skipBalanced(clean, i);
+        }
+        if (i < 0) {
+            return false;
+        }
+        while (i < n && (Character.isWhitespace(clean.charAt(i)) || clean.charAt(i) == ';')) {
+            i += 1;
+        }
+        return i == n && head.end() < n;
+    }
+
+    /** The index just past the bracket that closes the one at {@code open}, or -1 when it never closes. */
+    private static int skipBalanced(final String text, final int open) {
+        int depth = 0;
+        for (int i = open; i < text.length(); i++) {
+            final char c = text.charAt(i);
+            if (c == '(' || c == '[' || c == '{') {
+                depth += 1;
+            } else if (c == ')' || c == ']' || c == '}') {
+                depth -= 1;
+                if (depth == 0) {
+                    return i + 1;
+                }
+            }
+        }
+        return -1;
     }
 
     private static final Pattern VAR_INITIALIZER_PATTERN = Pattern.compile(

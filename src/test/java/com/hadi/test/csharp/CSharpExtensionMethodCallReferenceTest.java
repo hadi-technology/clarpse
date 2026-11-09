@@ -69,6 +69,27 @@ public class CSharpExtensionMethodCallReferenceTest {
                             internal static void Run() { Demo.Hosting.IBuilder builder = null; builder.AddWidgets("x"); }
                         }
                         """),
+                new ProjectFile("/Receivers.cs", """
+                        using System.Text;
+                        namespace Demo.Hosting;
+                        public class Gadget { }
+                        public class Bar { }
+                        public class Holder { public Gadget Inner; }
+                        public static class GadgetExtensions { public static void Tune(this Gadget g) { } }
+                        public static class BarExtensions { public static void OnlyBar(this Bar b) { } }
+                        public static class TextExtensions { public static void Squeeze(this StringBuilder sb) { } }
+                        internal static class Receivers
+                        {
+                            internal static Gadget Make() => null;
+                            internal static void Same(Gadget g) { g.Tune(); }
+                            internal static void SameExternal(StringBuilder sb) { sb.Squeeze(); }
+                            internal static void CallResult() { Make().Tune(); }
+                            internal static void VarFromCall() { var g = Make(); g.Tune(); }
+                            internal static void VarFromConditional(bool flag) { var g = flag ? new Gadget() : null; g.Tune(); }
+                            internal static void Chained(Holder h) { h.Inner.Tune(); }
+                            internal static void ExternalParameter(Foo f) { f.OnlyBar(); }
+                        }
+                        """),
                 new ProjectFile("/Sibling.cs", """
                         namespace Demo.Hosting;
                         internal static class Sibling
@@ -133,8 +154,8 @@ public class CSharpExtensionMethodCallReferenceTest {
     }
 
     @Test
-    public void receiverThatIsACallResultStillResolves() {
-        assertTrue(references("Demo.App.Use.Chain()", HOST));
+    public void receiverThatIsANewExpressionResultGivesNoEdge() {
+        assertFalse(references("Demo.App.Use.Chain()", HOST));
     }
 
     @Test
@@ -150,5 +171,42 @@ public class CSharpExtensionMethodCallReferenceTest {
     @Test
     public void classInTheSameNamespaceIsVisible() {
         assertTrue(references("Demo.Hosting.Sibling.Run(IBuilder)", HOST));
+    }
+
+    private static final String RECEIVERS = "Demo.Hosting.Receivers.";
+
+    @Test
+    public void parameterOfTheExtendedTypeReferencesTheDeclaringClass() {
+        assertTrue(references(RECEIVERS + "Same(Gadget)", "Demo.Hosting.GadgetExtensions"));
+    }
+
+    @Test
+    public void externalParameterOfTheExtendedTypeReferencesTheDeclaringClass() {
+        assertTrue(references(RECEIVERS + "SameExternal(StringBuilder)", "Demo.Hosting.TextExtensions"));
+    }
+
+    @Test
+    public void methodCallResultAsReceiverGivesNoEdge() {
+        assertFalse(references(RECEIVERS + "CallResult()", "Demo.Hosting.GadgetExtensions"));
+    }
+
+    @Test
+    public void varLocalInitialisedFromACallGivesNoEdge() {
+        assertFalse(references(RECEIVERS + "VarFromCall()", "Demo.Hosting.GadgetExtensions"));
+    }
+
+    @Test
+    public void varLocalInitialisedFromAConditionalGivesNoEdge() {
+        assertFalse(references(RECEIVERS + "VarFromConditional(bool)", "Demo.Hosting.GadgetExtensions"));
+    }
+
+    @Test
+    public void chainedMemberReceiverGivesNoEdge() {
+        assertFalse(references(RECEIVERS + "Chained(Holder)", "Demo.Hosting.GadgetExtensions"));
+    }
+
+    @Test
+    public void externalParameterWhoseTypeIsNotTheExtendedTypeGivesNoEdge() {
+        assertFalse(references(RECEIVERS + "ExternalParameter(Foo)", "Demo.Hosting.BarExtensions"));
     }
 }
