@@ -237,6 +237,7 @@ Key areas of the repository:
 - `src/main/java/com/hadi/clarpse/sourcemodel` - Component and package models.
 - `src/main/java/com/hadi/clarpse/reference` - Component reference types.
 - `src/main/resources` - Parser helpers, daemon scripts, and configuration (TypeScript and Python daemons, properties file).
+- `scripts/trim-bundles.py` - Trims the TypeScript and Pyright runtime bundles under `src/main/resources` to the files the daemons load. Run it after rebuilding either zip from a fresh `npm install`; the output is deterministic (see the script header for the steps).
 - `src/test/java` - Unit and integration tests.
 - `src/test/resources` - Test fixtures and zipped codebases used by tests.
 
