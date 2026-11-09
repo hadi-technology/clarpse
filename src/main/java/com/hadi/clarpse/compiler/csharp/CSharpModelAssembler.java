@@ -452,6 +452,7 @@ final class CSharpModelAssembler {
         attachTypeReferences(component, memberModel.simpleTypeUsages, typeIndex, ownerType, memberModel,
                 "method".equals(memberModel.kind) || "constructor".equals(memberModel.kind));
         attachStaticReceivers(component, memberModel, typeIndex, ownerType);
+        attachExtensionCalls(component, memberModel, typeIndex, ownerType);
         // The operand of typeof is a type whatever else shares its name, so no member-access filter.
         attachTypeReferences(component, memberModel.typeofOperands, typeIndex, ownerType, memberModel, false);
         attachMemberReferences(component, memberModel.memberUsages, typeIndex, ownerType);
@@ -714,6 +715,37 @@ final class CSharpModelAssembler {
             }
             final SimpleTypeReference reference = new SimpleTypeReference(resolved.name());
             reference.setResolutionKind(resolved.kind());
+            component.insertCmpRef(reference);
+        }
+    }
+
+    /**
+     * Binds a call {@code receiver.Name(...)} to the static class that declares the extension method
+     * it can be, when exactly one class visible from the calling file does.
+     */
+    private static void attachExtensionCalls(final Component component,
+                                             final CSharpModel.CSharpMemberModel memberModel,
+                                             final TypeIndex typeIndex,
+                                             final CSharpModel.CSharpTypeModel ownerType) {
+        if (memberModel.extensionCalls.isEmpty()) {
+            return;
+        }
+        Map<CSharpModel.CSharpMemberModel, WrittenType> inferred = null;
+        final Set<String> seen = new LinkedHashSet<>();
+        for (final CSharpModel.ExtensionCall call : memberModel.extensionCalls) {
+            if (!typeIndex.hasExtensionMethodNamed(call.name())) {
+                continue;
+            }
+            if (inferred == null) {
+                inferred = inferLocalTypes(memberModel, ownerType, typeIndex);
+            }
+            final String declaringClass = typeIndex.soleExtensionClass(call, memberModel, ownerType, inferred);
+            if (declaringClass == null || declaringClass.equals(ownerType.uniqueName)
+                    || declaringClass.equals(component.uniqueName()) || !seen.add(declaringClass)) {
+                continue;
+            }
+            final SimpleTypeReference reference = new SimpleTypeReference(declaringClass);
+            reference.setResolutionKind(ResolutionKind.EXACT);
             component.insertCmpRef(reference);
         }
     }
@@ -1097,6 +1129,292 @@ final class CSharpModelAssembler {
         private final Map<String, CSharpModel.CSharpTypeModel> typeModelsByName = new HashMap<>();
         private final Set<String> interfaceTypes = new LinkedHashSet<>();
         private final Set<String> enumTypes = new LinkedHashSet<>();
+        /** Extension methods by method name, then by the unique name of the static class that declares them. */
+        private final Map<String, Map<String, List<CSharpModel.CSharpMemberModel>>> extensionMethods =
+                new HashMap<>();
+
+        /** Whether the repository declares an extension method of the name. */
+        private boolean hasExtensionMethodNamed(final String name) {
+            return extensionMethods.containsKey(name);
+        }
+
+        private static String bareName(final String memberName) {
+            return memberName.replaceAll("<.*$", "");
+        }
+
+        /**
+         * The unique name of the one static class that declares an extension method the call can be,
+         * or null when there is none, several, or the receiver's own type has a member of that name.
+         */
+        private String soleExtensionClass(final CSharpModel.ExtensionCall call,
+                                          final CSharpModel.CSharpMemberModel caller,
+                                          final CSharpModel.CSharpTypeModel owner,
+                                          final Map<CSharpModel.CSharpMemberModel, WrittenType> inferred) {
+            final Map<String, List<CSharpModel.CSharpMemberModel>> byClass = extensionMethods.get(call.name());
+            if (byClass == null) {
+                return null;
+            }
+            final List<CSharpModel.CSharpTypeModel> knownTypes = new ArrayList<>();
+            final boolean[] unknown = {false};
+            if (!receiverTypes(call, caller, owner, inferred, knownTypes, unknown)) {
+                return null;
+            }
+            for (final CSharpModel.CSharpTypeModel known : knownTypes) {
+                if (declaresMemberNamed(known, call.name())) {
+                    return null;
+                }
+            }
+            String found = null;
+            for (final Map.Entry<String, List<CSharpModel.CSharpMemberModel>> entry : byClass.entrySet()) {
+                final CSharpModel.CSharpTypeModel declaring = typeModelsByName.get(entry.getKey());
+                if (declaring == null || !isVisibleFrom(declaring, owner, caller)) {
+                    continue;
+                }
+                boolean candidate = false;
+                for (final CSharpModel.CSharpMemberModel method : entry.getValue()) {
+                    if (acceptsArguments(method, call.argumentCount())
+                            && canTakeReceiver(method, declaring, knownTypes, unknown[0])) {
+                        candidate = true;
+                        break;
+                    }
+                }
+                if (!candidate) {
+                    continue;
+                }
+                if (found != null) {
+                    return null;
+                }
+                found = entry.getKey();
+            }
+            return found;
+        }
+
+        /**
+         * The types the receiver of a call can have, as far as the parse knows them.
+         *
+         * @param knownTypes Receives the parsed types the receiver is declared as.
+         * @param unknown    Set when the receiver may also be of a type that is not known.
+         * @return False when the receiver is a type or namespace name, so the call is no extension call.
+         */
+        private boolean receiverTypes(final CSharpModel.ExtensionCall call,
+                                      final CSharpModel.CSharpMemberModel caller,
+                                      final CSharpModel.CSharpTypeModel owner,
+                                      final Map<CSharpModel.CSharpMemberModel, WrittenType> inferred,
+                                      final List<CSharpModel.CSharpTypeModel> knownTypes,
+                                      final boolean[] unknown) {
+            final String receiver = call.receiver();
+            if (receiver == null) {
+                unknown[0] = true;
+                return true;
+            }
+            final String[] segments = receiver.split("\\.");
+            final String root = segments[0];
+            if ("this".equals(root) && segments.length == 1) {
+                knownTypes.add(owner);
+                return true;
+            }
+            if (segments.length > 1) {
+                unknown[0] = true;
+            }
+            final boolean variable = "this".equals(root) || "base".equals(root) || isVariableIn(root, caller, owner);
+            if (!variable) {
+                final Resolution whole = resolveType(receiver, owner, caller);
+                final boolean lowerCase = Character.isLowerCase(root.charAt(0));
+                if (!lowerCase || BUILTIN_TYPES.containsKey(root) || (whole != null
+                        && whole.kind() == ResolutionKind.EXACT && typeModelsByName.containsKey(whole.name()))) {
+                    return false;
+                }
+                unknown[0] = true;
+                return true;
+            }
+            if (segments.length > 1) {
+                return true;
+            }
+            final List<WrittenType> written = new ArrayList<>();
+            for (final CSharpModel.CSharpParameterModel parameter : caller.parameters) {
+                if (root.equals(parameter.name)) {
+                    written.add(new WrittenType(parameter.declaredType, owner, caller));
+                }
+            }
+            for (final CSharpModel.CSharpMemberModel local : caller.locals) {
+                if (!root.equals(local.name)) {
+                    continue;
+                }
+                final WrittenType fromMember = inferred.get(local);
+                if (fromMember != null) {
+                    written.add(fromMember);
+                } else if (local.declaredType == null || "var".equals(local.declaredType.trim())) {
+                    unknown[0] = true;
+                } else {
+                    written.add(new WrittenType(local.declaredType, owner, caller));
+                }
+            }
+            final List<String> lambdaTypes = caller.lambdaVariables.get(root);
+            if (lambdaTypes != null) {
+                for (final String type : lambdaTypes) {
+                    if (type == null) {
+                        unknown[0] = true;
+                    } else {
+                        written.add(new WrittenType(type, owner, caller));
+                    }
+                }
+            }
+            final FoundMember field = findMember(owner, root, false);
+            if (field != null && field.member().declaredType != null) {
+                written.add(new WrittenType(field.member().declaredType, field.declaring(), field.member()));
+            }
+            if (written.isEmpty()) {
+                unknown[0] = true;
+            }
+            for (final WrittenType type : written) {
+                final CSharpModel.CSharpTypeModel model = typeModelOf(type);
+                if (model == null) {
+                    unknown[0] = true;
+                } else {
+                    knownTypes.add(model);
+                }
+            }
+            return true;
+        }
+
+        private boolean isVariableIn(final String name, final CSharpModel.CSharpMemberModel caller,
+                                     final CSharpModel.CSharpTypeModel owner) {
+            for (final CSharpModel.CSharpParameterModel parameter : caller.parameters) {
+                if (name.equals(parameter.name)) {
+                    return true;
+                }
+            }
+            for (final CSharpModel.CSharpMemberModel local : caller.locals) {
+                if (name.equals(local.name)) {
+                    return true;
+                }
+            }
+            if (caller.lambdaVariables.containsKey(name)) {
+                return true;
+            }
+            for (final CSharpModel.CSharpMemberModel member : owner.members) {
+                if (name.equals(member.name)) {
+                    return true;
+                }
+            }
+            return inheritsMember(owner, name);
+        }
+
+        /** Whether the type, or a parsed base of it, has any member of the name. */
+        private boolean declaresMemberNamed(final CSharpModel.CSharpTypeModel type, final String name) {
+            for (final CSharpModel.CSharpTypeModel candidate : ancestorsAndSelf(type)) {
+                for (final CSharpModel.CSharpMemberModel member : candidate.members) {
+                    if (member.name != null && name.equals(bareName(member.name))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private List<CSharpModel.CSharpTypeModel> ancestorsAndSelf(final CSharpModel.CSharpTypeModel type) {
+            final Map<String, CSharpModel.CSharpTypeModel> visited = new java.util.LinkedHashMap<>();
+            final java.util.Deque<CSharpModel.CSharpTypeModel> pending = new java.util.ArrayDeque<>();
+            pending.add(type);
+            visited.put(type.uniqueName, type);
+            while (!pending.isEmpty()) {
+                final CSharpModel.CSharpTypeModel current = pending.poll();
+                for (final String baseType : current.baseTypes) {
+                    for (final CSharpFileParser.TypeToken token : CSharpFileParser.extractTypeReferences(baseType)) {
+                        final Resolution resolved = resolveType(token.name(), token.arity(), current, null);
+                        if (resolved != null) {
+                            final CSharpModel.CSharpTypeModel base = typeModelsByName.get(resolved.name());
+                            if (base != null && !visited.containsKey(base.uniqueName)) {
+                                visited.put(base.uniqueName, base);
+                                pending.add(base);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            return new ArrayList<>(visited.values());
+        }
+
+        /** Whether a static class is in scope in the calling file: by namespace, enclosing namespace or using. */
+        private boolean isVisibleFrom(final CSharpModel.CSharpTypeModel declaring,
+                                      final CSharpModel.CSharpTypeModel owner,
+                                      final CSharpModel.CSharpMemberModel caller) {
+            final String namespaceName = declaring.namespaceName;
+            if (namespaceName == null || namespaceName.isEmpty()) {
+                return true;
+            }
+            String current = owner.namespaceName;
+            while (current != null && !current.isEmpty()) {
+                if (current.equals(namespaceName)) {
+                    return true;
+                }
+                final int cut = current.lastIndexOf('.');
+                if (cut < 0) {
+                    break;
+                }
+                current = current.substring(0, cut);
+            }
+            final Set<String> aliased = new LinkedHashSet<>(owner.usingAliases.values());
+            aliased.addAll(caller.usingAliases.values());
+            final Set<String> imports = new LinkedHashSet<>(owner.imports);
+            imports.addAll(caller.imports);
+            for (final String imported : imports) {
+                if (imported.equals(declaring.uniqueName)
+                        || (imported.equals(namespaceName) && !aliased.contains(imported))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** Whether the extension method can be called with that many arguments; -1 is not known. */
+        private static boolean acceptsArguments(final CSharpModel.CSharpMemberModel method, final int count) {
+            if (count < 0) {
+                return true;
+            }
+            int required = 0;
+            boolean open = false;
+            for (int i = 1; i < method.parameters.size(); i++) {
+                final CSharpModel.CSharpParameterModel parameter = method.parameters.get(i);
+                if (parameter.paramsArray) {
+                    open = true;
+                } else if (!parameter.optional) {
+                    required += 1;
+                }
+            }
+            final int most = method.parameters.size() - 1;
+            return count >= required && (open || count <= most);
+        }
+
+        /**
+         * Whether the extension method's receiver type can be the receiver's. Only a receiver of known
+         * parsed types, none of which is or derives from the parsed type the method extends, rules it out.
+         */
+        private boolean canTakeReceiver(final CSharpModel.CSharpMemberModel method,
+                                        final CSharpModel.CSharpTypeModel declaring,
+                                        final List<CSharpModel.CSharpTypeModel> knownTypes,
+                                        final boolean unknown) {
+            if (unknown || knownTypes.isEmpty()) {
+                return true;
+            }
+            final String extended = method.parameters.get(0).declaredType;
+            if (extended == null || method.typeParameters.stream().anyMatch(extended.trim()::equals)) {
+                return true;
+            }
+            final CSharpModel.CSharpTypeModel extendedModel = typeModelOf(new WrittenType(extended, declaring, method));
+            if (extendedModel == null) {
+                return true;
+            }
+            for (final CSharpModel.CSharpTypeModel known : knownTypes) {
+                for (final CSharpModel.CSharpTypeModel ancestor : ancestorsAndSelf(known)) {
+                    if (ancestor.uniqueName.equals(extendedModel.uniqueName)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
 
         /** Whether the repository declares the named type as an enum. */
         private boolean isEnum(final String uniqueName) {
@@ -1116,6 +1434,16 @@ final class CSharpModelAssembler {
                 if ("enum".equals(type.kind)) {
                     enumTypes.add(type.uniqueName);
                 }
+                if ("class".equals(type.kind) && type.modifiers.contains("static") && type.arity == 0
+                        && isDeclaredDirectlyInNamespace(type)) {
+                    for (final CSharpModel.CSharpMemberModel member : type.members) {
+                        if ("method".equals(member.kind) && member.name != null && !member.parameters.isEmpty()
+                                && member.parameters.get(0).extensionReceiver) {
+                            extensionMethods.computeIfAbsent(bareName(member.name), key -> new HashMap<>())
+                                    .computeIfAbsent(type.uniqueName, key -> new ArrayList<>()).add(member);
+                        }
+                    }
+                }
                 for (final CSharpModel.CSharpMemberModel member : type.members) {
                     // A constant is a member of its type, but reading one is not a dependency on a
                     // type -- `return NOTE;` says nothing about the structure of the codebase. It is
@@ -1130,6 +1458,13 @@ final class CSharpModelAssembler {
                     }
                 }
             }
+        }
+
+        private static boolean isDeclaredDirectlyInNamespace(final CSharpModel.CSharpTypeModel type) {
+            if (type.namespaceName == null || type.namespaceName.isEmpty()) {
+                return type.uniqueName.equals(type.name);
+            }
+            return type.uniqueName.equals(type.namespaceName + "." + type.name);
         }
 
         /**

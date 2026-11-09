@@ -933,6 +933,9 @@ final class CSharpFileParser {
                     // `this` is not in the modifier vocabulary, but it is what makes the method an
                     // extension of the type this parameter names.
                     parameter.extensionReceiver = normalizeWhitespace(child.text).startsWith("this ");
+                    final String parameterText = withoutCommentsAndStrings(child.text);
+                    parameter.optional = parameterText.indexOf('=') >= 0;
+                    parameter.paramsArray = PARAMS_MODIFIER.matcher(parameterText).find();
                     member.parameters.add(parameter);
                 }
             }
@@ -951,6 +954,8 @@ final class CSharpFileParser {
         }
         return member;
     }
+
+    private static final Pattern PARAMS_MODIFIER = Pattern.compile("(?:^|\\s)params\\s");
 
     /**
      * The offset just past the {@code =>} of an expression-bodied callable, or -1 when it has none.
@@ -1143,6 +1148,7 @@ final class CSharpFileParser {
         }
         collectStaticReceivers(text, member);
         collectTypeofOperands(text, member);
+        collectExtensionCalls(text, member);
     }
 
     private static void collectLambdaVariable(final SyntaxNode parameter,
@@ -1158,6 +1164,116 @@ final class CSharpFileParser {
             member.simpleTypeUsages.add(written);
         }
         member.lambdaVariables.computeIfAbsent(name, key -> new ArrayList<>()).add(written);
+    }
+
+    private static final Pattern MEMBER_CALL_PATTERN = Pattern.compile(
+            "\\.\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?:<[\\w.,\\s?\\[\\]<>]*>)?\\s*\\(");
+
+    /**
+     * Records every {@code receiver.Name(...)} outside comments and string literals, with the
+     * receiver written as a plain chain of names when it is one, and the number of arguments.
+     */
+    private static void collectExtensionCalls(final String text, final CSharpModel.CSharpMemberModel member) {
+        final String clean = withoutCommentsAndStrings(text);
+        final Matcher matcher = MEMBER_CALL_PATTERN.matcher(clean);
+        while (matcher.find()) {
+            int i = matcher.start() - 1;
+            while (i >= 0 && Character.isWhitespace(clean.charAt(i))) {
+                i -= 1;
+            }
+            if (i >= 0 && clean.charAt(i) == '?') {
+                i -= 1;
+                while (i >= 0 && Character.isWhitespace(clean.charAt(i))) {
+                    i -= 1;
+                }
+            }
+            if (i < 0 || clean.charAt(i) == '>' || clean.charAt(i) == '.') {
+                // Nothing before it, a generic type's static call, or a range: not a member call.
+                continue;
+            }
+            final String receiver = receiverChain(clean, i);
+            member.extensionCalls.add(new CSharpModel.ExtensionCall(
+                    receiver, matcher.group(1), argumentCount(clean, matcher.end())));
+        }
+    }
+
+    /** The dotted chain of names that ends at {@code last}, or null when it is not all of the receiver. */
+    private static String receiverChain(final String text, final int last) {
+        if (!isNamePart(text.charAt(last))) {
+            return null;
+        }
+        final List<String> segments = new ArrayList<>();
+        int end = last + 1;
+        while (true) {
+            int start = end;
+            while (start > 0 && isNamePart(text.charAt(start - 1))) {
+                start -= 1;
+            }
+            final String segment = text.substring(start, end);
+            if (Character.isDigit(segment.charAt(0))) {
+                return null;
+            }
+            segments.add(0, segment);
+            int j = start - 1;
+            while (j >= 0 && Character.isWhitespace(text.charAt(j))) {
+                j -= 1;
+            }
+            if (j < 0 || text.charAt(j) != '.') {
+                break;
+            }
+            int k = j - 1;
+            while (k >= 0 && Character.isWhitespace(text.charAt(k))) {
+                k -= 1;
+            }
+            if (k >= 0 && text.charAt(k) == '?') {
+                k -= 1;
+                while (k >= 0 && Character.isWhitespace(text.charAt(k))) {
+                    k -= 1;
+                }
+            }
+            if (k < 0 || !isNamePart(text.charAt(k))) {
+                return null;
+            }
+            end = k + 1;
+        }
+        return String.join(".", segments);
+    }
+
+    private static boolean isNamePart(final char c) {
+        return Character.isLetterOrDigit(c) || c == '_' || c == '@';
+    }
+
+    /** The number of arguments in the list that opens just before {@code from}, or -1 when unreadable. */
+    private static int argumentCount(final String text, final int from) {
+        int depth = 0;
+        int commas = 0;
+        boolean any = false;
+        for (int i = from; i < text.length(); i++) {
+            final char c = text.charAt(i);
+            if (c == '<') {
+                return -1;
+            }
+            if (c == '(' || c == '[' || c == '{') {
+                depth += 1;
+                any = true;
+            } else if (c == ')' || c == ']' || c == '}') {
+                if (depth == 0) {
+                    if (c != ')') {
+                        return -1;
+                    }
+                    if (any) {
+                        return commas + 1;
+                    }
+                    return 0;
+                }
+                depth -= 1;
+            } else if (c == ',' && depth == 0) {
+                commas += 1;
+            } else if (!Character.isWhitespace(c)) {
+                any = true;
+            }
+        }
+        return -1;
     }
 
     private static final Pattern TYPEOF_OPERAND_PATTERN =

@@ -202,6 +202,11 @@ final class CSharpModel {
         List<String> typeofOperands = new ArrayList<>();
         List<String> memberUsages = new ArrayList<>();
         /**
+         * The calls of the form {@code receiver.Name(...)} in the member's body or initializer, each of
+         * which may be a call of an extension method.
+         */
+        Set<ExtensionCall> extensionCalls = new LinkedHashSet<>();
+        /**
          * The variables that lambdas and anonymous methods in the member declare, by name, with the
          * type each is written with; a null type is an implicitly typed parameter.
          */
@@ -223,8 +228,20 @@ final class CSharpModel {
         List<String> initializerAccess = new ArrayList<>();
     }
 
+    /**
+     * A call {@code receiver.Name(...)}. The receiver is the dotted chain of names written before the
+     * call, or null when what precedes it is not such a chain (a call result, an indexer, a literal).
+     * The argument count is -1 when it could not be read.
+     */
+    record ExtensionCall(String receiver, String name, int argumentCount) {
+    }
+
     static final class CSharpParameterModel {
         String name;
+        /** True when the parameter has a default value. */
+        boolean optional;
+        /** True for a {@code params} array. */
+        boolean paramsArray;
         String declaredType;
         /** True for the {@code this} parameter of an extension method, which names the type it extends. */
         boolean extensionReceiver;
