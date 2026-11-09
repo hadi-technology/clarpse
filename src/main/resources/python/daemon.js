@@ -3820,8 +3820,16 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         }
       }
     }
-    // The bounds of the class's own type parameters are types the class depends on, not bases.
+    // A `metaclass=` keyword and the bounds of the class's own type parameters are types the class
+    // depends on; neither is a base.
     const dependencyExprs = [];
+    if (statement.d && Array.isArray(statement.d.arguments)) {
+      for (const arg of statement.d.arguments) {
+        if (arg && arg.d && arg.d.name && nameFromNode(arg.d.name) === 'metaclass' && arg.d.valueExpr) {
+          dependencyExprs.push(arg.d.valueExpr);
+        }
+      }
+    }
     for (const typeParam of typeParametersOf(statement)) {
       const bound = typeParam.d.boundExpr;
       if (bound) {
