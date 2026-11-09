@@ -625,6 +625,96 @@ function collectParsedImportStatements(parseTree, fileText, parseNodeType) {
   return { moduleScope, nested };
 }
 
+const DYNAMIC_MODULE_NAME = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+
+/**
+ * The modules a file loads by calling `importlib.import_module("pkg.mod")`, `import_module("pkg.mod")`
+ * after `from importlib import import_module`, or `__import__("pkg.mod")`.
+ *
+ * Only a string literal names a module: an f-string, a variable or a concatenation is not read. The
+ * call has to reach `importlib` through an import the file makes. A relative name -- `".x"` -- is
+ * resolved only when the package it is relative to is written plainly beside it, as `package=__package__`,
+ * `package=__name__` or a string literal; otherwise it is left out.
+ */
+function collectDynamicImports(parseTree, parseNodeType, importCtx, scopes) {
+  const types = parseNodeType || {};
+  const found = [];
+  const bindsImportlib = name => {
+    if (!name) return false;
+    return scopes.some(scope => {
+      const bound = scope.importedModules.get(name);
+      if (bound === 'importlib') return true;
+      // `import importlib.util` binds `importlib`, and is recorded under its full dotted name.
+      return name === 'importlib' && Array.from(scope.importedModules.keys())
+        .some(key => key === 'importlib' || key.startsWith('importlib.'));
+    });
+  };
+  const bindsImportModule = name => name && scopes.some(scope => {
+    const symbol = scope.importedSymbols.get(name);
+    return !!symbol && symbol.moduleName === 'importlib' && symbol.symbolName === 'import_module';
+  });
+  const positional = (call, index) => {
+    const args = (call.d.args || []).filter(arg => arg && arg.d && !arg.d.name && arg.d.argCategory === 0);
+    return args[index] ? args[index].d.valueExpr : null;
+  };
+  const keyword = (call, name) => {
+    const arg = (call.d.args || []).find(each => each && each.d && each.d.name && nameFromNode(each.d.name) === name);
+    return arg ? arg.d.valueExpr : null;
+  };
+  const packageOf = call => {
+    const expr = positional(call, 1) || keyword(call, 'package');
+    if (!expr) return null;
+    const written = nameFromNode(expr);
+    if (written === '__package__') return importCtx.packageName || null;
+    if (written === '__name__') {
+      return importCtx.moduleName === '__init__' ? importCtx.packageName || null : importCtx.fullModuleName;
+    }
+    return stringLiteralValue(expr, types);
+  };
+  const resolveName = (call, written) => {
+    if (!written.startsWith('.')) {
+      return DYNAMIC_MODULE_NAME.test(written) ? written : null;
+    }
+    const dots = written.length - written.replace(/^\.+/, '').length;
+    const rest = written.slice(dots);
+    const base = packageOf(call);
+    if (!base || (rest && !DYNAMIC_MODULE_NAME.test(rest))) return null;
+    const parts = base.split('.');
+    if (dots - 1 >= parts.length) return null;
+    const resolved = parts.slice(0, parts.length - (dots - 1)).concat(rest ? [rest] : []).join('.');
+    // A relative name is only as certain as the package it is relative to, so it counts when the
+    // module it works out to is one the repo holds.
+    return importCtx.moduleIndex.has(resolved) ? resolved : null;
+  };
+
+  function visit(node) {
+    if (!node || typeof node !== 'object' || !node.d) return;
+    if (node.nodeType === types.Call) {
+      const callee = node.d.leftExpr;
+      let loads = false;
+      if (callee && callee.nodeType === types.Name) {
+        const calleeName = nameFromNode(callee);
+        loads = calleeName === '__import__' || bindsImportModule(calleeName);
+      } else if (callee && callee.nodeType === types.MemberAccess) {
+        loads = nameFromNode(callee.d.member) === 'import_module' && bindsImportlib(dottedNameOf(callee.d.leftExpr, types));
+      }
+      const written = loads ? stringLiteralValue(positional(node, 0), types) : null;
+      const moduleName = written ? resolveName(node, written) : null;
+      if (moduleName) found.push(moduleName);
+    }
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      if (Array.isArray(child)) {
+        child.forEach(visit);
+      } else if (child && typeof child === 'object' && child.d) {
+        visit(child);
+      }
+    }
+  }
+  visit(parseTree);
+  return found;
+}
+
 function collectImports(fileText, ctx) {
   return resolveImportStatements(collectImportStatements(fileText), ctx);
 }
@@ -3118,6 +3208,22 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
   return refs;
 }
 
+/** The text of a string literal written without interpolation, or null for any other expression. */
+function stringLiteralValue(node, parseNodeType) {
+  if (!node || !node.d || node.nodeType !== parseNodeType.StringList || !Array.isArray(node.d.strings)
+    || !node.d.strings.length) {
+    return null;
+  }
+  let text = '';
+  for (const part of node.d.strings) {
+    if (!part || part.nodeType !== parseNodeType.String || typeof part.d.value !== 'string') {
+      return null;
+    }
+    text += part.d.value;
+  }
+  return text;
+}
+
 /**
  * The local variables a function binds in its own body.
  *
@@ -3846,6 +3952,7 @@ async function handleGetFileModel(params) {
   const importCtx = {
     moduleIndex: state.moduleIndex,
     fullModuleName,
+    moduleName,
     packageName,
     repoRoot: state.repoRoot
   };
@@ -3901,6 +4008,9 @@ async function handleGetFileModel(params) {
       importList.push(symbol.moduleName + '.' + symbol.symbolName);
     }
   }
+  // A module loaded by name from a string literal is imported as much as one a statement names.
+  importList.push(...collectDynamicImports(parseTree, parseNodeType, importCtx,
+    [imported, nestedImported]));
   return {
     result: {
       filePath: normalized,
