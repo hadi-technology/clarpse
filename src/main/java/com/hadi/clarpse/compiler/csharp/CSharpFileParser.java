@@ -942,8 +942,32 @@ final class CSharpFileParser {
             member.cyclo = calculateCyclo(block.text);
             member.locals.addAll(parseLocals(block, fileModel, ownerType));
             collectBodyRefs(block, member, fileModel.sourceText);
+        } else {
+            final int bodyStart = expressionBodyStart(node, parentList, fileModel.sourceText);
+            if (bodyStart >= 0) {
+                member.cyclo = calculateCyclo(fileModel.sourceText.substring(bodyStart, node.endOffset));
+                collectBodyRefs(node, member, fileModel.sourceText, bodyStart);
+            }
         }
         return member;
+    }
+
+    /**
+     * The offset just past the {@code =>} of an expression-bodied callable, or -1 when it has none.
+     * The arrow is the first one after the parameter list outside comments and strings.
+     */
+    private static int expressionBodyStart(final SyntaxNode node, final SyntaxNode parameterList,
+                                           final String sourceText) {
+        if (parameterList == null || sourceText == null || node.endOffset > sourceText.length()
+                || parameterList.endOffset > node.endOffset) {
+            return -1;
+        }
+        final String tail = withoutCommentsAndStrings(sourceText.substring(parameterList.endOffset, node.endOffset));
+        final int arrow = tail.indexOf("=>");
+        if (arrow < 0) {
+            return -1;
+        }
+        return parameterList.endOffset + arrow + 2;
     }
 
     private static List<CSharpModel.CSharpMemberModel> parseLocals(final SyntaxNode block,
@@ -1063,7 +1087,21 @@ final class CSharpFileParser {
     private static void collectBodyRefs(final SyntaxNode block,
                                         final CSharpModel.CSharpMemberModel member,
                                         final String sourceText) {
+        collectBodyRefs(block, member, sourceText, -1);
+    }
+
+    /**
+     * Collects the references in a body. With a {@code bodyStart}, only what the declaration holds
+     * from that offset on is read: the expression of an expression-bodied member, not its signature.
+     */
+    private static void collectBodyRefs(final SyntaxNode block,
+                                        final CSharpModel.CSharpMemberModel member,
+                                        final String sourceText,
+                                        final int bodyStart) {
         for (final SyntaxNode descendant : descendants(block)) {
+            if (bodyStart >= 0 && descendant.startOffset < bodyStart) {
+                continue;
+            }
             if ("cs:new-expression".equals(descendant.type)) {
                 final String typeText = firstDirectChildText(descendant, "cs:type-usage-role");
                 if (typeText != null && !typeText.isEmpty()) {
@@ -1088,8 +1126,12 @@ final class CSharpFileParser {
                 }
             }
         }
-        collectStaticReceivers(blockText(block, sourceText), member);
-        collectTypeofOperands(blockText(block, sourceText), member);
+        String text = blockText(block, sourceText);
+        if (bodyStart >= 0 && sourceText != null && block.endOffset <= sourceText.length()) {
+            text = sourceText.substring(bodyStart, block.endOffset);
+        }
+        collectStaticReceivers(text, member);
+        collectTypeofOperands(text, member);
     }
 
     private static final Pattern TYPEOF_OPERAND_PATTERN =
