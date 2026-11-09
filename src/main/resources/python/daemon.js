@@ -2558,6 +2558,11 @@ function resolveSingleTypeRef(annotationNode, rawText, ctx) {
 
 function resolveSingleTypeRefPlain(annotationNode, rawText, ctx) {
   const raw = rawText ? rawText.trim() : '';
+  // A type variable is not a type: `x: T` depends on nothing named `T`. Its bound is recorded where
+  // the variable is declared.
+  if (ctx.typeVariables && ctx.typeVariables.has(raw)) {
+    return { raw, targetUniqueName: null, externalLabel: null, typeVariable: true, alternates: [] };
+  }
   const evaluated = resolveTypeWithEvaluator(annotationNode, raw, ctx);
   if (evaluated && evaluated.targetUniqueName) {
     return { raw, targetUniqueName: evaluated.targetUniqueName, externalLabel: null, alternates: [] };
@@ -2697,7 +2702,8 @@ function extractParams(funcNode, ctx, parseNodeType) {
       implementationHash: stableImplementationHash(textForNode(param, ctx.fileText)),
       targetUniqueName: ref ? ref.targetUniqueName : null,
       externalLabel: ref ? ref.externalLabel : null,
-      alternates: ref ? ref.alternates : []
+      alternates: ref ? ref.alternates : [],
+    typeVariable: ref ? !!ref.typeVariable : false
     });
   }
   return params;
@@ -3084,6 +3090,30 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     }
   }
 
+  /**
+   * A bound or constraint of a type variable written as a string -- `TypeVar("T", bound="Cfg")` -- is
+   * the forward reference to a class it looks like.
+   */
+  function addTypeVariableStringBounds(call) {
+    if (!isTypeVariableFactory(call.d.leftExpr, parseNodeType)) {
+      return;
+    }
+    (call.d.args || []).forEach((arg, index) => {
+      const keyword = arg && arg.d && arg.d.name ? nameFromNode(arg.d.name) : null;
+      if ((index === 0 && !keyword) || (keyword && keyword !== 'bound')) {
+        return;
+      }
+      const text = stringLiteralValue(arg.d.valueExpr, parseNodeType);
+      for (const candidate of text ? extractCandidateNames(text) : []) {
+        if (candidate.indexOf('.') > 0) {
+          addModuleMemberRef(candidate);
+        } else {
+          addClassRef(candidate, candidate);
+        }
+      }
+    });
+  }
+
   function walk(node) {
     if (!node || typeof node !== 'object' || !node.d) return;
 
@@ -3100,6 +3130,7 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     }
 
     if (parseNodeType && parseNodeType.Call !== undefined && node.nodeType === parseNodeType.Call) {
+      addTypeVariableStringBounds(node);
       const calleeNode = node.d.leftExpr;
       if (calleeNode && !addModuleMemberRef(dottedNameOf(calleeNode, parseNodeType))) {
         addRef(textForNode(calleeNode, ctx.fileText));
@@ -3163,6 +3194,12 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     const wasInHeader = inHeader;
     inHeader = true;
     (getNodeProp(node, ['decorators']) || []).forEach(walk);
+    // The bounds of a PEP 695 type parameter list -- `def f[T: Cfg]`, `class K[V: Qux]` -- are
+    // evaluated where the definition is.
+    for (const typeParam of typeParametersOf(node)) {
+      walk(typeParam.d.boundExpr);
+      walk(typeParam.d.defaultExpr);
+    }
     if (isClassNode(node, parseNodeType)) {
       (getNodeProp(node, ['arguments']) || []).forEach(walk);
     } else {
@@ -3208,6 +3245,20 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
   return refs;
 }
 
+/** The type parameters a definition declares with PEP 695 syntax, `def f[T: Cfg]` or `class K[V]`. */
+function typeParametersOf(node) {
+  const list = node && node.d ? node.d.typeParams : null;
+  return list && list.d && Array.isArray(list.d.params) ? list.d.params.filter(param => param && param.d) : [];
+}
+
+const TYPE_VARIABLE_FACTORIES = new Set(['TypeVar', 'ParamSpec', 'TypeVarTuple']);
+
+/** Whether an expression names `TypeVar`, `ParamSpec` or `TypeVarTuple`, bare or through a module. */
+function isTypeVariableFactory(callee, parseNodeType) {
+  const dotted = dottedNameOf(callee, parseNodeType);
+  return !!dotted && TYPE_VARIABLE_FACTORIES.has(dotted.substring(dotted.lastIndexOf('.') + 1));
+}
+
 /** The text of a string literal written without interpolation, or null for any other expression. */
 function stringLiteralValue(node, parseNodeType) {
   if (!node || !node.d || node.nodeType !== parseNodeType.StringList || !Array.isArray(node.d.strings)
@@ -3222,6 +3273,34 @@ function stringLiteralValue(node, parseNodeType) {
     text += part.d.value;
   }
   return text;
+}
+
+/**
+ * The type variables a module declares at its top level -- `T = TypeVar("T")`. A type variable names no
+ * type, so an annotation naming one records no dependency.
+ */
+function collectTypeVariableNames(parseTree, parseNodeType) {
+  const names = new Set();
+  for (const statement of getStatementsFromSuite(parseTree)) {
+    if (statement && statement.nodeType === parseNodeType.Assignment && statement.d.rightExpr
+      && statement.d.rightExpr.nodeType === parseNodeType.Call
+      && isTypeVariableFactory(statement.d.rightExpr.d.leftExpr, parseNodeType)) {
+      const name = nameFromNode(statement.d.leftExpr);
+      if (name) {
+        names.add(name);
+      }
+    }
+  }
+  return names;
+}
+
+/** The context for a definition whose own PEP 695 type parameters are in scope inside it. */
+function withTypeParameters(ctx, node) {
+  const own = typeParametersOf(node).map(param => nameFromNode(param.d.name)).filter(Boolean);
+  if (!own.length) {
+    return ctx;
+  }
+  return Object.assign({}, ctx, { typeVariables: new Set([...(ctx.typeVariables || []), ...own]) });
 }
 
 /**
@@ -3337,13 +3416,15 @@ function collectLocalVariables(functionNode, ctx, parseNodeType) {
       implementationHash: stableImplementationHash(textForNode(entry.statement, ctx.fileText)),
       targetUniqueName: ref ? ref.targetUniqueName : null,
       externalLabel: ref ? ref.externalLabel : null,
-      alternates: ref ? ref.alternates : []
+      alternates: ref ? ref.alternates : [],
+    typeVariable: ref ? !!ref.typeVariable : false
     });
   }
   return locals;
 }
 
-function extractMethod(methodNode, ctx, parseNodeType) {
+function extractMethod(methodNode, enclosingCtx, parseNodeType) {
+  const ctx = withTypeParameters(enclosingCtx, methodNode);
   const name = nameFromNode(methodNode.d && methodNode.d.name ? methodNode.d.name : null);
   if (!name) {
     return null;
@@ -3385,7 +3466,8 @@ function extractMethod(methodNode, ctx, parseNodeType) {
   };
 }
 
-function extractFunction(functionNode, ctx, parseNodeType) {
+function extractFunction(functionNode, enclosingCtx, parseNodeType) {
+  const ctx = withTypeParameters(enclosingCtx, functionNode);
   const name = nameFromNode(functionNode.d && functionNode.d.name ? functionNode.d.name : null);
   if (!name) {
     return null;
@@ -3504,6 +3586,7 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
     targetUniqueName: ref ? ref.targetUniqueName : null,
     externalLabel: ref ? ref.externalLabel : null,
     alternates: ref ? ref.alternates : [],
+    typeVariable: ref ? !!ref.typeVariable : false,
     valueReferences
   };
 }
@@ -3552,7 +3635,8 @@ function extractInstanceFieldFromStatement(statement, ctx) {
     implementationHash: stableImplementationHash(statementText),
     targetUniqueName: ref ? ref.targetUniqueName : null,
     externalLabel: ref ? ref.externalLabel : null,
-    alternates: ref ? ref.alternates : []
+    alternates: ref ? ref.alternates : [],
+    typeVariable: ref ? !!ref.typeVariable : false
   };
 }
 
@@ -3701,6 +3785,8 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       continue;
     }
     const classUniqueName = resolveClassUniqueName(className, ctx, parentUniqueName);
+    // The class's own PEP 695 type parameters are in scope in its bases, its bounds and its body.
+    const scopedCtx = withTypeParameters(ctx, statement);
     const classComment = extractSuiteDocString(statement.d ? statement.d.suite : null, ctx.fileText);
     const classDecorators = extractDecoratorNames(statement, ctx.fileText);
     const classDecoratorArguments = extractDecoratorArguments(statement, ctx);
@@ -3715,7 +3801,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         .map(arg => (arg && arg.d && arg.d.valueExpr ? arg.d.valueExpr : arg))
         .filter(Boolean);
     }
-    const bases = baseExprs.map(expr => resolveTypeRef(expr, textForNode(expr, ctx.fileText), ctx)).filter(Boolean);
+    const bases = baseExprs.map(expr => resolveTypeRef(expr, textForNode(expr, ctx.fileText), scopedCtx)).filter(Boolean);
     // The type arguments of a generic base -- `Base[arch.Item]` -- are types the class depends on; only
     // the generic itself is extended.
     const baseArguments = [];
@@ -3734,8 +3820,25 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
         }
       }
     }
+    // The bounds of the class's own type parameters are types the class depends on, not bases.
+    const dependencyExprs = [];
+    for (const typeParam of typeParametersOf(statement)) {
+      const bound = typeParam.d.boundExpr;
+      if (bound) {
+        dependencyExprs.push(...(bound.nodeType === parseNodeType.Tuple ? bound.d.items || [] : [bound]));
+      }
+    }
+    for (const expr of dependencyExprs) {
+      const dependency = resolveTypeRef(expr, textForNode(expr, ctx.fileText), scopedCtx);
+      const key = dependency ? dependency.targetUniqueName || dependency.externalLabel : null;
+      if (key && !baseArgumentTargets.has(key)) {
+        baseArgumentTargets.add(key);
+        baseArguments.push({ raw: dependency.raw, targetUniqueName: dependency.targetUniqueName,
+          externalLabel: dependency.externalLabel, alternates: dependency.alternates });
+      }
+    }
     const isEnum = baseExprs.some(expr => isEnumBase(textForNode(expr, ctx.fileText)));
-    const classCtx = Object.assign({}, ctx, { className, classUniqueName });
+    const classCtx = Object.assign({}, scopedCtx, { className, classUniqueName });
     const suiteStatements = getStatementsFromSuite(statement.d ? statement.d.suite : null);
     const methods = [];
     const fields = [];
@@ -3975,6 +4078,7 @@ async function handleGetFileModel(params) {
     localClasses,
     localFunctions: collectLocalFunctions(parseTree, parseNodeType),
     localValues: moduleLevelValueNames(parseTree, parseNodeType),
+    typeVariables: collectTypeVariableNames(parseTree, parseNodeType),
     fileText,
     evaluator: null
   };

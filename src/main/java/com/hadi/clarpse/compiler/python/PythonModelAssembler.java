@@ -412,6 +412,7 @@ final class PythonModelAssembler {
         typeRef.targetUniqueName = field.targetUniqueName;
         typeRef.externalLabel = field.externalLabel;
         typeRef.alternates = field.alternates;
+        typeRef.typeVariable = field.typeVariable;
         insertReferences(component, typeRef, false);
         if (field.valueReferences != null) {
             for (final PythonTypeRefModel valueRef : field.valueReferences) {
@@ -457,6 +458,7 @@ final class PythonModelAssembler {
         typeRef.targetUniqueName = field.targetUniqueName;
         typeRef.externalLabel = field.externalLabel;
         typeRef.alternates = field.alternates;
+        typeRef.typeVariable = field.typeVariable;
         insertReferences(component, typeRef, false);
         if (field.valueReferences != null) {
             for (final PythonTypeRefModel valueRef : field.valueReferences) {
@@ -583,6 +585,7 @@ final class PythonModelAssembler {
         typeRef.targetUniqueName = param.targetUniqueName;
         typeRef.externalLabel = param.externalLabel;
         typeRef.alternates = param.alternates;
+        typeRef.typeVariable = param.typeVariable;
         insertReferences(component, typeRef, false);
         return component;
     }
@@ -613,6 +616,7 @@ final class PythonModelAssembler {
         typeRef.targetUniqueName = param.targetUniqueName;
         typeRef.externalLabel = param.externalLabel;
         typeRef.alternates = param.alternates;
+        typeRef.typeVariable = param.typeVariable;
         insertReferences(component, typeRef, false);
         return component;
     }
@@ -743,6 +747,7 @@ final class PythonModelAssembler {
         typeRef.targetUniqueName = local.targetUniqueName;
         typeRef.externalLabel = local.externalLabel;
         typeRef.alternates = local.alternates;
+        typeRef.typeVariable = local.typeVariable;
         insertReferences(component, typeRef, false);
         return component;
     }
@@ -819,7 +824,7 @@ final class PythonModelAssembler {
 
     private static ComponentReference buildReference(final PythonTypeRefModel ref,
                                                      final boolean isExtends) {
-        if (ref == null) {
+        if (ref == null || ref.typeVariable) {
             return null;
         }
         String invoked = null;

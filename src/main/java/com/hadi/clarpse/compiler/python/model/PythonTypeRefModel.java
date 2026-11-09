@@ -9,6 +9,9 @@ public class PythonTypeRefModel {
     public String targetUniqueName;
     public String externalLabel;
 
+    /** Whether the written name is a type variable, which names no type and so records no reference. */
+    public boolean typeVariable;
+
     /**
      * The remaining arms of a union annotation, one reference each.
      *
