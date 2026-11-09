@@ -3086,8 +3086,28 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
           moduleMemberTargets.add(resolved);
           refs.push({ raw: calleeText, targetUniqueName: resolved, externalLabel: resolved });
         }
+      } else {
+        addExternalConstruction(calleeText);
       }
     }
+  }
+
+  /**
+   * A capitalised name an import binds to a module outside the repo and that the code calls --
+   * `Session()` after `from requests import Session` -- constructs a class of a package the repo
+   * does not hold, and is the dependency the annotation `s: Session` already records, under the same
+   * label. Only a name an import binds counts, and only where the function does not bind it itself;
+   * a name no import binds is never guessed at.
+   */
+  function addExternalConstruction(name) {
+    if (!/^[A-Z]/.test(name) || TYPE_VARIABLE_FACTORIES.has(name) || isLocal(name) || !ctx.importedSymbols) {
+      return;
+    }
+    const imported = ctx.importedSymbols.get(name);
+    if (!imported || !imported.moduleName || !imported.symbolName || moduleFileFor(imported.moduleName, ctx)) {
+      return;
+    }
+    refs.push({ raw: name, targetUniqueName: null, externalLabel: imported.moduleName + '.' + imported.symbolName });
   }
 
   /**
