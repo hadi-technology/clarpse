@@ -2837,9 +2837,33 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
   if (!suite || !suite.d) {
     return [];
   }
+  return collectReferences(functionNode, null, null, ctx, parseNodeType);
+}
+
+/**
+ * What the value assigned to a class attribute or a module-level name refers to -- `objects = Manager()`,
+ * `handlers = [Foo]`, `c = lambda self: Cfg()`, `x = Bar.LIMIT` -- found the way the same expression is
+ * found in a function body. `boundNames` are the names the surrounding class body has already bound,
+ * which hide the module's own for what follows.
+ */
+function collectValueExpressionReferences(valueExpression, boundNames, ctx, parseNodeType) {
+  if (!valueExpression || !valueExpression.d) {
+    return [];
+  }
+  return collectReferences(null, valueExpression, boundNames, ctx, parseNodeType);
+}
+
+/**
+ * The references made by a function's body, or by a single value expression (exactly one of
+ * `functionNode` and `valueExpression` is given).
+ */
+function collectReferences(functionNode, valueExpression, boundNames, ctx, parseNodeType) {
+  const suite = functionNode ? functionNode.d.suite : null;
   const refs = [];
   const seen = new Set();
-  const localNames = collectLocalNames(functionNode, parseNodeType);
+  const localNames = functionNode ? collectLocalNames(functionNode, parseNodeType)
+    : collectLocalNames(valueExpression, parseNodeType);
+  (boundNames || []).forEach(name => localNames.add(name));
   // A name the function's own imports bind resolves through them.
   (ctx.functionImportNames || []).forEach(name => localNames.delete(name));
   // The names bound by the scopes being walked, innermost last. A nested function or class binds
@@ -2962,7 +2986,10 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
     } else {
       const resolved = resolveTypeFromRaw(calleeText, ctx);
       if (resolved) {
-        refs.push({ raw: calleeText, targetUniqueName: resolved, externalLabel: resolved });
+        if (!moduleMemberTargets.has(resolved)) {
+          moduleMemberTargets.add(resolved);
+          refs.push({ raw: calleeText, targetUniqueName: resolved, externalLabel: resolved });
+        }
       }
     }
   }
@@ -3075,6 +3102,10 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
     scopes.pop();
   }
 
+  if (valueExpression) {
+    walk(valueExpression);
+    return refs;
+  }
   // The definition's own decorators and defaults are evaluated outside its body.
   const bodyScopes = scopes;
   scopes = [];
@@ -3351,6 +3382,15 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
   }
   const rawType = annotationNode ? textForNode(annotationNode, ctx.fileText) : 'Any';
   const ref = annotationNode ? resolveTypeRef(annotationNode, rawType, ctx) : null;
+  // What the annotation already records is not recorded a second time for the value.
+  const annotated = new Set();
+  if (ref) {
+    [ref].concat(ref.alternates || []).forEach(each => annotated.add(each.targetUniqueName || each.externalLabel));
+  }
+  const valueReferences = collectValueExpressionReferences(
+    statement.d ? statement.d.rightExpr : null, options && options.boundNames, ctx, parseNodeType)
+    .filter(each => !annotated.has(each.targetUniqueName || each.externalLabel))
+    .map(each => Object.assign({ alternates: [] }, each));
   return {
     name: fieldName,
     rawType: ref ? ref.raw : rawType,
@@ -3358,7 +3398,7 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
     targetUniqueName: ref ? ref.targetUniqueName : null,
     externalLabel: ref ? ref.externalLabel : null,
     alternates: ref ? ref.alternates : [],
-    valueReferences: collectValueReferences(statement, ctx, parseNodeType)
+    valueReferences
   };
 }
 
@@ -3531,45 +3571,6 @@ function localUniqueName(name, ctx) {
   return (ctx.packageName ? ctx.packageName + '.' : '') + ctx.moduleName + '.' + name;
 }
 
-/**
- * The module-level functions and values a field's initialiser names -- `_PARSERS = (parse_a, parse_b)`
- * depends on both functions. Nothing inside a lambda or nested definition is read.
- */
-function collectValueReferences(statement, ctx, parseNodeType) {
-  const value = statement && statement.d ? statement.d.rightExpr : null;
-  const refs = [];
-  const seen = new Set();
-  function walk(node) {
-    if (!node || typeof node !== 'object' || !node.d) {
-      return;
-    }
-    if (node.nodeType === parseNodeType.Lambda || isFunctionNode(node, parseNodeType)
-      || isClassNode(node, parseNodeType)) {
-      return;
-    }
-    if (node.nodeType === parseNodeType.Name) {
-      const name = nameFromNode(node);
-      if (name && ctx.localFunctions && ctx.localFunctions.has(name) && !seen.has(name)) {
-        seen.add(name);
-        const target = localUniqueName(name, ctx);
-        refs.push({ raw: name, targetUniqueName: target, externalLabel: target, alternates: [] });
-      }
-      return;
-    }
-    for (const key of Object.keys(node.d)) {
-      if (node.nodeType === parseNodeType.MemberAccess && key === 'member') {
-        continue;
-      }
-      const child = node.d[key];
-      for (const item of (Array.isArray(child) ? child : [child])) {
-        walk(item);
-      }
-    }
-  }
-  walk(value);
-  return refs;
-}
-
 function resolveClassUniqueName(className, ctx, parentUniqueName) {
   if (!className) {
     return '';
@@ -3667,7 +3668,8 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       // `kind = "standard"` is as much a member of the class as `limit: int = 10`, and requiring an
       // annotation left every unannotated one out of the model.
       const field = extractFieldFromStatement(node, classCtx, parseNodeType, {
-        requireAnnotation: !isAssignmentStatement(node, parseNodeType)
+        requireAnnotation: !isAssignmentStatement(node, parseNodeType),
+        boundNames: fieldNames
       });
       if (field && field.name && !fieldNames.has(field.name)) {
         // In an enumeration an unannotated class-level assignment names a member of it rather than
