@@ -1112,6 +1112,35 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     public final void visit(final VariableDeclarator ctx, final Object arg) {
         ctx.getType().accept(this, arg);
         ctx.getInitializer().ifPresent(init -> init.accept(this, arg));
+        recordInferredLocalType(ctx);
+    }
+
+    /**
+     * A local declared with {@code var} names no type where it is written, so the type the
+     * initializer resolves to is the dependency: {@code var x = a.getFoo();} depends on {@code Foo}.
+     * Only a reference type is recorded, an array through its element type; a type the solver cannot
+     * work out records nothing. Shallow parsing never asks the solver, so it records nothing here.
+     */
+    private void recordInferredLocalType(final VariableDeclarator ctx) {
+        if (shallow || componentStack.isEmpty() || !ctx.getType().isVarType() || ctx.getInitializer().isEmpty()) {
+            return;
+        }
+        try {
+            ResolvedType inferred = ctx.getInitializer().get().calculateResolvedType();
+            while (inferred.isArray()) {
+                inferred = inferred.asArrayType().getComponentType();
+            }
+            if (!inferred.isReferenceType()) {
+                return;
+            }
+            final String inferredName = extractClassName(inferred.asReferenceType().getQualifiedName());
+            if (!inferredName.isEmpty()) {
+                ParseUtil.insertCmpRef(componentStack.peek(), new SimpleTypeReference(inferredName),
+                        this.componentStack);
+            }
+        } catch (final Exception ignored) {
+            // The solver could not type the initializer; the local records nothing for it.
+        }
     }
 
     /**
