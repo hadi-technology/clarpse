@@ -1102,7 +1102,18 @@ final class CSharpFileParser {
             if (bodyStart >= 0 && descendant.startOffset < bodyStart) {
                 continue;
             }
-            if ("cs:new-expression".equals(descendant.type)) {
+            if ("cs:lambda-parameter-role".equals(descendant.type)) {
+                // A lambda's parameter is no parameter of the member: its type is written in the
+                // member's body and is referenced from it. An implicitly typed one names no type.
+                collectLambdaVariable(descendant, member);
+            } else if ("cs:delegate-kops-statement".equals(descendant.type)) {
+                final SyntaxNode parameters = firstChild(descendant, "cs:parent-list");
+                if (parameters != null) {
+                    for (final SyntaxNode parameter : parameters.children) {
+                        collectLambdaVariable(parameter, member);
+                    }
+                }
+            } else if ("cs:new-expression".equals(descendant.type)) {
                 final String typeText = firstDirectChildText(descendant, "cs:type-usage-role");
                 if (typeText != null && !typeText.isEmpty()) {
                     member.simpleTypeUsages.add(typeText);
@@ -1132,6 +1143,21 @@ final class CSharpFileParser {
         }
         collectStaticReceivers(text, member);
         collectTypeofOperands(text, member);
+    }
+
+    private static void collectLambdaVariable(final SyntaxNode parameter,
+                                              final CSharpModel.CSharpMemberModel member) {
+        final String name = firstIdentifier(parameter);
+        if (name == null || name.isEmpty()) {
+            return;
+        }
+        final String type = firstDirectChildText(parameter, "cs:type-usage-role");
+        String written = null;
+        if (type != null && !type.isBlank()) {
+            written = type.trim();
+            member.simpleTypeUsages.add(written);
+        }
+        member.lambdaVariables.computeIfAbsent(name, key -> new ArrayList<>()).add(written);
     }
 
     private static final Pattern TYPEOF_OPERAND_PATTERN =

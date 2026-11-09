@@ -201,6 +201,11 @@ final class CSharpModel {
         /** The operands of {@code typeof} in the member's body or initializer; each is a type as written. */
         List<String> typeofOperands = new ArrayList<>();
         List<String> memberUsages = new ArrayList<>();
+        /**
+         * The variables that lambdas and anonymous methods in the member declare, by name, with the
+         * type each is written with; a null type is an implicitly typed parameter.
+         */
+        Map<String, List<String>> lambdaVariables = new LinkedHashMap<>();
         Set<String> imports = new LinkedHashSet<>();
         /** The using aliases of the file that declares this member, which a partial type's other parts lack. */
         Map<String, String> usingAliases = new LinkedHashMap<>();
