@@ -251,6 +251,9 @@
 								</goals>
 							</execution>
 						</executions>
+						<configuration>
+							<excludeResources>true</excludeResources>
+						</configuration>
 					</plugin>
 					<plugin>
 						<groupId>org.apache.maven.plugins</groupId>
