@@ -17,9 +17,14 @@ import java.util.regex.Pattern;
  */
 final class CSharpBodyText {
 
+    /**
+     * A dotted name that a member access follows. Every repeated group has a count, because the regex
+     * engine recurses once per repetition of a group and an unbounded one overflows the stack on a
+     * generated chain of thousands of names; no written receiver has more than a few segments.
+     */
     private static final Pattern STATIC_RECEIVER_PATTERN =
-            Pattern.compile("(?<![\\w.@])([A-Z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)"
-                    + "\\s*(?:<[\\w.,\\s?\\[\\]]*(?:<[\\w.,\\s?\\[\\]]*>[\\w.,\\s?\\[\\]]*)*>)?\\s*\\.");
+            Pattern.compile("(?<![\\w.@])([A-Z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*){0,128})"
+                    + "\\s*(?:<[\\w.,\\s?\\[\\]]*(?:<[\\w.,\\s?\\[\\]]*>[\\w.,\\s?\\[\\]]*){0,128}>)?\\s*\\.");
 
     /**
      * Whether a {@code var} declaration is initialised by nothing but {@code new T(...)}, with an
@@ -207,7 +212,7 @@ final class CSharpBodyText {
     }
 
     private static final Pattern MEMBER_CALL_PATTERN = Pattern.compile(
-            "\\.\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?:<[\\w.,\\s?\\[\\]<>]*>)?\\s*\\(");
+            "\\.\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?:<[\\w.,\\s?\\[\\]<>]{0,1000}>)?\\s*\\(");
 
     /**
      * Records every {@code receiver.Name(...)} outside comments and string literals, with the
@@ -354,7 +359,8 @@ final class CSharpBodyText {
     private static final Pattern NEW_BEFORE = Pattern.compile("(?<![\\w.@])new\\s+$");
 
     private static final Pattern DECLARATION_AFTER = Pattern.compile(
-            "\\G\\s*[A-Za-z_]\\w*(?:\\s*<[^;(){}]*?>)?(?:\\s*\\.\\s*[A-Za-z_]\\w*(?:\\s*<[^;(){}]*?>)?)*"
+            "\\G\\s*[A-Za-z_]\\w*(?:\\s*<[^;(){}]{0,2000}?>)?"
+                    + "(?:\\s*\\.\\s*[A-Za-z_]\\w*(?:\\s*<[^;(){}]{0,2000}?>)?){0,128}"
                     + "\\s+([A-Za-z_@]\\w*)");
 
     /** Words that may follow an expression, so that a name before one is not a declared type. */

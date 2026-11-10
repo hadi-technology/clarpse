@@ -24,8 +24,8 @@ import java.util.regex.Pattern;
  */
 final class CSharpTypeTestText {
 
-    private static final String NAME = "(?:global::)?[A-Za-z_@][\\w@]*(?:\\s*\\.\\s*[A-Za-z_@][\\w@]*)*";
-    private static final String ARGUMENTS = "(?:\\s*<(?:[^<>;(){}]|<[^<>;(){}]*>)*>)?";
+    private static final String NAME = "(?:global::)?[A-Za-z_@][\\w@]*(?:\\s*\\.\\s*[A-Za-z_@][\\w@]*+)*+";
+    private static final String ARGUMENTS = "(?:\\s*<(?:[^<>;(){}]++|<[^<>;(){}]*+>)*+>)?";
     private static final String TYPE = NAME + ARGUMENTS;
     private static final String SUFFIX = "(?:\\s*\\?(?![?.]))?(?:\\s*\\[[\\s,]*\\])*";
     private static final String IDENT = "[A-Za-z_@][\\w@]*";
