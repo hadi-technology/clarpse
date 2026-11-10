@@ -72,7 +72,7 @@ public class KotlinPlatformStarImportTest {
     }
 
     @Test
-    public void aNameTwoJdkPackagesDeclareIsAmbiguousAndStaysUnresolved() {
-        assertEquals(ResolutionKind.UNRESOLVED, reference(component(model, "other.C.d"), "Date").resolutionKind());
+    public void aNameTwoJdkPackagesDeclareIsAmbiguousAndBindsToNeither() {
+        assertEquals(ResolutionKind.AMBIGUOUS, reference(component(model, "other.C.d"), "Date").resolutionKind());
     }
 }

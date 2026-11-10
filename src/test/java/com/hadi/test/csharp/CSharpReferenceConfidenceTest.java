@@ -102,19 +102,16 @@ public class CSharpReferenceConfidenceTest {
         assertEquals(ResolutionKind.UNRESOLVED, kindOf("Demo.App.Widget.missing", "Missing"));
     }
 
-    /**
-     * The other front ends do not report how they resolved a name. They say that, rather than
-     * claiming a confidence nothing measured.
-     */
+    /** Java reports how it resolved a name too: an implicit {@code java.lang} type is exact. */
     @Test
-    public void aLanguageThatDoesNotReportConfidenceSaysUnspecified() throws Exception {
+    public void javaReportsHowItResolvedANameToo() throws Exception {
         final ProjectFiles files = new ProjectFiles();
         files.insertFile(new ProjectFile("/app/Client.java",
                 "package app;\npublic class Client { private String name; }\n"));
         final OOPSourceCodeModel javaModel = new ClarpseProject(files, Lang.JAVA).result().model();
         final Component field = javaModel.copyOfComponent("app.Client.name").orElseThrow();
         for (final ComponentReference reference : field.references()) {
-            assertEquals(ResolutionKind.UNSPECIFIED, reference.resolutionKind());
+            assertEquals(ResolutionKind.EXACT, reference.resolutionKind());
         }
     }
 

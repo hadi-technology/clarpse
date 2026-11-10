@@ -1762,7 +1762,8 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
       }
       const key = `${kind}|external|${displayName}`;
       if (!seen.has(key)) {
-        references.push(externalReference(kind, displayName, !decl || isLostType(entry.type || type, displayName)));
+        references.push(externalReference(kind, displayName, !decl || isLostType(entry.type || type, displayName),
+          decl ? "exact" : "unresolved"));
         seen.add(key);
       }
     }
@@ -1783,13 +1784,18 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
 /**
  * An external reference, flagged `unresolved` in a one-level analysis when the type behind it was
  * lost rather than found outside the repository. Outside a one-level analysis nothing is flagged,
- * so ordinary output is unchanged.
+ * so ordinary output is unchanged. `resolution` says how the checker settled it otherwise: `exact`
+ * or `unresolved`.
  */
-function externalReference(kind, displayName, lost) {
+function externalReference(kind, displayName, lost, resolution) {
+  const reference = { kind, external: true, displayName };
   if (state.oneLevel && lost) {
-    return { kind, external: true, unresolved: true, displayName };
+    reference.unresolved = true;
   }
-  return { kind, external: true, displayName };
+  if (resolution) {
+    reference.resolution = resolution;
+  }
+  return reference;
 }
 
 const ANY_WORD = /(^|[^A-Za-z0-9_$])any([^A-Za-z0-9_$]|$)/;
@@ -1936,7 +1942,7 @@ function buildDecoratorReferences(node, checker) {
       references.push({
         kind: "annotation",
         external: !declared,
-        ...(declared ? { target: declared } : { displayName: name }),
+        ...(declared ? { target: declared } : { displayName: name, resolution: "unresolved" }),
         arguments: readDecoratorArguments(decorator.expression, checker)
       });
     }
@@ -2343,7 +2349,7 @@ function collectValueReferences(initializer, checker, owner) {
 }
 
 function externalNamedReference(packageName, symbolName) {
-  return { kind: "type", external: true, displayName: `${packageName}:${symbolName}` };
+  return { kind: "type", external: true, displayName: `${packageName}:${symbolName}`, resolution: "exact" };
 }
 
 /** The module specifier a symbol was imported with, or null where it was not imported. */

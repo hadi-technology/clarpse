@@ -329,15 +329,27 @@ final class TypeScriptModelAssembler {
             final ComponentReference componentReference = buildComponentReference(reference, repoRoot);
             if (componentReference != null
                     && !componentReference.invokedComponent().equals(component.uniqueName())) {
-                if (reference.unresolved) {
-                    componentReference.setResolutionKind(ResolutionKind.UNRESOLVED);
-                }
+                componentReference.setResolutionKind(resolutionOf(reference));
                 if (inRepositoryNames != null && !reference.external && reference.target != null) {
                     inRepositoryNames.add(componentReference.invokedComponent());
                 }
                 component.insertCmpRef(componentReference);
             }
         }
+    }
+
+    /** The resolution kind of a daemon reference: a repository target is exact, an external one as the daemon says. */
+    private static ResolutionKind resolutionOf(final TypeScriptReferenceModel reference) {
+        if (reference.unresolved) {
+            return ResolutionKind.UNRESOLVED;
+        }
+        if ("exact".equals(reference.resolution) || (!reference.external && reference.target != null)) {
+            return ResolutionKind.EXACT;
+        }
+        if ("unresolved".equals(reference.resolution)) {
+            return ResolutionKind.UNRESOLVED;
+        }
+        return ResolutionKind.UNSPECIFIED;
     }
 
     private static ComponentReference buildComponentReference(final TypeScriptReferenceModel reference,

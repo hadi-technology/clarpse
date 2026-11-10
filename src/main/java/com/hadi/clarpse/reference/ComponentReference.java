@@ -156,14 +156,14 @@ public abstract class ComponentReference implements Serializable, Cloneable {
     }
 
     /**
-     * How this reference was resolved, so a consumer can tell a name an import settled from one a
-     * short-name match guessed at.
+     * How this reference was resolved, so a consumer can tell a name the scoping rules settled from
+     * one that was kept as written. See {@link ResolutionKind} for the contract.
      *
      * <p>Deliberately not part of {@link #equals}: two references to the same type are the same
      * reference however each was arrived at, and folding this in would change what a set of
      * references deduplicates to.
      *
-     * @return The resolution kind, {@link ResolutionKind#UNSPECIFIED} where the front end did not say.
+     * @return The resolution kind, {@link ResolutionKind#UNSPECIFIED} where the language cannot say.
      */
     public ResolutionKind resolutionKind() {
         return resolutionKind;

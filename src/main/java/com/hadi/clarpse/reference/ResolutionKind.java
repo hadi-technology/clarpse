@@ -1,31 +1,48 @@
 package com.hadi.clarpse.reference;
 
 /**
- * How a {@link ComponentReference} came to name the type it names.
+ * How a {@link ComponentReference} came to name its target. The values mean the same in every
+ * language.
  *
- * <p>Resolving a written name to a type is not one thing. An import or a qualified name says
- * exactly which type is meant; a bare short name that happens to match one type in the repository
- * is a good guess; a short name matching several is a coin toss. All three produced the same
- * reference, so every relationship looked equally certain and a consumer had no way to decide which
- * ones were safe to rely on.
+ * <ul>
+ *   <li>{@link #EXACT}: the language's own scoping rules leave exactly one visible declaration
+ *       under the name (an import, an alias, a qualified name, an enclosing scope, the file's own
+ *       package or namespace, or a compiler symbol). The target is that declaration.</li>
+ *   <li>{@link #AMBIGUOUS}: several declarations are visible under the name and the source does
+ *       not choose between them. Nothing is bound; the target is the name as written.</li>
+ *   <li>{@link #UNRESOLVED}: no declaration is visible under the name. The target is the name as
+ *       written, and it may still be a repository type that was not visible from the file.</li>
+ *   <li>{@link #UNSPECIFIED}: only for a kind of reference where the language genuinely cannot say
+ *       how the target was arrived at.</li>
+ * </ul>
  *
- * <p>{@link #UNSPECIFIED} is the honest default. A front end that has not been taught to report how
- * it resolved a name says so, rather than claiming a confidence nothing measured.
+ * <p>"Visible" is the language's own scope. A type that exists somewhere in the repository but
+ * cannot be named from the file is not visible, so it makes a reference neither {@code EXACT} nor
+ * {@code AMBIGUOUS}.
+ *
+ * <p>A type that a one-level analysis did not load is not {@code UNRESOLVED}; it is reported by
+ * {@link ComponentReference#isNotLoaded()}.
  */
 public enum ResolutionKind {
 
-    /** An import, a using alias, a qualified name, an enclosing scope, or a compiler symbol. */
+    /** Exactly one declaration is visible under the name; the target is that declaration. */
     EXACT,
 
-    /** Exactly one type in the repository carries this short name; no front end reports it for a bare name. */
+    /**
+     * No front end produces this value any more. A short-name match outside the scoping rules is
+     * not a resolution; such a name is {@link #UNRESOLVED}. Do not branch on it.
+     *
+     * @deprecated never produced; kept so that code compiled against it still links.
+     */
+    @Deprecated
     UNIQUE_SIMPLE_NAME,
 
-    /** Several types carry this short name and nothing in scope chose between them. */
+    /** Several declarations are visible under the name and nothing chose between them; the name is kept as written. */
     AMBIGUOUS,
 
-    /** Nothing in scope names this type; the name is kept as written. */
+    /** No declaration is visible under the name; the name is kept as written. */
     UNRESOLVED,
 
-    /** The front end did not report how it resolved this reference. */
+    /** The language cannot say how this kind of reference was resolved. */
     UNSPECIFIED
 }

@@ -149,7 +149,7 @@ final class KotlinReceiverTyping {
             return null;
         }
         final Resolution resolved = resolver.resolve(name, scope, true);
-        if (resolved == null || resolved.kind() == ResolutionKind.UNRESOLVED) {
+        if (resolved == null || resolved.kind() != ResolutionKind.EXACT) {
             return null;
         }
         final KotlinDeclaration declaration = resolver.index().declaration(resolved.name());
@@ -241,7 +241,7 @@ final class KotlinReceiverTyping {
             return null;
         }
         final Resolution resolved = resolver.resolve(name, scope, true);
-        if (resolved == null || resolved.kind() == ResolutionKind.UNRESOLVED
+        if (resolved == null || resolved.kind() != ResolutionKind.EXACT
                 || KotlinTypeMembers.isArray(resolved.name())) {
             return null;
         }

@@ -9,6 +9,9 @@ public class PythonTypeRefModel {
     public String targetUniqueName;
     public String externalLabel;
 
+    /** Whether {@link #externalLabel} is only the name as written, not one an import or the checker settled. */
+    public boolean unresolved;
+
     /** Whether the written name is a type variable, which names no type and so records no reference. */
     public boolean typeVariable;
 

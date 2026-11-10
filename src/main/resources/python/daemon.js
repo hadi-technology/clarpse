@@ -1529,20 +1529,29 @@ function resolveTypeFromRaw(raw, ctx, inAnnotation) {
 }
 
 function externalLabelFor(raw, ctx) {
+  return externalLabelInfo(raw, ctx).label;
+}
+
+/**
+ * The label an external annotation is recorded under, and whether it is exact. A name an import
+ * binds is exact (`Session` after `from requests import Session` is `requests.Session`); a name
+ * that is only written, bare or dotted, is kept as written and is not.
+ */
+function externalLabelInfo(raw, ctx) {
   if (!raw) {
-    return raw;
+    return { label: raw, unresolved: true };
   }
   const candidates = extractCandidateNames(raw);
   for (const cand of candidates) {
     if (cand.includes('.')) {
-      return cand;
+      return { label: cand, unresolved: true };
     }
     const imported = ctx.importedSymbols.get(cand);
     if (imported && imported.moduleName) {
-      return imported.moduleName + '.' + imported.symbolName;
+      return { label: imported.moduleName + '.' + imported.symbolName, unresolved: false };
     }
   }
-  return raw.trim();
+  return { label: raw.trim(), unresolved: true };
 }
 
 function splitTopLevelCsv(text) {
@@ -2993,8 +3002,11 @@ function resolveSingleTypeRefPlain(annotationNode, rawText, ctx) {
   if (resolved) {
     return { raw, targetUniqueName: resolved, externalLabel: null, alternates: [] };
   }
-  const externalLabel = evaluated && evaluated.externalLabel ? evaluated.externalLabel : externalLabelFor(raw, ctx);
-  return { raw, targetUniqueName: null, externalLabel, alternates: [] };
+  if (evaluated && evaluated.externalLabel) {
+    return { raw, targetUniqueName: null, externalLabel: evaluated.externalLabel, alternates: [] };
+  }
+  const info = externalLabelInfo(raw, ctx);
+  return { raw, targetUniqueName: null, externalLabel: info.label, unresolved: info.unresolved, alternates: [] };
 }
 
 /**
@@ -3205,6 +3217,7 @@ function extractParams(funcNode, ctx, parseNodeType) {
       implementationHash: stableImplementationHash(textForNode(param, ctx.fileText)),
       targetUniqueName: ref ? ref.targetUniqueName : null,
       externalLabel: ref ? ref.externalLabel : null,
+      unresolved: ref ? !!ref.unresolved : false,
       alternates: ref ? ref.alternates : [],
     typeVariable: ref ? !!ref.typeVariable : false
     });
@@ -3980,6 +3993,7 @@ function collectLocalVariables(functionNode, ctx, parseNodeType) {
       implementationHash: stableImplementationHash(textForNode(entry.statement, ctx.fileText)),
       targetUniqueName: ref ? ref.targetUniqueName : null,
       externalLabel: ref ? ref.externalLabel : null,
+      unresolved: ref ? !!ref.unresolved : false,
       alternates: ref ? ref.alternates : [],
     typeVariable: ref ? !!ref.typeVariable : false
     });
@@ -4150,6 +4164,7 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
     implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
     targetUniqueName: ref ? ref.targetUniqueName : null,
     externalLabel: ref ? ref.externalLabel : null,
+    unresolved: ref ? !!ref.unresolved : false,
     alternates: ref ? ref.alternates : [],
     typeVariable: ref ? !!ref.typeVariable : false,
     valueReferences
@@ -4201,6 +4216,7 @@ function extractInstanceFieldFromStatement(statement, ctx) {
     implementationHash: stableImplementationHash(statementText),
     targetUniqueName: ref ? ref.targetUniqueName : null,
     externalLabel: ref ? ref.externalLabel : null,
+    unresolved: ref ? !!ref.unresolved : false,
     alternates: ref ? ref.alternates : [],
     typeVariable: ref ? !!ref.typeVariable : false
   };
@@ -4408,7 +4424,8 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       if (key && !baseArgumentTargets.has(key)) {
         baseArgumentTargets.add(key);
         baseArguments.push({ raw: dependency.raw, targetUniqueName: dependency.targetUniqueName,
-          externalLabel: dependency.externalLabel, alternates: dependency.alternates });
+          externalLabel: dependency.externalLabel, unresolved: !!dependency.unresolved,
+          alternates: dependency.alternates });
       }
     }
     const isEnum = baseExprs.some(expr => isEnumBase(textForNode(expr, ctx.fileText)));
@@ -4529,6 +4546,7 @@ function extractModuleFields(parseTree, ctx, parseNodeType) {
         field.rawType = moduleDeclarations(thisFile).aliases.get(field.name);
         field.targetUniqueName = members[0].targetUniqueName;
         field.externalLabel = members[0].externalLabel;
+        field.unresolved = !!members[0].unresolved;
         field.alternates = members.slice(1);
         field.valueReferences = [];
       }

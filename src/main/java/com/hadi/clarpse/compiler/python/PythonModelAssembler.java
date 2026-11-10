@@ -14,6 +14,7 @@ import com.hadi.clarpse.reference.AnnotationArgument;
 import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.sourcemodel.Component;
@@ -322,6 +323,8 @@ final class PythonModelAssembler {
                 continue;
             }
             final AnnotationReference reference = new AnnotationReference(invoked);
+            // Only the decorator's written name is known here, so it is kept as written.
+            reference.setResolutionKind(ResolutionKind.UNRESOLVED);
             if (decoratorArguments != null && i < decoratorArguments.size()
                     && decoratorArguments.get(i) != null) {
                 reference.setArguments(decoratorArgumentMap(decoratorArguments.get(i)));
@@ -426,6 +429,7 @@ final class PythonModelAssembler {
         typeRef.raw = field.rawType;
         typeRef.targetUniqueName = field.targetUniqueName;
         typeRef.externalLabel = field.externalLabel;
+        typeRef.unresolved = field.unresolved;
         typeRef.alternates = field.alternates;
         typeRef.typeVariable = field.typeVariable;
         insertReferences(component, typeRef, false);
@@ -472,6 +476,7 @@ final class PythonModelAssembler {
         typeRef.raw = field.rawType;
         typeRef.targetUniqueName = field.targetUniqueName;
         typeRef.externalLabel = field.externalLabel;
+        typeRef.unresolved = field.unresolved;
         typeRef.alternates = field.alternates;
         typeRef.typeVariable = field.typeVariable;
         insertReferences(component, typeRef, false);
@@ -599,6 +604,7 @@ final class PythonModelAssembler {
         typeRef.raw = param.rawType;
         typeRef.targetUniqueName = param.targetUniqueName;
         typeRef.externalLabel = param.externalLabel;
+        typeRef.unresolved = param.unresolved;
         typeRef.alternates = param.alternates;
         typeRef.typeVariable = param.typeVariable;
         insertReferences(component, typeRef, false);
@@ -630,6 +636,7 @@ final class PythonModelAssembler {
         typeRef.raw = param.rawType;
         typeRef.targetUniqueName = param.targetUniqueName;
         typeRef.externalLabel = param.externalLabel;
+        typeRef.unresolved = param.unresolved;
         typeRef.alternates = param.alternates;
         typeRef.typeVariable = param.typeVariable;
         insertReferences(component, typeRef, false);
@@ -761,6 +768,7 @@ final class PythonModelAssembler {
         typeRef.raw = local.rawType;
         typeRef.targetUniqueName = local.targetUniqueName;
         typeRef.externalLabel = local.externalLabel;
+        typeRef.unresolved = local.unresolved;
         typeRef.alternates = local.alternates;
         typeRef.typeVariable = local.typeVariable;
         insertReferences(component, typeRef, false);
@@ -858,9 +866,19 @@ final class PythonModelAssembler {
         if (!resolvedInRepo && isTypeSystemPlaceholder(invoked)) {
             return null;
         }
-        if (isExtends) {
-            return new TypeExtensionReference(invoked);
+        // A repository target or a name an import or the checker settled is exact; a name that is
+        // only written is kept as written.
+        ResolutionKind kind = ResolutionKind.UNRESOLVED;
+        if (resolvedInRepo || (ref.externalLabel != null && !ref.externalLabel.isEmpty() && !ref.unresolved)) {
+            kind = ResolutionKind.EXACT;
         }
-        return new SimpleTypeReference(invoked);
+        final ComponentReference built;
+        if (isExtends) {
+            built = new TypeExtensionReference(invoked);
+        } else {
+            built = new SimpleTypeReference(invoked);
+        }
+        built.setResolutionKind(kind);
+        return built;
     }
 }

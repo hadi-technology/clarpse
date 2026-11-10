@@ -106,7 +106,7 @@ final class KotlinTypeMembers {
         boolean complete = true;
         for (final KotlinSuperType superType : type.superTypes) {
             final Resolution resolved = resolver.resolve(superType.name, scope, false);
-            if (resolved == null || resolved.kind() == ResolutionKind.UNRESOLVED) {
+            if (resolved == null || resolved.kind() != ResolutionKind.EXACT) {
                 complete = false;
                 continue;
             }
@@ -224,7 +224,7 @@ final class KotlinTypeMembers {
             return null;
         }
         final Resolution resolved = resolver.resolve(written, scope, false);
-        if (resolved == null || resolved.kind() == ResolutionKind.UNRESOLVED || isArray(resolved.name())) {
+        if (resolved == null || resolved.kind() != ResolutionKind.EXACT || isArray(resolved.name())) {
             return null;
         }
         return resolved.name();
@@ -287,7 +287,7 @@ final class KotlinTypeMembers {
         final Scope scope = scopeOf(declaration);
         for (final KotlinSuperType superType : declaration.type().superTypes) {
             final Resolution resolved = resolver.resolve(superType.name, scope, false);
-            if (resolved == null || resolved.kind() == ResolutionKind.UNRESOLVED) {
+            if (resolved == null || resolved.kind() != ResolutionKind.EXACT) {
                 complete = false;
                 continue;
             }

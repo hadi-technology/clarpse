@@ -97,6 +97,9 @@ final class KotlinNameResolver {
         final Resolution resolvedHead = resolveSimple(head, scope, expression || !rest.isEmpty(), depth);
         if (rest.isEmpty()) {
             if (resolvedHead != null) {
+                if (expression && resolvedHead.kind() != ResolutionKind.EXACT) {
+                    return null;
+                }
                 return resolvedHead;
             }
             if (expression) {
@@ -104,7 +107,7 @@ final class KotlinNameResolver {
             }
             return new Resolution(name, ResolutionKind.UNRESOLVED);
         }
-        if (resolvedHead != null && resolvedHead.kind() != ResolutionKind.UNRESOLVED) {
+        if (resolvedHead != null && resolvedHead.kind() == ResolutionKind.EXACT) {
             final String candidate = resolvedHead.name() + "." + rest;
             if (index.isType(candidate)) {
                 return new Resolution(candidate, ResolutionKind.EXACT);
@@ -159,21 +162,33 @@ final class KotlinNameResolver {
         if (samePackage != null) {
             return samePackage;
         }
+        // Star imports are one level of lookup: a name that several of them supply is ambiguous
+        // and binds to none of them.
+        final Set<String> starred = new java.util.LinkedHashSet<>();
+        Resolution starredResolution = null;
         for (final KotlinImport kotlinImport : file.imports) {
             if (kotlinImport.star()) {
-                final Resolution starred = repositoryType(kotlinImport.target() + "." + name, expression, depth);
-                if (starred != null) {
-                    return starred;
+                final Resolution found = repositoryType(kotlinImport.target() + "." + name, expression, depth);
+                if (found != null && starred.add(found.name())) {
+                    starredResolution = found;
                 }
             }
         }
         final String defaultImport = DEFAULT_IMPORTS.get(name);
+        if (defaultImport == null) {
+            starred.addAll(platformStarImports(name, file));
+        }
+        if (starred.size() > 1) {
+            return new Resolution(name, ResolutionKind.AMBIGUOUS);
+        }
+        if (starredResolution != null) {
+            return starredResolution;
+        }
         if (defaultImport != null) {
             return new Resolution(defaultImport, ResolutionKind.EXACT);
         }
-        final String platformType = platformStarImport(name, file);
-        if (platformType != null) {
-            return new Resolution(platformType, ResolutionKind.EXACT);
+        if (starred.size() == 1) {
+            return new Resolution(starred.iterator().next(), ResolutionKind.EXACT);
         }
         return null;
     }
@@ -185,11 +200,11 @@ final class KotlinNameResolver {
      * cannot be asked, so it adds nothing. Kotlin's default imports are looked up first, so a name
      * they bring in is never read here.
      */
-    private String platformStarImport(final String name, final KotlinFileModel file) {
+    private Set<String> platformStarImports(final String name, final KotlinFileModel file) {
+        final Set<String> found = new java.util.LinkedHashSet<>();
         if (name.isEmpty() || !Character.isUpperCase(name.charAt(0))) {
-            return null;
+            return found;
         }
-        String found = null;
         for (final KotlinImport kotlinImport : file.imports) {
             if (!kotlinImport.star() || !(kotlinImport.target().startsWith("java.")
                     || kotlinImport.target().startsWith("javax."))) {
@@ -197,10 +212,7 @@ final class KotlinNameResolver {
             }
             final String candidate = kotlinImport.target() + "." + name;
             if (isPlatformType(candidate)) {
-                if (found != null && !found.equals(candidate)) {
-                    return null;
-                }
-                found = candidate;
+                found.add(candidate);
             }
         }
         return found;
@@ -263,7 +275,7 @@ final class KotlinNameResolver {
         if (DEFAULT_IMPORTS.containsKey(name)) {
             return Origin.DEFAULT;
         }
-        if (platformStarImport(name, file) != null) {
+        if (!platformStarImports(name, file).isEmpty()) {
             return Origin.STAR;
         }
         return Origin.NONE;
@@ -367,7 +379,7 @@ final class KotlinNameResolver {
         }
         final Resolution target = resolve(alias.alias().target().get(0),
                 new Scope(alias.file(), List.of(), Set.of()), expression, depth + 1);
-        if (target == null || target.kind() == ResolutionKind.UNRESOLVED) {
+        if (target == null || target.kind() != ResolutionKind.EXACT) {
             return target;
         }
         return new Resolution(target.name(), ResolutionKind.EXACT);

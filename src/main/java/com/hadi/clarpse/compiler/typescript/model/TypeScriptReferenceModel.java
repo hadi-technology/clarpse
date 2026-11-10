@@ -17,6 +17,13 @@ public class TypeScriptReferenceModel {
     public TypeScriptTargetModel target;
 
     /**
+     * How the checker settled an external reference: {@code "exact"} when it resolved to one
+     * declaration, {@code "unresolved"} when the name is only kept as written. {@code null} where
+     * the daemon does not say.
+     */
+    public String resolution;
+
+    /**
      * The arguments written on an applied decorator, in written order: empty for a decorator written
      * without any, and {@code null} for a reference that is not a decorator or whose arguments were
      * not read.

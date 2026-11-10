@@ -59,6 +59,8 @@ import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.java.JavaImportResolver;
 import com.hadi.clarpse.TypeNames;
 import com.hadi.clarpse.reference.AnnotationReference;
+import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
@@ -368,7 +370,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 for (final ClassOrInterfaceType outerType : ctx.getExtendedTypes()) {
                     final String resolvedType = resolveType(outerType.asString());
                     if (resolvedType != null) {
-                        ParseUtil.insertCmpRef(cmp, new TypeExtensionReference(resolvedType),
+                        ParseUtil.insertCmpRef(cmp, typed(new TypeExtensionReference(resolvedType)),
                                 this.componentStack);
                     }
                     insertTypeArgumentRefs(cmp, outerType, typeParameters);
@@ -379,7 +381,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 for (final ClassOrInterfaceType outerType : ctx.getImplementedTypes()) {
                     final String resolvedOuterType = resolveType(outerType.asString());
                     if (resolvedOuterType != null) {
-                        ParseUtil.insertCmpRef(cmp, new TypeImplementationReference(resolvedOuterType),
+                        ParseUtil.insertCmpRef(cmp, typed(new TypeImplementationReference(resolvedOuterType)),
                                 this.componentStack);
                     }
                     insertTypeArgumentRefs(cmp, outerType, typeParameters);
@@ -473,7 +475,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             for (final ClassOrInterfaceType implementedType : ctx.getImplementedTypes()) {
                 final String resolvedType = resolveType(implementedType.asString());
                 if (resolvedType != null) {
-                    ParseUtil.insertCmpRef(cmp, new TypeImplementationReference(resolvedType),
+                    ParseUtil.insertCmpRef(cmp, typed(new TypeImplementationReference(resolvedType)),
                             this.componentStack);
                 }
                 insertTypeArgumentRefs(cmp, implementedType, typeParameters);
@@ -600,7 +602,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             for (final ReferenceType thrown : compactCtor.getThrownExceptions()) {
                 final String resolvedType = resolveType(thrown.asString());
                 if (resolvedType != null) {
-                    ParseUtil.insertCmpRef(ctorCmp, new SimpleTypeReference(resolvedType), this.componentStack);
+                    ParseUtil.insertCmpRef(ctorCmp, typed(new SimpleTypeReference(resolvedType)), this.componentStack);
                 }
             }
         } else {
@@ -621,7 +623,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             ctorParamCmp.setAccessModifiers(resolveJavaParserModifiers(recordComponent.getModifiers()));
             final String resolvedType = resolveType(recordComponent.getType().asString());
             if (resolvedType != null) {
-                ParseUtil.insertCmpRef(ctorParamCmp, new SimpleTypeReference(resolvedType), this.componentStack);
+                ParseUtil.insertCmpRef(ctorParamCmp, typed(new SimpleTypeReference(resolvedType)), this.componentStack);
             }
             ParseUtil.pointParentsToGivenChild(ctorParamCmp, componentStack);
             componentStack.push(ctorParamCmp);
@@ -793,7 +795,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         if (!componentStack.isEmpty()) {
             final String qualifiedType = typeNamedByQualifiedName(ctx);
             if (qualifiedType != null) {
-                ParseUtil.insertCmpRef(componentStack.peek(), new SimpleTypeReference(qualifiedType),
+                ParseUtil.insertCmpRef(componentStack.peek(), typed(new SimpleTypeReference(qualifiedType)),
                         this.componentStack);
                 return;
             }
@@ -807,7 +809,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             final Component currCmp = componentStack.peek();
             final String resolvedClassType = resolveMethodCallType(ctx);
             if (resolvedClassType != null) {
-                ParseUtil.insertCmpRef(currCmp, new SimpleTypeReference(resolvedClassType),
+                ParseUtil.insertCmpRef(currCmp, typed(new SimpleTypeReference(resolvedClassType)),
                         this.componentStack);
             }
         }
@@ -923,7 +925,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 final String resolvedType = resolveType(stmt.asString());
                 if (resolvedType != null) {
                     ParseUtil.insertCmpRef(currMethodCmp,
-                            new SimpleTypeReference(resolvedType),
+                            typed(new SimpleTypeReference(resolvedType)),
                             this.componentStack);
                 }
             }
@@ -948,7 +950,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                     methodParamCmp.setAccessModifiers(resolveJavaParserModifiers(param.getModifiers()));
                     final String resolvedType = resolveType(param.getType().asString());
                     if (resolvedType != null) {
-                        ParseUtil.insertCmpRef(methodParamCmp, new SimpleTypeReference(resolvedType),
+                        ParseUtil.insertCmpRef(methodParamCmp, typed(new SimpleTypeReference(resolvedType)),
                                 this.componentStack);
                     }
                     ParseUtil.pointParentsToGivenChild(methodParamCmp, componentStack);
@@ -999,7 +1001,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 final String resolvedType = resolveType(stmt.asString());
                 if (resolvedType != null) {
                     ParseUtil.insertCmpRef(currMethodCmp,
-                            new SimpleTypeReference(resolvedType),
+                            typed(new SimpleTypeReference(resolvedType)),
                             this.componentStack);
                 }
             }
@@ -1022,8 +1024,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                     methodParamCmp.setAccessModifiers(resolveJavaParserModifiers(param.getModifiers()));
                     final String resolvedType = resolveType(param.getType().asString());
                     if (resolvedType != null) {
-                        ParseUtil.insertCmpRef(methodParamCmp, new SimpleTypeReference(
-                                resolvedType),
+                        ParseUtil.insertCmpRef(methodParamCmp, typed(new SimpleTypeReference(resolvedType)),
                                 this.componentStack);
                     }
                     ParseUtil.pointParentsToGivenChild(methodParamCmp, componentStack);
@@ -1056,7 +1057,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      */
     private void recordAnnotations(final NodeList<AnnotationExpr> annotations, final Component cmp) {
         for (final AnnotationExpr annotation : annotations) {
-            final AnnotationReference reference = new AnnotationReference(resolveAnnotationName(annotation));
+            final AnnotationReference reference = typed(new AnnotationReference(resolveAnnotationName(annotation)));
             reference.setArguments(annotationArguments.read(annotation));
             ParseUtil.insertCmpRef(cmp, reference, this.componentStack);
         }
@@ -1080,6 +1081,8 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         } catch (final Exception ignored) {
             // Fall back to the name as written; an unresolvable annotation is still a real fact.
         }
+        pendingName = writtenName;
+        pendingKind = writtenKind(writtenName);
         return writtenName;
     }
 
@@ -1112,7 +1115,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 || parent instanceof SingleMemberAnnotationExpr;
         if (inArguments && !componentStack.isEmpty()) {
             ParseUtil.insertCmpRef(componentStack.peek(),
-                    new SimpleTypeReference(resolveAnnotationName(annotation)), this.componentStack);
+                    typed(new SimpleTypeReference(resolveAnnotationName(annotation))), this.componentStack);
         }
     }
 
@@ -1245,7 +1248,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
             final String inferredName = extractClassName(inferred.asReferenceType().getQualifiedName());
             if (!inferredName.isEmpty()) {
-                ParseUtil.insertCmpRef(componentStack.peek(), new SimpleTypeReference(inferredName),
+                ParseUtil.insertCmpRef(componentStack.peek(), typed(new SimpleTypeReference(inferredName)),
                         this.componentStack);
             }
         } catch (final Exception | StackOverflowError ignored) {
@@ -1268,7 +1271,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             if (!componentStack.isEmpty()) {
                 final String resolvedType = resolveType(ctx.getNameWithScope());
                 if (resolvedType != null) {
-                    ParseUtil.insertCmpRef(componentStack.peek(), new SimpleTypeReference(resolvedType),
+                    ParseUtil.insertCmpRef(componentStack.peek(), typed(new SimpleTypeReference(resolvedType)),
                             this.componentStack);
                 }
             }
@@ -1286,7 +1289,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 final Component currCmp = componentStack.peek();
                 final String resolvedType = resolveType(ctx.asString());
                 if (resolvedType != null) {
-                    ParseUtil.insertCmpRef(currCmp, new SimpleTypeReference(resolvedType),
+                    ParseUtil.insertCmpRef(currCmp, typed(new SimpleTypeReference(resolvedType)),
                             this.componentStack);
                 }
             }
@@ -1310,7 +1313,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                     .isPresent();
             final String resolvedType = resolveType(ctx.asString(), typePosition);
             if (resolvedType != null) {
-                ParseUtil.insertCmpRef(currCmp, new SimpleTypeReference(resolvedType),
+                ParseUtil.insertCmpRef(currCmp, typed(new SimpleTypeReference(resolvedType)),
                         this.componentStack);
             }
         }
@@ -1365,7 +1368,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         if (!typeParameters.contains(classType.getNameAsString())) {
             final String resolvedType = resolveType(classType.asString());
             if (resolvedType != null) {
-                ParseUtil.insertCmpRef(cmp, new SimpleTypeReference(resolvedType), this.componentStack);
+                ParseUtil.insertCmpRef(cmp, typed(new SimpleTypeReference(resolvedType)), this.componentStack);
             }
         }
         insertTypeArgumentRefs(cmp, classType, typeParameters);
@@ -1406,6 +1409,47 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      *     coverage gap.
      */
     private String resolveType(final String writtenType, final boolean keepWrittenName) {
+        final Resolved resolved = resolveTypeKind(writtenType, keepWrittenName);
+        if (resolved == null) {
+            pendingName = null;
+            return null;
+        }
+        pendingName = resolved.name();
+        pendingKind = resolved.kind();
+        return resolved.name();
+    }
+
+    /** A resolved type name and how the scoping rules arrived at it. */
+    private record Resolved(String name, ResolutionKind kind) { }
+
+    /** The name the last {@code resolveType} returned, and its kind; null once a reference took it. */
+    private String pendingName;
+    private ResolutionKind pendingKind = ResolutionKind.UNSPECIFIED;
+
+    /**
+     * Stamps a reference with how its target was arrived at. A name that {@code resolveType} just
+     * returned carries that resolution; any other target came from the symbol solver or from a fully
+     * qualified spelling, both of which name exactly one type.
+     */
+    private <T extends ComponentReference> T typed(final T reference) {
+        if (reference.invokedComponent().equals(pendingName)) {
+            reference.setResolutionKind(pendingKind);
+            pendingName = null;
+        } else {
+            reference.setResolutionKind(ResolutionKind.EXACT);
+        }
+        return reference;
+    }
+
+    /** The kind of a qualified spelling, which names one type, or of a bare name nothing in scope provides. */
+    private static ResolutionKind writtenKind(final String name) {
+        if (name.indexOf('.') > 0 && Character.isLowerCase(name.codePointAt(0))) {
+            return ResolutionKind.EXACT;
+        }
+        return ResolutionKind.UNRESOLVED;
+    }
+
+    private Resolved resolveTypeKind(final String writtenType, final boolean keepWrittenName) {
         // Resolution is by name, and every lookup below -- the import map, the default classes, the
         // type solver, the on-demand imports -- is keyed on the name of a type. A written type
         // expression is not that: `DTO<HttpRequest>` is absent from an import map that holds `DTO`,
@@ -1426,12 +1470,12 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         // another declaration.
         final String memberType = memberTypeInScope(type);
         if (memberType != null) {
-            return memberType;
+            return new Resolved(memberType, ResolutionKind.EXACT);
         }
         if (currentImportsMap.containsKey(type)) {
             resolvedType = currentImportsMap.get(type);
         } else if (inCurrentPackage(type)) {
-            return currentPkg.path() + "." + type;
+            return new Resolved(currentPkg.path() + "." + type, ResolutionKind.EXACT);
         } else {
             final SymbolReference<ResolvedReferenceTypeDeclaration> symbol = typeSolver.tryToSolveType(type);
             if (symbol.isSolved()) {
@@ -1440,7 +1484,11 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 final Set<String> onDemand = typesBroughtInOnDemand(type);
                 if (onDemand.size() > 1) {
                     // Two on-demand imports bring in different types of this name: the program is
-                    // ambiguous, and neither is the one it means.
+                    // ambiguous, and neither is the one it means. The name stays as written and
+                    // binds to none of them.
+                    if (keepWrittenName) {
+                        return new Resolved(type, ResolutionKind.AMBIGUOUS);
+                    }
                     return null;
                 }
                 if (!onDemand.isEmpty()) {
@@ -1451,6 +1499,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         if (resolvedType.isEmpty() && type.indexOf('.') > 0) {
             return resolveQualifiedName(type, keepWrittenName);
         }
+        ResolutionKind kind = ResolutionKind.EXACT;
         if (resolvedType.isEmpty()) {
             // Nothing in scope provides this name: not an import, not a type of the current package,
             // not a type of an imported package this parse can see, not java.lang. It stays as
@@ -1459,10 +1508,11 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 return null;
             }
             resolvedType = type;
+            kind = ResolutionKind.UNRESOLVED;
         }
         final String resolvedClassType = extractClassName(resolvedType);
         if (!resolvedClassType.isEmpty()) {
-            return resolvedClassType;
+            return new Resolved(resolvedClassType, kind);
         } else {
             return null;
         }
@@ -1600,11 +1650,15 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      * {@code p.Outer.Inner}. Otherwise the qualifier is a package and the name is already fully
      * qualified, and is kept exactly as written, which is what an import of it would have recorded.
      */
-    private String resolveQualifiedName(final String type, final boolean keepWrittenName) {
+    private Resolved resolveQualifiedName(final String type, final boolean keepWrittenName) {
         final int lastDot = type.lastIndexOf('.');
-        final String enclosingType = resolveType(type.substring(0, lastDot), keepWrittenName);
+        final Resolved enclosingType = resolveTypeKind(type.substring(0, lastDot), keepWrittenName);
         if (enclosingType != null) {
-            return enclosingType + type.substring(lastDot);
+            ResolutionKind kind = ResolutionKind.EXACT;
+            if (enclosingType.kind() != ResolutionKind.EXACT) {
+                kind = writtenKind(type);
+            }
+            return new Resolved(enclosingType.name() + type.substring(lastDot), kind);
         }
         if (!keepWrittenName) {
             return null;
@@ -1613,7 +1667,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         if (writtenName.isEmpty()) {
             return null;
         }
-        return writtenName;
+        return new Resolved(writtenName, writtenKind(type));
     }
 
     /**

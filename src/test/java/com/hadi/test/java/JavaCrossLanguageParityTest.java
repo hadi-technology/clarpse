@@ -327,6 +327,7 @@ public class JavaCrossLanguageParityTest {
                         "  Number n;",
                         "  Object o;",
                         "}"));
-        assertEquals("[app.Error, java.lang.Object]", referencedBy(model, "app.J").toString());
+        // `Number` is kept as written, ambiguous: it binds to neither com.domain.Number nor java.lang.Number.
+        assertEquals("[Number, app.Error, java.lang.Object]", referencedBy(model, "app.J").toString());
     }
 }
