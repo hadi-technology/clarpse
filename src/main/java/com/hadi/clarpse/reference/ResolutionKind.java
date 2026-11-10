@@ -17,7 +17,7 @@ public enum ResolutionKind {
     /** An import, a using alias, a qualified name, an enclosing scope, or a compiler symbol. */
     EXACT,
 
-    /** Exactly one type in the repository carries this short name. */
+    /** Exactly one type in the repository carries this short name; no front end reports it for a bare name. */
     UNIQUE_SIMPLE_NAME,
 
     /** Several types carry this short name and nothing in scope chose between them. */

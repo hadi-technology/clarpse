@@ -81,11 +81,11 @@ public class CSharpReferenceConfidenceTest {
         assertEquals(ResolutionKind.EXACT, kindOf("Demo.App.Widget.Value", "System.Int32"));
     }
 
-    /** Nothing in scope named it, but exactly one type in the repository carries the name. */
+    /** Exactly one type in the repository carries the name, but its namespace is not one the name is visible from. */
     @Test
-    public void aSoleShortNameMatchIsReportedAsAGuess() {
-        assertEquals(ResolutionKind.UNIQUE_SIMPLE_NAME,
-                kindOf("Demo.App.Widget.gadget", "Other.Place.Gadget"));
+    public void aSoleShortNameMatchInANamespaceOutOfScopeStaysUnresolved() {
+        assertEquals(ResolutionKind.UNRESOLVED, kindOf("Demo.App.Widget.gadget", "Gadget"));
+        assertFalse(invokes(component("Demo.App.Widget.gadget"), "Other.Place.Gadget"));
     }
 
     /** Two types carry the name and nothing chose between them. */

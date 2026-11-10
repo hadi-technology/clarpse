@@ -52,27 +52,6 @@ final class CSharpModelAssembler {
             Map.entry("void", "System.Void")
     );
 
-    /**
-     * Library type names a repository class may shadow. {@link #BUILTIN_TYPES} holds the language
-     * keywords; these are the framework generics and helpers that appear unqualified in ordinary
-     * code and are never the repository's own type unless something in scope says so.
-     *
-     * <p>Only the last-resort single-match guess consults this. A repository type genuinely called
-     * `List` still resolves by exact name, nesting, namespace or import.
-     */
-    private static final Set<String> FRAMEWORK_TYPE_NAMES = Set.of(
-            "List", "IList", "Dictionary", "IDictionary", "HashSet", "ISet", "Queue", "Stack",
-            "IEnumerable", "IEnumerator", "ICollection", "IReadOnlyList", "IReadOnlyCollection",
-            "IReadOnlyDictionary", "IQueryable", "IAsyncEnumerable",
-            "Task", "ValueTask", "Action", "Func", "Predicate", "Comparer", "EqualityComparer",
-            "Nullable", "Tuple", "ValueTuple", "KeyValuePair", "Lazy", "Span", "Memory",
-            "Array", "Object", "String", "Exception", "Attribute", "Type", "Guid", "Uri",
-            "TimeSpan", "DateTime", "DateTimeOffset", "Version", "Random", "Timer",
-            "Stream", "TextReader", "TextWriter", "Encoding", "Regex", "Match",
-            "CancellationToken", "IServiceProvider", "IDisposable", "IAsyncDisposable",
-            "File", "Path", "Directory", "Math", "Console", "Convert", "Environment", "Enum", "Process",
-            "Thread");
-
     private CSharpModelAssembler() {
     }
 
@@ -1703,12 +1682,13 @@ final class CSharpModelAssembler {
             if (usingCandidate != null) {
                 return new Resolution(usingCandidate, ResolutionKind.EXACT);
             }
-            final String soleCandidate = soleTypeNamed(cleaned, arity);
-            if (soleCandidate != null) {
-                return new Resolution(soleCandidate, ResolutionKind.UNIQUE_SIMPLE_NAME);
-            }
-            // Nothing in scope named this type. Returning the bare token leaves it unresolved, and a
-            // consumer drops an edge that points outside the codebase -- which is the right outcome.
+            // Nothing in scope named this type: not the enclosing types, the file's namespace or the
+            // namespaces enclosing it, a using, an alias or a global using. A repository type that
+            // carries the same short name but sits in a namespace the name is not visible from is
+            // not the type meant -- `ScrollViewer` written against `using Avalonia.Controls;` is
+            // Avalonia's, however many repository types are called that. Returning the bare token
+            // leaves it unresolved, and a consumer drops an edge that points outside the codebase --
+            // which is the right outcome.
             // Silence costs a missing edge; a guess costs a fabricated one, and a fabricated edge
             // reads as a fact. Which of the two this is -- several types carry the name and none was
             // chosen, or none does -- is reported rather than left for the consumer to infer.
@@ -1717,28 +1697,6 @@ final class CSharpModelAssembler {
                 return new Resolution(cleaned, ResolutionKind.AMBIGUOUS);
             }
             return new Resolution(cleaned, ResolutionKind.UNRESOLVED);
-        }
-
-        /**
-         * The only type carrying this short name, or null when several do or the name belongs to a
-         * framework type a repository class happens to shadow.
-         *
-         * <p>The framework guard is not redundant with {@link #BUILTIN_TYPES}: that map holds the
-         * language keywords (`int`, `string`), not the library generics. `List<OrderItem>` in a
-         * Domain class bound to `Clean.Architecture.Web.Contributors.List` -- a user endpoint class
-         * in another project -- and became the witness of a false layering violation. A repository
-         * type genuinely named `List` still resolves through exact name, nesting, namespace or
-         * import; only the last-resort guess is refused.
-         */
-        private String soleTypeNamed(final String simpleName, final int arity) {
-            if (FRAMEWORK_TYPE_NAMES.contains(simpleName)) {
-                return null;
-            }
-            final Set<String> matches = typesBySimpleName.get(simpleName);
-            if (matches == null || matches.size() != 1) {
-                return null;
-            }
-            return lookup(matches.iterator().next(), arity);
         }
 
         /**

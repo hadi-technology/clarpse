@@ -80,16 +80,28 @@ public class CSharpAmbiguousNameResolutionTest {
     }
 
     /**
-     * The guess is refused, not replaced by a different guess: a name carried by exactly one type
-     * still resolves, so ordinary code loses nothing.
+     * A name carried by exactly one type is still not that type when its namespace is one the name
+     * is not visible from: `App.Web` does not see `App.Domain` without a using.
      */
     @Test
-    public void anUnambiguousNameStillResolvesWithoutAUsing() throws Exception {
+    public void anUnambiguousNameInAnOutOfScopeNamespaceDoesNotBind() throws Exception {
         final OOPSourceCodeModel model = CSharpTestUtil.compileInline(
                 new ProjectFile("/Domain/Repo.cs",
                         "namespace App.Domain;\npublic class UniqueRepo { }\n"),
                 new ProjectFile("/Web/Handler.cs",
                         "namespace App.Web;\npublic class Handler : UniqueRepo { }\n")).model();
+
+        assertFalse(refs(model, "App.Web.Handler").contains("App.Domain.UniqueRepo"));
+    }
+
+    /** The same pair of files with the using directive that makes the name visible. */
+    @Test
+    public void anUnambiguousNameResolvesThroughAUsing() throws Exception {
+        final OOPSourceCodeModel model = CSharpTestUtil.compileInline(
+                new ProjectFile("/Domain/Repo.cs",
+                        "namespace App.Domain;\npublic class UniqueRepo { }\n"),
+                new ProjectFile("/Web/Handler.cs",
+                        "using App.Domain;\nnamespace App.Web;\npublic class Handler : UniqueRepo { }\n")).model();
 
         assertTrue(refs(model, "App.Web.Handler").contains("App.Domain.UniqueRepo"));
     }
