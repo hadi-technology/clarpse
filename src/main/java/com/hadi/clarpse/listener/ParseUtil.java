@@ -178,7 +178,7 @@ public class ParseUtil {
         // matching against the whole stack — which holds every enclosing component — silently
         // dropped that edge. Reproduced in two files; the same shape is why debezium's
         // `Field.RangeValidator implements Validator` and scrapy-style nested event classes had no
-        // inheritance edge at all, and why a documented rule about them answered "couldn't tell".
+        // inheritance edge at all.
         //
         // Bubbling an extension or implementation up to the parent is a different hazard and is
         // still prevented, in copyRefsToParents, so a parent cannot end up extending itself.

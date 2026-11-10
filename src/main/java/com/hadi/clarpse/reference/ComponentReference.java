@@ -73,10 +73,11 @@ public abstract class ComponentReference implements Serializable, Cloneable {
      * available in the parsed model, and it costs nothing semantically: the strings are immutable
      * and compared by value everywhere.
      *
-     * <p>It matters because striff holds <em>two</em> models at once, base and head, for the whole
-     * of a differential analysis. One medium repository was measured at ~4GB of live heap, which is
-     * enough to put the JVM into a garbage-collection spiral it never leaves -- 95% GC overhead, an
-     * analysis that never completes, and a pod that serves nothing while reporting healthy.
+     * <p>It matters to a tool that holds <em>two</em> models of the same project at once, such as a
+     * before and an after, for the whole of a comparison. One medium repository was measured at
+     * ~4GB of live heap, which is enough to put the JVM into a garbage-collection spiral it never
+     * leaves -- 95% GC overhead, an analysis that never completes, and a service that answers
+     * nothing while reporting healthy.
      *
      * <p><b>Deliberately {@link String#intern()} and not a pool of our own.</b> A static
      * {@code Map} here would be the shape of the bug fixed in 10.1.2, where

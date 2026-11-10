@@ -244,4 +244,4 @@ Java type reports no visibility at all.
 # Non-Goals
 - No heuristic or string-based fallback resolution; symbol/type resolution is compiler-backed only.
 - No fallback parsing.
-- No modification to Striffs relation logic.
+- No modification to the relation logic of consumers.

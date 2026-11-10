@@ -23,14 +23,14 @@ import static org.junit.Assert.assertTrue;
  * <p>Consumers treat a reference as a dependency on another type — that is what makes a dependency
  * graph a dependency graph. Anything else in there is not merely noise: downstream it becomes an
  * edge, and an edge to something that is not a type is a claim about the codebase that is simply
- * false. striff builds architectural rules on these edges, and a rule naming
- * {@code app.MAX_NOTES} is a rule about a constant that no model can resolve.
+ * false. A tool that checks architectural constraints on these edges would be handed a constraint
+ * naming {@code app.MAX_ITEMS}, which is about a constant that no model can resolve.
  *
  * <p>The observed shape is that an <b>unresolved token is recorded with the current package
  * prefixed, whether or not it is a type</b>. A class reading its own {@code static final} field
  * yields a reference to {@code <package>.<FIELD_NAME>}; the same path turns an unresolved generic
  * expression into {@code <package>.Set<String>}. Seen on a real repository as
- * {@code com.hadi.striff.ai.spi.NOTE_STEREOTYPE} and {@code com.hadi.striff.ai.spi.MAX_DIAGRAM_NOTES}.
+ * {@code com.acme.spi.DEFAULT_KIND} and {@code com.acme.spi.MAX_ITEMS}.
  */
 public class CrossLanguageReferenceHygieneTest {
 
@@ -44,13 +44,13 @@ public class CrossLanguageReferenceHygieneTest {
                 "package app;",
                 "public class Gen {",
                 "  public static final String K = \"k\";",
-                "  private static final int MAX_NOTES = 5;",
+                "  private static final int MAX_ITEMS = 5;",
                 "  public String use() { return K; }",
-                "  public int cap() { return MAX_NOTES; }",
+                "  public int cap() { return MAX_ITEMS; }",
                 "}"));
 
         assertTrue("a constant is not a type, but references() holds " + refs,
-                refs.stream().noneMatch(r -> r.endsWith(".K") || r.endsWith(".MAX_NOTES")));
+                refs.stream().noneMatch(r -> r.endsWith(".K") || r.endsWith(".MAX_ITEMS")));
     }
 
     /**
@@ -63,11 +63,11 @@ public class CrossLanguageReferenceHygieneTest {
         List<String> refs = classReferences(Lang.JAVA, "/app/Gen.java", String.join("\n",
                 "package app;",
                 "public class Gen {",
-                "  private static final String NOTE_STEREOTYPE = \"s\";",
-                "  public String s() { return NOTE_STEREOTYPE; }",
+                "  private static final String DEFAULT_KIND = \"s\";",
+                "  public String s() { return DEFAULT_KIND; }",
                 "}"));
 
-        assertEquals("nothing named app.NOTE_STEREOTYPE exists; references() claims it does",
+        assertEquals("nothing named app.DEFAULT_KIND exists; references() claims it does",
                 0, refs.stream().filter(r -> r.startsWith("app.")).count());
     }
 
