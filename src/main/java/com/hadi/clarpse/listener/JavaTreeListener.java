@@ -60,6 +60,7 @@ import com.hadi.clarpse.compiler.java.JavaImportResolver;
 import com.hadi.clarpse.TypeNames;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
@@ -812,8 +813,86 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 ParseUtil.insertCmpRef(currCmp, typed(new SimpleTypeReference(resolvedClassType)),
                         this.componentStack);
             }
+            recordMemberReference(ctx, currCmp);
         }
         super.visit(ctx, arg);
+    }
+
+    /**
+     * Records the member a call uses when the solver gives the receiver's type exactly: a variable
+     * or field of a written or inferred type, or a type named in the source. A receiver the solver
+     * cannot type, an array, a type variable, {@code this} and {@code super} add nothing, and a
+     * field is not trusted where a supertype this parse cannot see could have given the class a
+     * field of that name.
+     */
+    private void recordMemberReference(final MethodCallExpr ctx, final Component currCmp) {
+        if (shallow || !ctx.getScope().isPresent()) {
+            return;
+        }
+        try {
+            final ResolvedReferenceTypeDeclaration receiver = receiverTypeDeclaration(ctx.getScope().get());
+            if (receiver == null) {
+                return;
+            }
+            ResolvedReferenceTypeDeclaration declaring = null;
+            try {
+                declaring = ctx.resolve().declaringType();
+            } catch (final Exception | StackOverflowError unresolved) {
+                declaring = null;
+            }
+            final MemberReference reference = JavaMemberReferences.of(receiver, declaring, ctx.getNameAsString());
+            if (reference != null) {
+                ParseUtil.insertCmpRef(currCmp, reference, this.componentStack);
+            }
+        } catch (final Exception | StackOverflowError unresolved) {
+            LOGGER.debug("No member reference for " + ctx.getNameAsString() + ": " + unresolved);
+        }
+    }
+
+    private ResolvedReferenceTypeDeclaration receiverTypeDeclaration(final Expression scope) {
+        if (scope.isNameExpr()) {
+            final NameExpr name = scope.asNameExpr();
+            if (!namesAValue(name)) {
+                final String typeName = typeNamedByReceiver(name, true);
+                if (typeName == null) {
+                    return null;
+                }
+                return solvedType(typeName);
+            }
+            if (name.resolve().isField() && !everyVisibleValueIsKnown(name)) {
+                return null;
+            }
+            return valueTypeDeclaration(scope);
+        }
+        if (scope.isFieldAccessExpr()) {
+            final String qualifiedType = typeNamedByQualifiedName(scope.asFieldAccessExpr());
+            if (qualifiedType != null) {
+                return solvedType(qualifiedType);
+            }
+            if (scope.asFieldAccessExpr().getScope().isThisExpr()) {
+                if (!everyVisibleValueIsKnown(scope)) {
+                    return null;
+                }
+                return valueTypeDeclaration(scope);
+            }
+        }
+        return null;
+    }
+
+    private ResolvedReferenceTypeDeclaration solvedType(final String qualifiedName) {
+        final SymbolReference<ResolvedReferenceTypeDeclaration> symbol = typeSolver.tryToSolveType(qualifiedName);
+        if (!symbol.isSolved()) {
+            return null;
+        }
+        return symbol.getCorrespondingDeclaration();
+    }
+
+    private static ResolvedReferenceTypeDeclaration valueTypeDeclaration(final Expression value) {
+        final ResolvedType type = value.calculateResolvedType();
+        if (!type.isReferenceType()) {
+            return null;
+        }
+        return type.asReferenceType().getTypeDeclaration().orElse(null);
     }
 
     private String resolveMethodCallType(final MethodCallExpr ctx) {
