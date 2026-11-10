@@ -352,8 +352,21 @@ final class CSharpBodyText {
         while (matcher.find()) {
             if (!namesATypeInstead(clean, matcher.start(), matcher.end())) {
                 member.staticReceivers.add(matcher.group(1));
+                member.staticReceiverMembers.add(memberAfter(clean, matcher.end()));
             }
         }
+    }
+
+    private static final Pattern MEMBER_NAME_AT = Pattern.compile("\\G\\s*([A-Za-z_][A-Za-z0-9_]*)");
+
+    /** The name written right after a receiver's final dot, or the empty string when none is. */
+    private static String memberAfter(final String clean, final int from) {
+        final Matcher matcher = MEMBER_NAME_AT.matcher(clean);
+        matcher.region(from, clean.length());
+        if (matcher.lookingAt()) {
+            return matcher.group(1);
+        }
+        return "";
     }
 
     private static final Pattern NEW_BEFORE = Pattern.compile("(?<![\\w.@])new\\s+$");

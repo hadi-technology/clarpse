@@ -231,6 +231,8 @@ final class CSharpModel {
          * denotes a type, or a type followed by members.
          */
         List<String> staticReceivers = new ArrayList<>();
+        /** For each entry of {@code staticReceivers}, the name written after the receiver's final dot, or empty. */
+        List<String> staticReceiverMembers = new ArrayList<>();
         /** The operands of {@code typeof} in the member's body or initializer; each is a type as written. */
         List<String> typeofOperands = new ArrayList<>();
         /** Types named where only a type can stand: {@code o as T}, {@code o is T t}, {@code default(T)}. */

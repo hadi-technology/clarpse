@@ -47,13 +47,17 @@ public class CSharpCrossLanguageParityTest {
     private static final ProjectFile USER_TYPE = new ProjectFile("/User.cs",
             "namespace App { public class User { public static object FindFirst(string s) { return null; } } }");
 
+    /** A {@code User} type whose {@code FindFirst} is an instance method, so no static member answers the call. */
+    private static final ProjectFile USER_WITHOUT_STATIC = new ProjectFile("/User.cs",
+            "namespace App { public class User { public object FindFirst(string s) { return null; } } }");
+
     /**
      * {@code User.FindFirst()} in a controller is the inherited {@code ControllerBase.User} property.
      * Nothing in the parse shows whether the unparsed base declares it, so the bare name binds to no type.
      */
     @Test
     public void aBareReceiverInAClassWithAnUnparsedBaseIsNotReadAsAType() throws Exception {
-        final OOPSourceCodeModel model = model(USER_TYPE, new ProjectFile("/C.cs", """
+        final OOPSourceCodeModel model = model(USER_WITHOUT_STATIC, new ProjectFile("/C.cs", """
                 using Microsoft.AspNetCore.Mvc;
                 namespace App {
                   public class UsersController : ControllerBase {
@@ -68,7 +72,7 @@ public class CSharpCrossLanguageParityTest {
     /** The unparsed base may be several steps up: the guard reads the whole ancestry. */
     @Test
     public void anUnparsedBaseHigherUpTheAncestryAlsoGuards() throws Exception {
-        final OOPSourceCodeModel model = model(USER_TYPE,
+        final OOPSourceCodeModel model = model(USER_WITHOUT_STATIC,
                 new ProjectFile("/B.cs", "namespace App { public class Middle : Framework.Base { } }"),
                 new ProjectFile("/C.cs", """
                         namespace App {
@@ -78,6 +82,69 @@ public class CSharpCrossLanguageParityTest {
                         }
                         """));
         assertFalse(references(model, "App.Leaf.Get()", "App.User"));
+    }
+
+    private static OOPSourceCodeModel withUnparsedBase(final String types, final String body) throws Exception {
+        return model(new ProjectFile("/T.cs", "namespace App { " + types + " }"), new ProjectFile("/C.cs",
+                "namespace App { public class Svc : Microsoft.AspNetCore.Mvc.ControllerBase { " + body + " } }"));
+    }
+
+    /** A static call through a type that declares that static member is that type, whatever the base holds. */
+    @Test
+    public void aStaticMethodTheTypeDeclaresIsReadThroughAnUnparsedBase() throws Exception {
+        final OOPSourceCodeModel model = withUnparsedBase(
+                "public static class Check { public static void NotNull(object o) { } }",
+                "public void Run(object x) { Check.NotNull(x); }");
+        assertTrue(references(model, "App.Svc.Run(object)", "App.Check"));
+    }
+
+    @Test
+    public void aStaticPropertyTheTypeDeclaresIsReadThroughAnUnparsedBase() throws Exception {
+        final OOPSourceCodeModel model = withUnparsedBase(
+                "public static class Clock { public static int Now { get { return 1; } } }",
+                "public int Run() { return Clock.Now; }");
+        assertTrue(references(model, "App.Svc.Run()", "App.Clock"));
+    }
+
+    @Test
+    public void anEnumMemberIsReadThroughAnUnparsedBase() throws Exception {
+        final OOPSourceCodeModel model = withUnparsedBase(
+                "public enum Color { Red, Green }",
+                "public void Run() { Consume(Color.Red); } private void Consume(object o) { }");
+        assertTrue(references(model, "App.Svc.Run()", "App.Color"));
+    }
+
+    @Test
+    public void aStaticMemberOfAParsedSupertypeCountsToo() throws Exception {
+        final OOPSourceCodeModel model = withUnparsedBase(
+                "public class Root { public const int Limit = 3; } public class Sub : Root { }",
+                "public int Run() { return Sub.Limit; }");
+        assertTrue(references(model, "App.Svc.Run()", "App.Sub"));
+    }
+
+    @Test
+    public void aTypeWithoutThatStaticMemberIsNotReadThroughAnUnparsedBase() throws Exception {
+        final OOPSourceCodeModel model = withUnparsedBase(
+                "public class User { public object FindFirst(string s) { return null; } }",
+                "public object Run() { return User.FindFirst(\"sub\"); }");
+        assertFalse(references(model, "App.Svc.Run()", "App.User"));
+    }
+
+    @Test
+    public void aTypeDeclaringTheStaticMemberIsReadEvenForUser() throws Exception {
+        final OOPSourceCodeModel model = withUnparsedBase(
+                "public class User { public static object FindFirst(string s) { return null; } }",
+                "public object Run() { return User.FindFirst(\"sub\"); }");
+        assertTrue(references(model, "App.Svc.Run()", "App.User"));
+    }
+
+    @Test
+    public void aMemberOfTheClassNamedLikeTheTypeShadowsIt() throws Exception {
+        final OOPSourceCodeModel model = withUnparsedBase(
+                "public static class Check { public static void NotNull(object o) { } }",
+                "public Helper Check { get; set; } public void Run(object x) { Check.NotNull(x); }"
+                        + " public class Helper { public void NotNull(object o) { } }");
+        assertFalse(references(model, "App.Svc.Run(object)", "App.Check"));
     }
 
     /** A type nested in the class hides an inherited member of its name, so the guard has nothing to protect. */

@@ -662,7 +662,7 @@ final class CSharpModelAssembler {
                 if (resolved == null || resolved.kind() != ResolutionKind.EXACT
                         || resolved.name().equals(component.uniqueName())
                         || (head && guardInherited
-                            && isPossiblyInherited(token.name(), token.name(), resolved, ownerType, memberModel, typeIndex))
+                            && isPossiblyInherited(token.name(), token.name(), "", resolved, ownerType, memberModel, typeIndex))
                         || !seen.add(resolved.name())) {
                     continue;
                 }
@@ -684,8 +684,10 @@ final class CSharpModelAssembler {
                                               final TypeIndex typeIndex,
                                               final CSharpModel.CSharpTypeModel ownerType) {
         final Set<String> seen = new LinkedHashSet<>();
-        for (final String receiver : memberModel.staticReceivers) {
-            final StaticBinding binding = bindStaticReceiver(receiver, component, memberModel, typeIndex, ownerType);
+        for (int i = 0; i < memberModel.staticReceivers.size(); i += 1) {
+            final String receiver = memberModel.staticReceivers.get(i);
+            final StaticBinding binding = bindStaticReceiver(receiver, CSharpStaticMembers.memberAfter(memberModel, i),
+                    component, memberModel, typeIndex, ownerType);
             if (binding == null || !seen.add(binding.resolution().name())) {
                 continue;
             }
@@ -699,7 +701,8 @@ final class CSharpModelAssembler {
     private record StaticBinding(Resolution resolution, String bound) {
     }
 
-    private static StaticBinding bindStaticReceiver(final String receiver, final Component component,
+    private static StaticBinding bindStaticReceiver(final String receiver, final String following,
+                                                    final Component component,
                                                     final CSharpModel.CSharpMemberModel memberModel,
                                                     final TypeIndex typeIndex,
                                                     final CSharpModel.CSharpTypeModel ownerType) {
@@ -730,7 +733,7 @@ final class CSharpModelAssembler {
         if (resolved == null || resolved.name().equals(component.uniqueName())
                 || (resolved.kind() != ResolutionKind.EXACT
                     && typeIndex.isNamespace(receiver, ownerType, memberModel))
-                || isPossiblyInherited(receiver, bound, resolved, ownerType, memberModel, typeIndex)) {
+                || isPossiblyInherited(receiver, bound, following, resolved, ownerType, memberModel, typeIndex)) {
             return null;
         }
         return new StaticBinding(resolved, bound);
@@ -773,7 +776,7 @@ final class CSharpModelAssembler {
                 model = typeIndex.typeModelOf(written);
                 builtin = BUILTIN_TYPES.get(text);
             } else {
-                final StaticBinding binding = bindStaticReceiver(receiver, component, memberModel, typeIndex,
+                final StaticBinding binding = bindStaticReceiver(receiver, "", component, memberModel, typeIndex,
                         ownerType);
                 if (binding == null || !binding.bound().equals(receiver)) {
                     continue;
@@ -832,18 +835,12 @@ final class CSharpModelAssembler {
      * A receiver written with its full namespace or through an alias names a type whatever the base
      * declares.
      */
-    private static boolean isPossiblyInherited(final String receiver, final String bound,
+    private static boolean isPossiblyInherited(final String receiver, final String bound, final String following,
                                                final Resolution resolved,
                                                final CSharpModel.CSharpTypeModel ownerType,
                                                final CSharpModel.CSharpMemberModel memberModel,
                                                final TypeIndex typeIndex) {
-        final int dot = receiver.indexOf('.');
-        final String root;
-        if (dot < 0) {
-            root = receiver;
-        } else {
-            root = receiver.substring(0, dot);
-        }
+        final String root = receiver.split("\\.", 2)[0];
         if (ownerType.usingAliases.containsKey(root) || memberModel.usingAliases.containsKey(root)) {
             return false;
         }
@@ -851,7 +848,8 @@ final class CSharpModelAssembler {
                 && resolved.name().equals(bound)) {
             return false;
         }
-        return typeIndex.mayBeInheritedMember(root, ownerType);
+        return typeIndex.mayBeInheritedMember(root, ownerType)
+                && !typeIndex.isStaticUseOfType(root, following, ownerType, memberModel);
     }
 
     /**
@@ -1672,6 +1670,22 @@ final class CSharpModelAssembler {
                 current = current.substring(0, cut);
             }
             return false;
+        }
+
+        /**
+         * Whether {@code name.member} is a static use of the repository type {@code name} resolves to
+         * exactly: it or a parsed supertype declares that static member, and no class around declares {@code name}.
+         */
+        private boolean isStaticUseOfType(final String name, final String member,
+                                          final CSharpModel.CSharpTypeModel ownerType,
+                                          final CSharpModel.CSharpMemberModel memberModel) {
+            final Resolution resolved = resolveType(name, ownerType, memberModel);
+            if (member.isEmpty() || resolved == null || resolved.kind() != ResolutionKind.EXACT
+                    || !typeModelsByName.containsKey(resolved.name())
+                    || CSharpStaticMembers.enclosingDeclares(typeModelsByName, ownerType.uniqueName, name)) {
+                return false;
+            }
+            return ancestorsAndSelf(typeModelsByName.get(resolved.name())).stream().anyMatch(t -> CSharpStaticMembers.declares(t, member));
         }
 
         /**
