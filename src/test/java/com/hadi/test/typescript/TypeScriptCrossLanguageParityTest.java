@@ -150,4 +150,11 @@ public class TypeScriptCrossLanguageParityTest {
         assertTrue(targets("src.use.C", "/src/use.ts", use).contains("src.types.config"));
         assertTrue(targets("src.use.R", "/src/use.ts", use).contains("src.types.factory"));
     }
+
+    @Test
+    public void aTypeParameterDefaultIsReferenced() throws Exception {
+        final Set<String> targets = targets("src.use.WithDefault",
+                "/src/use.ts", "import { Cfg } from './types';\nexport class WithDefault<T = Cfg> { }\n");
+        assertTrue(targets.toString(), targets.contains("src.types.Cfg"));
+    }
 }

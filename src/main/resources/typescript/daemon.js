@@ -3294,6 +3294,13 @@ function typeParameterReferences(node, checker) {
     state.ts.forEachChild(child, visit);
   }
   for (const parameter of node.typeParameters) {
+    if (parameter.default) {
+      visit(parameter.default);
+      const fallback = checker.getTypeAtLocation(parameter.default);
+      if (!(fallback.flags & state.ts.TypeFlags.TypeParameter)) {
+        references.push(...buildReferenceModelsFromType(fallback, checker, "type"));
+      }
+    }
     if (parameter.constraint) {
       visit(parameter.constraint);
       const constraint = checker.getTypeAtLocation(parameter.constraint);
