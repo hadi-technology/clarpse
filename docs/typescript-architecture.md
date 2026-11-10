@@ -119,8 +119,10 @@ read.
 A call on an object whose declared type is imported from a package the program cannot read
 (`editor.getBounds()` with `editor: Editor` from `extlib`, not installed) is the reference
 `extlib:Editor.getBounds`, as it is for a package whose declarations can be read. A class extending a
-global of the language's own library (`Error`, `Map`, `EventTarget`, `Array<string>`) records that name
-as its base, also in a program built without a library.
+global (`Error`, `Map`, `EventTarget`, `Array<string>`) records that name as its base. The name is a
+library global (`ResolutionKind.EXACT`) only when the checker resolves it to a declaration in a
+default library or `@types` file. In a program built without a library, or for a name nothing
+declares, the name is kept as written with `ResolutionKind.UNRESOLVED`; no list of names decides it.
 
 `require("x")` and the function `createRequire(...)` returns (`const load = createRequire(import.meta.url)`)
 load modules alike: both are imports of the file.

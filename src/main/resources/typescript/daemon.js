@@ -1846,28 +1846,29 @@ function writtenTypeArguments(type, depth) {
   return found;
 }
 
-// The classes the language's own library declares as globals, which a heritage clause can name.
-const LIBRARY_GLOBAL_CLASSES = new Set([
-  "Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError",
-  "AggregateError", "Map", "Set", "WeakMap", "WeakSet", "WeakRef", "Array", "Promise", "Date",
-  "RegExp", "Object", "Function", "String", "Number", "Boolean", "EventTarget", "Event",
-  "CustomEvent", "ArrayBuffer", "DataView", "Int8Array", "Uint8Array", "Uint8ClampedArray",
-  "Int16Array", "Uint16Array", "Int32Array", "Uint32Array", "Float32Array", "Float64Array",
-  "BigInt64Array", "BigUint64Array", "AbortController", "AbortSignal", "URL", "URLSearchParams",
-  "Request", "Response", "Headers", "HTMLElement", "Element", "Node"
-]);
+/** Whether a file is one of the compiler's own library declarations or a package's `@types` file. */
+function isLibraryDeclarationFile(fileName) {
+  const ts = state.ts;
+  const libDirectory = path.dirname(ts.getDefaultLibFilePath({}));
+  const base = path.basename(fileName);
+  if (isUnder(fileName, libDirectory) && base.startsWith("lib.") && base.endsWith(".d.ts")) {
+    return true;
+  }
+  return /[\\/]node_modules[\\/]@types[\\/]/.test(fileName);
+}
 
 /**
- * The name of the library global a heritage clause extends, or null. A program built without a
- * library (a repository with no config, or one whose config cannot be read) has no declaration for
- * `Error`, which then reads as `any`; and a library generic read through its type (`Array<string>`)
- * names its element type. The name written is the base in both, so long as the name is not one the
- * program declares itself.
+ * The base a heritage clause names when the name is a global and not something the repository or an
+ * import declares: `Error`, `Map`, `Array` in `extends Error`. It is a library global only when the
+ * checker resolves the name to a declaration in a default library or `@types` file; the name is then
+ * `exact`. A name no declaration answers to (a program built without a library has none for
+ * `Error`) is kept as written and is `unresolved`. A name the repository declares, or an import
+ * binds, is not read here. A library generic read through its type (`Array<string>`) would name its
+ * element type, so the name written is the base.
  */
 function libraryBaseName(typeNode, checker) {
   const ts = state.ts;
-  if (!ts.isExpressionWithTypeArguments(typeNode) || !ts.isIdentifier(typeNode.expression)
-      || !LIBRARY_GLOBAL_CLASSES.has(typeNode.expression.text)) {
+  if (!ts.isExpressionWithTypeArguments(typeNode) || !ts.isIdentifier(typeNode.expression)) {
     return null;
   }
   let symbol;
@@ -1876,12 +1877,19 @@ function libraryBaseName(typeNode, checker) {
   } catch (err) {
     return null;
   }
-  const declarations = symbol && symbol.declarations ? symbol.declarations : [];
   if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
     return null;
   }
-  const ownDeclaration = declarations.some((declaration) => isInternalFile(declaration.getSourceFile().fileName));
-  return ownDeclaration ? null : typeNode.expression.text;
+  const declarations = symbol && symbol.declarations ? symbol.declarations : [];
+  const name = typeNode.expression.text;
+  if (!declarations.length) {
+    return { name, resolution: "unresolved" };
+  }
+  const files = declarations.map((declaration) => declaration.getSourceFile().fileName);
+  if (files.some((file) => isInternalFile(file)) || !files.every((file) => isLibraryDeclarationFile(file))) {
+    return null;
+  }
+  return { name, resolution: "exact" };
 }
 
 /**
@@ -1898,7 +1906,7 @@ function buildHeritageReferences(node, checker) {
     for (const typeNode of clause.types) {
       const libraryBase = libraryBaseName(typeNode, checker);
       if (libraryBase) {
-        references.push(externalReference(kind, libraryBase, false));
+        references.push(externalReference(kind, libraryBase.name, false, libraryBase.resolution));
         for (const argument of typeNode.typeArguments || []) {
           references.push(...buildReferenceModelsFromType(checker.getTypeAtLocation(argument), checker, "type"));
         }
