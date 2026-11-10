@@ -3206,6 +3206,14 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
 }
 
 /**
+ * What the decorators of a definition refer to, as the arguments of `@register(Baz)` do: a class's
+ * decorators are evaluated in the scope around it, so they are read the way a function's are.
+ */
+function collectDecoratorReferences(definitionNode, ctx, parseNodeType) {
+  return collectReferences(definitionNode, null, null, ctx, parseNodeType, true);
+}
+
+/**
  * The names a class body binds directly: its nested classes and methods, its class attributes and
  * whatever else its statements assign or import. A name bound in a method's body is not among them.
  */
@@ -3244,7 +3252,7 @@ function collectValueExpressionReferences(valueExpression, boundNames, ctx, pars
  * The references made by a function's body, or by a single value expression (exactly one of
  * `functionNode` and `valueExpression` is given).
  */
-function collectReferences(functionNode, valueExpression, boundNames, ctx, parseNodeType) {
+function collectReferences(functionNode, valueExpression, boundNames, ctx, parseNodeType, decoratorsOnly) {
   const suite = functionNode ? functionNode.d.suite : null;
   const refs = [];
   const seen = new Set();
@@ -3545,6 +3553,12 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
 
   if (valueExpression) {
     walk(valueExpression);
+    return refs;
+  }
+  if (decoratorsOnly) {
+    scopes = [];
+    inHeader = true;
+    (getNodeProp(functionNode, ['decorators']) || []).forEach(walk);
     return refs;
   }
   // The definition's own decorators and defaults are evaluated outside its body.
@@ -4232,6 +4246,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
       decorators: classDecorators,
       decoratorArguments: classDecoratorArguments,
+      decoratorReferences: collectDecoratorReferences(statement, ctx, parseNodeType),
       bases,
       baseArguments,
       methods,

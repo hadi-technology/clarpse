@@ -109,4 +109,25 @@ public class PythonCrossLanguageParityTest {
         project.model().components().forEach(c -> c.references().forEach(r -> all.add(r.invokedComponent())));
         assertTrue(all.toString(), all.stream().noneMatch(name -> name.contains("\"")));
     }
+
+    @Test
+    public void aClassDecoratorsArgumentIsADependency() throws Exception {
+        final PythonInlineProject project = PythonInlineProject.compile("/pkg/use.py", lines(
+                "from pkg.models import Baz, Foo",
+                "",
+                "def register(kind):",
+                "    return kind",
+                "",
+                "@register(Baz)",
+                "class Use:",
+                "    pass",
+                "",
+                "@register(Foo)",
+                "def handler():",
+                "    return 1"));
+        final Set<String> onClass = project.references("pkg.use.Use");
+        assertTrue(onClass.toString(), onClass.contains("pkg.models.Baz"));
+        assertFalse(onClass.toString(), onClass.contains("pkg.models.Foo"));
+        assertTrue(project.references("pkg.use.handler").contains("pkg.models.Foo"));
+    }
 }

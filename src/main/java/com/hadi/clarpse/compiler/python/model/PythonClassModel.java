@@ -21,6 +21,8 @@ public class PythonClassModel {
      * where the decorator's arguments could not be read, empty where it was written without any.
      */
     public List<List<PythonDecoratorArgumentModel>> decoratorArguments = new ArrayList<>();
+    /** What the arguments of the class's decorators refer to: {@code Baz} in {@code @register(Baz)}. */
+    public List<PythonTypeRefModel> decoratorReferences = new ArrayList<>();
     public List<PythonTypeRefModel> bases = new ArrayList<>();
 
     /** The types named inside the type arguments of generic bases, which the class depends on but does not extend. */
