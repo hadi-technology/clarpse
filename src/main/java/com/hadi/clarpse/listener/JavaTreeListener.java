@@ -82,6 +82,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
+import java.util.TreeSet;
 import java.util.function.Predicate;
 
 /**
@@ -1421,8 +1422,8 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         String resolvedType = "";
         // Scope order, JLS 6.4.1 and 7.5: a member type of an enclosing type, declared or inherited,
         // then a single-type import, then a top-level type of the current package, and last the
-        // types brought in on demand -- java.lang among them. A type-import-on-demand never
-        // shadows another declaration.
+        // types brought in on demand, java.lang among them. A type-import-on-demand never shadows
+        // another declaration.
         final String memberType = memberTypeInScope(type);
         if (memberType != null) {
             return memberType;
@@ -1431,22 +1432,19 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             resolvedType = currentImportsMap.get(type);
         } else if (inCurrentPackage(type)) {
             return currentPkg.path() + "." + type;
-        } else if (OOPSourceModelConstants.getJavaDefaultClasses().containsKey(type)) {
-            resolvedType = OOPSourceModelConstants.getJavaDefaultClasses().get(type);
         } else {
             final SymbolReference<ResolvedReferenceTypeDeclaration> symbol = typeSolver.tryToSolveType(type);
             if (symbol.isSolved()) {
                 resolvedType = symbol.getCorrespondingDeclaration().getQualifiedName();
             } else {
-                // On-demand imports, tried only after every exact form has failed and accepted only
-                // when the type solver confirms the type exists in that package. A prefix that does
-                // not resolve is skipped rather than assumed.
-                for (final String wildcardPackage : currentWildcardImports) {
-                    final String candidate = wildcardPackage + "." + type;
-                    if (typeSolver.tryToSolveType(candidate).isSolved() || otherLanguageTypes.test(candidate)) {
-                        resolvedType = candidate;
-                        break;
-                    }
+                final Set<String> onDemand = typesBroughtInOnDemand(type);
+                if (onDemand.size() > 1) {
+                    // Two on-demand imports bring in different types of this name: the program is
+                    // ambiguous, and neither is the one it means.
+                    return null;
+                }
+                if (!onDemand.isEmpty()) {
+                    resolvedType = onDemand.iterator().next();
                 }
             }
         }
@@ -1454,8 +1452,9 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             return resolveQualifiedName(type, keepWrittenName);
         }
         if (resolvedType.isEmpty()) {
-            // Nothing in scope provides this name. It stays as written, and is never made a type of
-            // the current package.
+            // Nothing in scope provides this name: not an import, not a type of the current package,
+            // not a type of an imported package this parse can see, not java.lang. It stays as
+            // written, and is never made a type of the current package.
             if (!keepWrittenName) {
                 return null;
             }
@@ -1467,6 +1466,34 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         } else {
             return null;
         }
+    }
+
+    /**
+     * The types a bare name can denote through the implicit and explicit on-demand imports: the
+     * type of that name in each wildcard-imported package the parse can confirm declares one, and
+     * the type in {@code java.lang}, which every compilation unit imports on demand.
+     *
+     * <p>{@code java.lang} is not behind the other on-demand imports. JLS 7.3 makes it one of them,
+     * so a name that both a wildcard-imported package and {@code java.lang} declare is ambiguous and
+     * a compiler rejects the use; two entries here mean no type is read. Only {@code java.lang}'s own
+     * top-level types are known, so a name it does not declare is never taken from it.
+     *
+     * @param type A name without type arguments.
+     * @return The distinct qualified names, none when no on-demand import is known to provide it.
+     */
+    private Set<String> typesBroughtInOnDemand(final String type) {
+        final Set<String> found = new TreeSet<>();
+        for (final String wildcardPackage : currentWildcardImports) {
+            final String candidate = wildcardPackage + "." + type;
+            if (typeSolver.tryToSolveType(candidate).isSolved() || otherLanguageTypes.test(candidate)) {
+                found.add(candidate);
+            }
+        }
+        final String javaLang = OOPSourceModelConstants.getJavaDefaultClasses().get(type);
+        if (javaLang != null) {
+            found.add(javaLang);
+        }
+        return found;
     }
 
     /**

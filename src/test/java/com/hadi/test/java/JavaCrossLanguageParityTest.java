@@ -225,4 +225,70 @@ public class JavaCrossLanguageParityTest {
                         "}"));
         assertEquals("[app.Sib, other.Imp]", referencedBy(model, "app.E").toString());
     }
+
+    // Only java.lang is imported implicitly, and after everything the file names.
+
+    @Test
+    public void aRepositoryTypeSharingANameWithAJavaUtilTypeIsTheRepositoryType() throws Exception {
+        final OOPSourceCodeModel model = modelOf(
+                "/src/com/domain/Provider.java", "package com.domain;\npublic class Provider { }\n",
+                "/src/com/domain/Stack.java", "package com.domain;\npublic class Stack { }\n",
+                "/src/com/domain/Properties.java", "package com.domain;\npublic class Properties { }\n",
+                "/src/app/F.java", String.join("\n",
+                        "package app;",
+                        "import com.domain.*;",
+                        "public class F {",
+                        "  Provider p;",
+                        "  Stack s;",
+                        "  Properties props;",
+                        "  String text;",
+                        "}"));
+        assertEquals("[com.domain.Properties, com.domain.Provider, com.domain.Stack, java.lang.String]",
+                referencedBy(model, "app.F").toString());
+    }
+
+    @Test
+    public void aTypeOutsideJavaLangIsNotImportedImplicitly() throws Exception {
+        final OOPSourceCodeModel model = modelOf("/src/app/G.java", String.join("\n",
+                "package app;",
+                "public class G {",
+                "  Stack s;",
+                "  Provider p;",
+                "  Attributes a;",
+                "  Collection c;",
+                "}"));
+        final Set<String> refs = referencedBy(model, "app.G");
+        assertFalse(refs.toString(), refs.stream().anyMatch(r -> r.startsWith("java.") || r.startsWith("app.")));
+    }
+
+    @Test
+    public void javaUtilStillResolvesWhereTheFileImportsIt() throws Exception {
+        final OOPSourceCodeModel model = modelOf("/src/app/H.java", String.join("\n",
+                "package app;",
+                "import java.util.*;",
+                "import java.io.File;",
+                "public class H {",
+                "  List<String> l;",
+                "  Stack<String> s;",
+                "  File f;",
+                "}"));
+        assertEquals("[java.io.File, java.lang.String, java.util.List, java.util.Stack]",
+                referencedBy(model, "app.H").toString());
+    }
+
+    @Test
+    public void aSamePackageTypeBeatsJavaLangAndANameBothOnDemandSourcesDeclareBindsToNeither() throws Exception {
+        final OOPSourceCodeModel model = modelOf(
+                "/src/com/domain/Number.java", "package com.domain;\npublic class Number { }\n",
+                "/src/app/Error.java", "package app;\npublic class Error { }\n",
+                "/src/app/J.java", String.join("\n",
+                        "package app;",
+                        "import com.domain.*;",
+                        "public class J {",
+                        "  Error e;",
+                        "  Number n;",
+                        "  Object o;",
+                        "}"));
+        assertEquals("[app.Error, java.lang.Object]", referencedBy(model, "app.J").toString());
+    }
 }

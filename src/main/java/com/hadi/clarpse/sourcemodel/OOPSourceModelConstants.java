@@ -10,7 +10,6 @@ import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.TreeMap;
 
 /**
  * Central constants and enums used by the language-agnostic source model.
@@ -23,7 +22,14 @@ public final class OOPSourceModelConstants {
     private static final Map<AccessModifiers, String> ACCESS_MODIFIER_MAP = new HashMap<AccessModifiers, String>();
     private static final Map<ComponentType, String> COMPONENT_TYPES = new HashMap<ComponentType, String>();
     public static final String JAVA_DEFAULT_PKG = "java.lang.";
-    static final Map<String, String> JAVA_DEFAULT_CLASSES = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    /**
+     * The top-level types of {@code java.lang}, by simple name, which every compilation unit imports
+     * on demand; plus the primitive keywords, which map to their wrapper. Nothing outside
+     * {@code java.lang} and no nested type belongs here: a name listed is read as that type wherever
+     * nothing closer in scope declares one, so a name that merely sounds standard would be bound
+     * wrongly. Names are case-sensitive.
+     */
+    static final Map<String, String> JAVA_DEFAULT_CLASSES = new HashMap<>();
     static {
         JAVA_DEFAULT_CLASSES.put("Appendable", JAVA_DEFAULT_PKG + "Appendable");
         JAVA_DEFAULT_CLASSES.put("AutoCloseable", JAVA_DEFAULT_PKG + "AutoCloseable");
@@ -31,21 +37,15 @@ public final class OOPSourceModelConstants {
         JAVA_DEFAULT_CLASSES.put("Cloneable", JAVA_DEFAULT_PKG + "Cloneable");
         JAVA_DEFAULT_CLASSES.put("Comparable", JAVA_DEFAULT_PKG + "Comparable");
         JAVA_DEFAULT_CLASSES.put("Iterable", JAVA_DEFAULT_PKG + "Iterable");
-        JAVA_DEFAULT_CLASSES.put("Collection", JAVA_DEFAULT_PKG + "Collection");
         JAVA_DEFAULT_CLASSES.put("Readable", JAVA_DEFAULT_PKG + "Readable");
-        JAVA_DEFAULT_CLASSES.put("ArrayList", "java.util." + "ArrayList");
         JAVA_DEFAULT_CLASSES.put("Runnable", JAVA_DEFAULT_PKG + "Runnable");
-        JAVA_DEFAULT_CLASSES.put("UncaughtExceptionHandler", JAVA_DEFAULT_PKG + "UncaughtExceptionHandler");
         JAVA_DEFAULT_CLASSES.put("Boolean", JAVA_DEFAULT_PKG + "Boolean");
         JAVA_DEFAULT_CLASSES.put("boolean", JAVA_DEFAULT_PKG + "Boolean");
         JAVA_DEFAULT_CLASSES.put("Byte", JAVA_DEFAULT_PKG + "Byte");
         JAVA_DEFAULT_CLASSES.put("Character", JAVA_DEFAULT_PKG + "Character");
-        JAVA_DEFAULT_CLASSES.put("Subset", JAVA_DEFAULT_PKG + "Character.Subset");
-        JAVA_DEFAULT_CLASSES.put("UnicodeBlock", JAVA_DEFAULT_PKG + "Character.UnicodeBlock");
         JAVA_DEFAULT_CLASSES.put("Class", JAVA_DEFAULT_PKG + "Class");
         JAVA_DEFAULT_CLASSES.put("ClassLoader", JAVA_DEFAULT_PKG + "ClassLoader");
         JAVA_DEFAULT_CLASSES.put("ClassValue", JAVA_DEFAULT_PKG + "ClassValue");
-        JAVA_DEFAULT_CLASSES.put("Compiler", JAVA_DEFAULT_PKG + "Compiler");
         JAVA_DEFAULT_CLASSES.put("Double", JAVA_DEFAULT_PKG + "Double");
         JAVA_DEFAULT_CLASSES.put("double", JAVA_DEFAULT_PKG + "Double");
         JAVA_DEFAULT_CLASSES.put("float", JAVA_DEFAULT_PKG + "Float");
@@ -63,7 +63,6 @@ public final class OOPSourceModelConstants {
         JAVA_DEFAULT_CLASSES.put("Package", JAVA_DEFAULT_PKG + "Package");
         JAVA_DEFAULT_CLASSES.put("Process", JAVA_DEFAULT_PKG + "Process");
         JAVA_DEFAULT_CLASSES.put("ProcessBuilder", JAVA_DEFAULT_PKG + "ProcessBuilder");
-        JAVA_DEFAULT_CLASSES.put("Redirect", JAVA_DEFAULT_PKG + "ProcessBuilder.Redirect");
         JAVA_DEFAULT_CLASSES.put("Runtime", JAVA_DEFAULT_PKG + "Runtime");
         JAVA_DEFAULT_CLASSES.put("RuntimePermission", JAVA_DEFAULT_PKG + "RuntimePermission");
         JAVA_DEFAULT_CLASSES.put("SecurityManager", JAVA_DEFAULT_PKG + "SecurityManager");
@@ -78,9 +77,6 @@ public final class OOPSourceModelConstants {
         JAVA_DEFAULT_CLASSES.put("ThreadGroup", JAVA_DEFAULT_PKG + "ThreadGroup");
         JAVA_DEFAULT_CLASSES.put("ThreadLocal", JAVA_DEFAULT_PKG + "ThreadLocal");
         JAVA_DEFAULT_CLASSES.put("Throwable", JAVA_DEFAULT_PKG + "Throwable");
-        JAVA_DEFAULT_CLASSES.put("UnicodeScript", JAVA_DEFAULT_PKG + "Character.UnicodeScript");
-        JAVA_DEFAULT_CLASSES.put("Type", JAVA_DEFAULT_PKG + "ProcessBuilder.Redirect.Type");
-        JAVA_DEFAULT_CLASSES.put("State", JAVA_DEFAULT_PKG + "Thread.State");
         JAVA_DEFAULT_CLASSES.put("ArithmeticException", JAVA_DEFAULT_PKG + "ArithmeticException");
         JAVA_DEFAULT_CLASSES.put("ArrayIndexOutOfBoundsException", JAVA_DEFAULT_PKG + "ArrayIndexOutOfBoundsException");
         JAVA_DEFAULT_CLASSES.put("ArrayStoreException", JAVA_DEFAULT_PKG + "ArrayStoreException");
@@ -88,7 +84,7 @@ public final class OOPSourceModelConstants {
         JAVA_DEFAULT_CLASSES.put("ClassNotFoundException", JAVA_DEFAULT_PKG + "ClassNotFoundException");
         JAVA_DEFAULT_CLASSES.put("CloneNotSupportedException", JAVA_DEFAULT_PKG + "CloneNotSupportedException");
         JAVA_DEFAULT_CLASSES.put("EnumConstantNotPresentException",
-                                 JAVA_DEFAULT_PKG + "EnumConstantNotPresentException  ");
+                                 JAVA_DEFAULT_PKG + "EnumConstantNotPresentException");
         JAVA_DEFAULT_CLASSES.put("Exception", JAVA_DEFAULT_PKG + "Exception");
         JAVA_DEFAULT_CLASSES.put("IllegalAccessException", JAVA_DEFAULT_PKG + "IllegalAccessException");
         JAVA_DEFAULT_CLASSES.put("IllegalArgumentException", JAVA_DEFAULT_PKG + "IllegalArgumentException");
@@ -134,62 +130,6 @@ public final class OOPSourceModelConstants {
         JAVA_DEFAULT_CLASSES.put("InternalError", JAVA_DEFAULT_PKG + "InternalError");
         JAVA_DEFAULT_CLASSES.put("VerifyError", JAVA_DEFAULT_PKG + "VerifyError");
         JAVA_DEFAULT_CLASSES.put("VirtualMachineError", JAVA_DEFAULT_PKG + "VirtualMachineError");
-        JAVA_DEFAULT_CLASSES.put("ArrayList", "java.util.ArrayList");
-        JAVA_DEFAULT_CLASSES.put("Set", "java.util.Set");
-        JAVA_DEFAULT_CLASSES.put("SortedSet", "java.util.SortedSet");
-        JAVA_DEFAULT_CLASSES.put("Collection", "java.util.Collection");
-        JAVA_DEFAULT_CLASSES.put("AbstractCollection", "java.util.AbstractCollection");
-        JAVA_DEFAULT_CLASSES.put("AbstarctList", "java.util.AbstractList");
-        JAVA_DEFAULT_CLASSES.put("AbstractQueue", "java.util.AbstractQueue");
-        JAVA_DEFAULT_CLASSES.put("AbstractSequentialList", "java.util.AbstractSequentialList");
-        JAVA_DEFAULT_CLASSES.put("AbstractSet", "java.util.AbstractSet");
-        JAVA_DEFAULT_CLASSES.put("ArrayDeque", "java.util.ArrayDeque");
-        JAVA_DEFAULT_CLASSES.put("AttributeList", "java.util.AttributeList");
-        JAVA_DEFAULT_CLASSES.put("BeanContextServiceSupport", "java.util.BeanContextServiceSupport");
-        JAVA_DEFAULT_CLASSES.put("BeanContextServicesSupport", "java.util.BeanContextServicesSupport");
-        JAVA_DEFAULT_CLASSES.put("BeanContextSupport", "java.util.BeanContextSupport");
-        JAVA_DEFAULT_CLASSES.put("ConcurrentLinkedDeque", "java.util.ConcurrentLinkedDeque");
-        JAVA_DEFAULT_CLASSES.put("ConcurrentLinkedQueue", "java.util.ConcurrentLinkedQueue");
-        JAVA_DEFAULT_CLASSES.put("ConcurrentSkipListSet", "java.util.ConcurrentSkipListSet");
-        JAVA_DEFAULT_CLASSES.put("CopyOnWriteArrayList", "java.util.CopyOnWriteArrayList");
-        JAVA_DEFAULT_CLASSES.put("CopyOnWriteArraySet", "java.util.CopyOnWriteArraySet");
-        JAVA_DEFAULT_CLASSES.put("DelayQueue", "java.util.DelayQueue");
-        JAVA_DEFAULT_CLASSES.put("EnumSet", "java.util.EnumSet");
-        JAVA_DEFAULT_CLASSES.put("HashSet", "java.util.HashSet");
-        JAVA_DEFAULT_CLASSES.put("JobStateReasons", "java.util.JobStateReasons");
-        JAVA_DEFAULT_CLASSES.put("LinkedBlockingDeque", "java.util.LinkedBlockingDeque");
-        JAVA_DEFAULT_CLASSES.put("LinkedBlockingQueue", "java.util.LinkedBlockingQueue");
-        JAVA_DEFAULT_CLASSES.put("LinkedHashSet", "java.util.LinkedHashSet");
-        JAVA_DEFAULT_CLASSES.put("LinkedList", "java.util.LinkedList");
-        JAVA_DEFAULT_CLASSES.put("LinkedTransferQueue", "java.util.LinkedTransferQueue");
-        JAVA_DEFAULT_CLASSES.put("PriorityBlockingQueue", "java.util.PriorityBlockingQueue");
-        JAVA_DEFAULT_CLASSES.put("PriorityQueue", "java.util.PriorityQueue");
-        JAVA_DEFAULT_CLASSES.put("RoleList", "java.util.RoleList");
-        JAVA_DEFAULT_CLASSES.put("RoleUnresolvedList", "java.util.RoleUnresolvedList");
-        JAVA_DEFAULT_CLASSES.put("Stack", "java.util.Stack");
-        JAVA_DEFAULT_CLASSES.put("SynchronousQueue", "java.util.SynchronousQueue");
-        JAVA_DEFAULT_CLASSES.put("TreeSet", "java.util.TreeSet");
-        JAVA_DEFAULT_CLASSES.put("Vector", "java.util.Vector");
-        JAVA_DEFAULT_CLASSES.put("RoleList", "java.util.RoleList");
-        JAVA_DEFAULT_CLASSES.put("AbstractMap", "java.util.AbstractMap");
-        JAVA_DEFAULT_CLASSES.put("Attributes", "java.util.Attributes");
-        JAVA_DEFAULT_CLASSES.put("AuthProvider", "java.util.AuthProvider");
-        JAVA_DEFAULT_CLASSES.put("ConcurrentHashMap", "java.util.ConcurrentHashMap");
-        JAVA_DEFAULT_CLASSES.put("ConcurrentSkipListMap", "java.util.ConcurrentSkipListMap");
-        JAVA_DEFAULT_CLASSES.put("EnumMap", "java.util.EnumMap");
-        JAVA_DEFAULT_CLASSES.put("HashMap", "java.util.HashMap");
-        JAVA_DEFAULT_CLASSES.put("Hashtable", "java.util.Hashtable");
-        JAVA_DEFAULT_CLASSES.put("IdentityHashMap", "java.util.IdentityHashMap");
-        JAVA_DEFAULT_CLASSES.put("LinkedHashMap", "java.util.LinkedHashMap");
-        JAVA_DEFAULT_CLASSES.put("PrinterStateReasons", "java.util.PrinterStateReasons");
-        JAVA_DEFAULT_CLASSES.put("Properties", "java.util.Properties");
-        JAVA_DEFAULT_CLASSES.put("Provider", "java.util.Provider");
-        JAVA_DEFAULT_CLASSES.put("RenderingHints", "java.util.RenderingHints");
-        JAVA_DEFAULT_CLASSES.put("SimpleBindings", "java.util.SimpleBindings");
-        JAVA_DEFAULT_CLASSES.put("TabularDataSupport", "java.util.TabularDataSupport");
-        JAVA_DEFAULT_CLASSES.put("TreeMap", "java.util.TreeMap");
-        JAVA_DEFAULT_CLASSES.put("UIDefaults", "java.util.UIDefaults");
-        JAVA_DEFAULT_CLASSES.put("WeakHashMap", "java.util.WeakHashMap");
     }
 
     static {
