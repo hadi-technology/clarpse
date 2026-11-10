@@ -222,15 +222,20 @@ public class ProjectFiles implements AutoCloseable {
         LOGGER.info("Reading source files from dir: " + projectFiles.getPath());
         this.projectDir = projectFiles.getAbsolutePath();
         this.tempProjectDir = false;
+        final Path root = projectFiles.getAbsoluteFile().toPath();
         Iterator<File> it = FileUtils.iterateFiles(projectFiles, null, true);
         while (it.hasNext()) {
             File nextFile = it.next();
             if (nextFile.isFile()) {
-                if (shouldLoadPath(nextFile.getAbsolutePath())) {
+                // A file is held under its path inside the directory, as an archive entry is, so the
+                // same tree gives the same model whichever way it is read.
+                final String inTree = "/" + root.relativize(nextFile.getAbsoluteFile().toPath())
+                        .toString().replace(File.separatorChar, '/');
+                if (shouldLoadPath(inTree)) {
                     String content = FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8);
-                    this.insertFile(new ProjectFile(nextFile.getAbsolutePath(), content));
+                    this.insertFile(new ProjectFile(inTree, content));
                 } else {
-                    recordUnreadSourceFile(nextFile.getAbsolutePath());
+                    recordUnreadSourceFile(inTree);
                 }
             }
         }
@@ -572,6 +577,14 @@ public class ProjectFiles implements AutoCloseable {
             this.persistDir();
             return this.projectDir;
         }
+    }
+
+    /** The directory this instance was read from, or null when it was not read from one. */
+    String directoryReadFrom() {
+        if (this.tempProjectDir || this.projectDir == null || this.projectDir.isEmpty()) {
+            return null;
+        }
+        return this.projectDir;
     }
 
     public boolean isTempProjectDir() {
