@@ -1239,21 +1239,42 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             return;
         }
         try {
-            ResolvedType inferred = ctx.getInitializer().get().calculateResolvedType();
-            while (inferred.isArray()) {
-                inferred = inferred.asArrayType().getComponentType();
-            }
-            if (!inferred.isReferenceType()) {
-                return;
-            }
-            final String inferredName = extractClassName(inferred.asReferenceType().getQualifiedName());
-            if (!inferredName.isEmpty()) {
-                ParseUtil.insertCmpRef(componentStack.peek(), typed(new SimpleTypeReference(inferredName)),
-                        this.componentStack);
-            }
+            recordInferredType(ctx.getInitializer().get().calculateResolvedType(), 0);
         } catch (final Exception | StackOverflowError ignored) {
             // The solver could not type the initializer, or ran out of stack doing so; the local
             // records nothing for it.
+        }
+    }
+
+    /**
+     * Records an inferred type as the same type written out would be: the type itself and every type
+     * named in its type arguments, an array through its element type and a wildcard through its bound.
+     * A primitive and a type variable name no type.
+     */
+    private void recordInferredType(final ResolvedType inferred, final int depth) {
+        if (depth > 8) {
+            return;
+        }
+        if (inferred.isArray()) {
+            recordInferredType(inferred.asArrayType().getComponentType(), depth + 1);
+            return;
+        }
+        if (inferred.isWildcard()) {
+            if (inferred.asWildcard().isBounded()) {
+                recordInferredType(inferred.asWildcard().getBoundedType(), depth + 1);
+            }
+            return;
+        }
+        if (!inferred.isReferenceType()) {
+            return;
+        }
+        final String inferredName = extractClassName(inferred.asReferenceType().getQualifiedName());
+        if (!inferredName.isEmpty()) {
+            ParseUtil.insertCmpRef(componentStack.peek(), typed(new SimpleTypeReference(inferredName)),
+                    this.componentStack);
+        }
+        for (final ResolvedType argument : inferred.asReferenceType().typeParametersValues()) {
+            recordInferredType(argument, depth + 1);
         }
     }
 

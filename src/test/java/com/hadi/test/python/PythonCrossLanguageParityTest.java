@@ -283,7 +283,7 @@ public class PythonCrossLanguageParityTest {
     @Test
     public void aTypeThatIsNotExactlyOneClassAddsNothing() throws Exception {
         final PythonInlineProject project = inferring();
-        for (final String local : new String[] {"number", "words", "text", "unknown", "either", "typevar", "missing"}) {
+        for (final String local : new String[] {"unknown", "either", "typevar", "missing"}) {
             assertEquals(local, "[]", project.localReferences("pkg.use.names_nothing", local).toString());
         }
     }

@@ -21,6 +21,7 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.NameExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.ReceiverCall;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.LiteralExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.ThisExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeUsage;
@@ -838,6 +839,10 @@ final class KotlinFileParser {
         }
 
         private KotlinExpr expressionOf(final KotlinSyntaxNode node) {
+            final String literalType = literalType(node);
+            if (literalType != null) {
+                return new LiteralExpr(literalType);
+            }
             if (node.is("THIS_EXPRESSION") && tree.text(node).trim().equals("this")) {
                 return new ThisExpr();
             }
@@ -870,6 +875,43 @@ final class KotlinFileParser {
                 }
             }
             return null;
+        }
+
+        /** The type a literal's text fixes, or null for anything else, an unsigned or hexadecimal number included. */
+        private String literalType(final KotlinSyntaxNode node) {
+            final String text = tree.text(node).trim().replace("_", "");
+            switch (node.type) {
+                case "STRING_TEMPLATE":
+                    return "kotlin.String";
+                case "CHARACTER_CONSTANT":
+                    return "kotlin.Char";
+                case "BOOLEAN_CONSTANT":
+                    return "kotlin.Boolean";
+                case "INTEGER_CONSTANT":
+                    if (text.endsWith("L")) {
+                        if (text.matches("[0-9]+L")) {
+                            return "kotlin.Long";
+                        }
+                        return null;
+                    }
+                    if (!text.matches("[0-9]+")) {
+                        return null;
+                    }
+                    if (text.length() < 10 || (text.length() == 10 && text.compareTo("2147483647") <= 0)) {
+                        return "kotlin.Int";
+                    }
+                    return "kotlin.Long";
+                case "FLOAT_CONSTANT":
+                    if (text.matches("[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?[fF]")) {
+                        return "kotlin.Float";
+                    }
+                    if (text.matches("[0-9]*\\.?[0-9]+([eE][+-]?[0-9]+)?")) {
+                        return "kotlin.Double";
+                    }
+                    return null;
+                default:
+                    return null;
+            }
         }
 
         /** The name a call writes as its callee, or null for a call with type arguments or another callee. */

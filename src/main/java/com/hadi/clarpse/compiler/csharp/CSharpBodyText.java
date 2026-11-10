@@ -53,6 +53,60 @@ final class CSharpBodyText {
         return i == n && head.end() < n;
     }
 
+    private static final Pattern LITERAL_INITIALIZER = Pattern.compile(
+            "(?s)(?:\"(?:[^\"\\\\]|\\\\.)*\"|\\$?@\"(?:[^\"]|\"\")*\"|\\$\"[^\"]*\")"
+                    + "|('(?:[^'\\\\]|\\\\.)')|(true|false)"
+                    + "|([0-9][0-9_]{0,8})|([0-9][0-9_]*[lL])"
+                    + "|([0-9][0-9_]*\\.[0-9][0-9_]*[dD]?|[0-9][0-9_]*[dD])|([0-9][0-9_]*(?:\\.[0-9][0-9_]*)?[fF])"
+                    + "|([0-9][0-9_]*(?:\\.[0-9][0-9_]*)?[mM])");
+
+    /**
+     * The keyword of the type a {@code var} local's initializer fixes when the whole initializer is
+     * one literal: {@code var s = "x";} is a {@code string}. Anything else, including a number that
+     * needs a wider type than its digits show or an unsigned suffix, is {@code null}.
+     *
+     * @param declarationText The text of the declaration.
+     * @param localName       The local's name.
+     * @return The type keyword, or null.
+     */
+    static String literalType(final String declarationText, final String localName) {
+        final Matcher head = Pattern.compile("\\bvar\\s+" + Pattern.quote(localName) + "\\s*=\\s*").matcher(declarationText);
+        if (!head.find()) {
+            return null;
+        }
+        final String rest = declarationText.substring(head.end()).trim();
+        String initializer = rest;
+        if (rest.endsWith(";")) {
+            initializer = rest.substring(0, rest.length() - 1).trim();
+        }
+        final Matcher literal = LITERAL_INITIALIZER.matcher(initializer);
+        if (!literal.matches()) {
+            return null;
+        }
+        if (literal.group(1) != null) {
+            return "char";
+        }
+        if (literal.group(2) != null) {
+            return "bool";
+        }
+        if (literal.group(3) != null) {
+            return "int";
+        }
+        if (literal.group(4) != null) {
+            return "long";
+        }
+        if (literal.group(5) != null) {
+            return "double";
+        }
+        if (literal.group(6) != null) {
+            return "float";
+        }
+        if (literal.group(7) != null) {
+            return "decimal";
+        }
+        return "string";
+    }
+
     /** The index just past the bracket that closes the one at {@code open}, or -1 when it never closes. */
     private static int skipBalanced(final String text, final int open) {
         int depth = 0;

@@ -161,6 +161,15 @@ final class KotlinModel {
     record NameExpr(String name) implements KotlinExpr {
     }
 
+    /**
+     * A literal whose type its text fixes: a string, a character, a boolean, or a number without
+     * a suffix that makes it unsigned.
+     *
+     * @param type The type's fully qualified name.
+     */
+    record LiteralExpr(String type) implements KotlinExpr {
+    }
+
     /** The enclosing class, {@code this}. */
     record ThisExpr() implements KotlinExpr {
     }

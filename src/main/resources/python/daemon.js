@@ -1045,9 +1045,6 @@ const PYRIGHT_CATEGORY_CLASS = 6;
 const PYRIGHT_CATEGORY_UNION = 8;
 const PYRIGHT_FLAG_INSTANCE = 2;
 
-/** Modules whose classes are the language's own vocabulary, not a dependency worth recording for a local. */
-const UNATTRIBUTED_MODULES = new Set(['builtins', 'types', 'typing', 'typing_extensions', '_typeshed']);
-
 /** The node of `root` that spans exactly what `target` spans in the file, or null. */
 function sameNodeIn(root, target) {
   let node = root;
@@ -1076,9 +1073,9 @@ function sameNodeIn(root, target) {
 
 /**
  * The one class an evaluated type is an instance of, or null when it is not exactly one: an unknown
- * or `Any` type, a type variable, a module or a class object, a union of several classes, and the
- * classes of the language's own vocabulary (`int`, `list`, `None`) all name nothing worth recording.
- * `Optional[X]` is an `X`.
+ * or `Any` type, a type variable, a module or a class object, a union of several classes, and
+ * `None` all name nothing. A class of the language's own vocabulary (`int`, `list`) counts like any
+ * other: an inferred local records what the annotation `x: int` records. `Optional[X]` is an `X`.
  */
 function instanceClassOf(type) {
   let candidate = type;
@@ -1091,7 +1088,7 @@ function instanceClassOf(type) {
     return null;
   }
   const shared = candidate.shared;
-  if (!shared || !shared.name || !shared.moduleName || !shared.fullName || UNATTRIBUTED_MODULES.has(shared.moduleName)) {
+  if (!shared || !shared.name || !shared.moduleName || !shared.fullName || shared.name === 'NoneType') {
     return null;
   }
   const own = shared.fullName.startsWith(shared.moduleName + '.')
@@ -1105,6 +1102,10 @@ function instanceClassOf(type) {
  * the module index cannot account for is not guessed at.
  */
 function inferredClassRef(info) {
+  if (info.moduleName === 'builtins') {
+    // A builtin is written bare, and recorded as an annotation of it is: `x = 1` is `x: int`.
+    return { targetUniqueName: null, externalLabel: info.classPath, unresolved: true };
+  }
   const file = state.moduleIndex ? state.moduleIndex.get(info.moduleName) : null;
   if (file) {
     if (!moduleDeclarations(file).classPaths.has(info.classPath)) {

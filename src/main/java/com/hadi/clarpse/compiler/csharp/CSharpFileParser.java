@@ -1003,6 +1003,13 @@ final class CSharpFileParser {
                     if (newExpression != null) {
                         declaredType = firstDirectChildText(newExpression, "cs:type-usage-role");
                         inferred = declaredType != null && !declaredType.isEmpty();
+                    } else {
+                        // A literal fixes its type, which is the type written out would be.
+                        final String literalType = CSharpBodyText.literalType(descendant.text, localName);
+                        if (literalType != null) {
+                            declaredType = literalType;
+                            inferred = true;
+                        }
                     }
                 }
                 final CSharpModel.CSharpMemberModel local = buildSingleMember(
@@ -1015,7 +1022,8 @@ final class CSharpFileParser {
                         null
                 );
                 local.inferredType = inferred;
-                local.plainNewInitializer = inferred && CSharpBodyText.isPlainNewInitializer(descendant.text, localName);
+                local.plainNewInitializer = inferred && (CSharpBodyText.isPlainNewInitializer(descendant.text, localName)
+                        || CSharpBodyText.literalType(descendant.text, localName) != null);
                 if (!inferred && (declaredType == null || declaredType.isEmpty()
                         || "var".equals(trimTypeText(declaredType)))) {
                     local.initializerAccess = CSharpBodyText.initializerAccess(descendant.text, localName);

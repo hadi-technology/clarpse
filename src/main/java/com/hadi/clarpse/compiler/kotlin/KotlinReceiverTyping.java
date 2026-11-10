@@ -10,6 +10,7 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.NameExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinTypeModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.ReceiverCall;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.LiteralExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.ThisExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModelAssembler.Shadow;
@@ -83,6 +84,9 @@ final class KotlinReceiverTyping {
     String typeOf(final KotlinExpr expression) {
         if (expression instanceof NameExpr name) {
             return typeOfRoot(name.name());
+        }
+        if (expression instanceof LiteralExpr literal) {
+            return literal.type();
         }
         if (expression instanceof ThisExpr) {
             return enclosingType();
