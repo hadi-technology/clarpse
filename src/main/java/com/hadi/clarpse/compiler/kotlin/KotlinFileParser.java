@@ -236,6 +236,7 @@ final class KotlinFileParser {
             final KotlinTypeModel type = new KotlinTypeModel();
             final List<String> modifiers = modifierKeywords(node);
             type.annotations.addAll(annotationUses(node));
+            type.ownUsages.addAll(annotationArgumentUsages(node));
             final List<Token> tokens = tree.directTokens(node);
             boolean isInterface = false;
             for (final Token token : tokens) {
@@ -881,6 +882,24 @@ final class KotlinFileParser {
                 }
             }
             return uses;
+        }
+
+        /** The types the arguments of a declaration's annotations name: class literals, calls, constants. */
+        private List<TypeUsage> annotationArgumentUsages(final KotlinSyntaxNode declaration) {
+            final List<TypeUsage> usages = new ArrayList<>();
+            final KotlinSyntaxNode list = declaration.child(MODIFIER_LIST);
+            if (list == null) {
+                return usages;
+            }
+            for (final KotlinSyntaxNode node : list.descendants()) {
+                if (node.is("ANNOTATION_ENTRY")) {
+                    final KotlinSyntaxNode arguments = node.child("VALUE_ARGUMENT_LIST");
+                    if (arguments != null) {
+                        usages.addAll(typeUsagesIn(arguments, null));
+                    }
+                }
+            }
+            return usages;
         }
 
         private List<KotlinAnnotationArgument> annotationArguments(final KotlinSyntaxNode entry) {
