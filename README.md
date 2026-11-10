@@ -537,6 +537,10 @@ A TypeScript file is read in a program, and a program is built from a config.
   `extendedDiagnostics` and the like are dropped from a config's options. They change nothing a
   program holds.
 
+## The model contract
+What the model holds, what each part means, and what clarpse does and does not promise about it across
+languages is in [docs/MODEL.md](docs/MODEL.md).
+
 ## Files a component's imports resolve to
 `Component.imports()` lists what a file imports as names, and a name cannot always be split back
 into a path: a folder called `fit.core` looks like two folders. `Component.importedFiles()` is the
