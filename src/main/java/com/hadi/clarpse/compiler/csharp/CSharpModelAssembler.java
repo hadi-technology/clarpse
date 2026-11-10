@@ -1266,7 +1266,7 @@ final class CSharpModelAssembler {
 
         private Receiver receiverOfType(final WrittenType written) {
             final String text = written.text().trim();
-            if ("var".equals(text) || "dynamic".equals(text)) {
+            if ("var".equals(text) || "dynamic".equals(text) || isArrayOrPointer(text)) {
                 return null;
             }
             return new Receiver(typeModelOf(written), written);
@@ -1529,8 +1529,19 @@ final class CSharpModelAssembler {
             return true;
         }
 
+        /**
+         * Whether a written type is an array or a pointer, whose members are not those of the element
+         * type it is written with.
+         */
+        private static boolean isArrayOrPointer(final String written) {
+            return written != null && (written.indexOf('[') >= 0 || written.indexOf('*') >= 0);
+        }
+
         /** The parsed type a written type names, when it names exactly one and not a type parameter. */
         private CSharpModel.CSharpTypeModel typeModelOf(final WrittenType written) {
+            if (isArrayOrPointer(written.text())) {
+                return null;
+            }
             final List<CSharpFileParser.TypeToken> tokens = CSharpFileParser.extractTypeReferences(written.text());
             if (tokens.size() != 1) {
                 return null;
