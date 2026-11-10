@@ -1361,10 +1361,11 @@ final class CSharpModelAssembler {
 
         /**
          * Whether the receiver's declared type fits the type the method extends: the extended type is
-         * a type parameter of the method, or the same type, or a parsed base type or interface of the
+         * a type parameter of the method and the receiver's type is parsed, or the same type, or a parsed base type or interface of the
          * receiver's. Two parsed types are compared as types; two types the parse does not hold are
          * compared by simple name with generic arguments dropped; a parsed type against an unparsed
-         * one does not fit.
+         * one does not fit. A parsed receiver type with an ancestor the parse does not hold fits
+         * nothing, for the ancestor may declare the member the call names.
          */
         private boolean canTakeReceiver(final CSharpModel.CSharpMemberModel method,
                                         final CSharpModel.CSharpTypeModel declaring,
@@ -1373,8 +1374,11 @@ final class CSharpModelAssembler {
             if (extended == null || extended.isBlank()) {
                 return false;
             }
+            if (receiver.model() != null && !hasFullyParsedAncestry(receiver.model())) {
+                return false;
+            }
             if (method.typeParameters.stream().anyMatch(extended.trim()::equals)) {
-                return true;
+                return receiver.model() != null;
             }
             final CSharpModel.CSharpTypeModel extendedModel = typeModelOf(new WrittenType(extended, declaring, method));
             if (receiver.model() != null) {
@@ -1489,6 +1493,40 @@ final class CSharpModelAssembler {
                 }
             }
             return false;
+        }
+
+        /**
+         * Whether every ancestor of the type, to the root, is a parsed type: no base class or interface
+         * anywhere in the chain is missing from the parse. Only then do the members the type and its
+         * ancestors declare make up everything it can be called with.
+         */
+        private boolean hasFullyParsedAncestry(final CSharpModel.CSharpTypeModel type) {
+            final Set<String> visited = new LinkedHashSet<>();
+            final java.util.Deque<CSharpModel.CSharpTypeModel> pending = new java.util.ArrayDeque<>();
+            pending.add(type);
+            visited.add(type.uniqueName);
+            while (!pending.isEmpty()) {
+                final CSharpModel.CSharpTypeModel current = pending.poll();
+                for (final String baseType : current.baseTypes) {
+                    final List<CSharpFileParser.TypeToken> tokens = CSharpFileParser.extractTypeReferences(baseType);
+                    if (tokens.isEmpty()) {
+                        return false;
+                    }
+                    final Resolution resolved = resolveType(tokens.get(0).name(), tokens.get(0).arity(), current, null);
+                    if (resolved == null || resolved.kind() == ResolutionKind.UNRESOLVED
+                            || resolved.kind() == ResolutionKind.AMBIGUOUS) {
+                        return false;
+                    }
+                    final CSharpModel.CSharpTypeModel base = typeModelsByName.get(resolved.name());
+                    if (base == null) {
+                        return false;
+                    }
+                    if (visited.add(base.uniqueName)) {
+                        pending.add(base);
+                    }
+                }
+            }
+            return true;
         }
 
         /** The parsed type a written type names, when it names exactly one and not a type parameter. */
