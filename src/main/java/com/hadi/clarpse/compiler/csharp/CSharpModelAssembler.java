@@ -938,7 +938,7 @@ final class CSharpModelAssembler {
             }
         }
         if (count > 0) {
-            if (distinct.size() == 1) {
+            if (distinct.size() == 1 && !bodyMayDeclare(memberModel, name, count)) {
                 return declared;
             }
             return null;
@@ -953,6 +953,17 @@ final class CSharpModelAssembler {
 
     /** Whether the member's text could declare another variable of the name: a lambda parameter, a loop or pattern variable. */
     private static boolean bodyMayDeclare(final CSharpModel.CSharpMemberModel memberModel, final String name) {
+        return bodyMayDeclare(memberModel, name, 0);
+    }
+
+    /**
+     * Whether the member's text writes more declarations of the name than the {@code known} ones the
+     * parse holds for it -- its parameters, locals and typed lambda parameters. A local function's
+     * parameter, a pattern variable, a loop or an {@code out} variable of the same name is such a
+     * further declaration.
+     */
+    private static boolean bodyMayDeclare(final CSharpModel.CSharpMemberModel memberModel, final String name,
+                                          final int known) {
         final String source = memberModel.sourceText;
         if (source == null || memberModel.startOffset < 0 || memberModel.endOffset > source.length()
                 || memberModel.startOffset > memberModel.endOffset) {
@@ -966,9 +977,13 @@ final class CSharpModelAssembler {
         }
         final java.util.regex.Matcher declaration = java.util.regex.Pattern
                 .compile("(?<![\\w.])([A-Za-z_][\\w.<>,\\[\\]?]*)\\s+" + quoted + "\\b(?!\\s*\\()").matcher(body);
+        int written = 0;
         while (declaration.find()) {
             if (!NOT_A_TYPE_WORD.contains(declaration.group(1))) {
-                return true;
+                written += 1;
+                if (written > known) {
+                    return true;
+                }
             }
         }
         return false;
@@ -1259,6 +1274,23 @@ final class CSharpModelAssembler {
                 return receiverOfType(new WrittenType(field.member().declaredType, field.declaring(), field.member()));
             }
             if (distinct.size() != 1) {
+                return null;
+            }
+            int known = 0;
+            for (final CSharpModel.CSharpParameterModel parameter : caller.parameters) {
+                if (name.equals(parameter.name)) {
+                    known += 1;
+                }
+            }
+            for (final CSharpModel.CSharpMemberModel local : caller.locals) {
+                if (name.equals(local.name)) {
+                    known += 1;
+                }
+            }
+            if (lambdaTypes != null) {
+                known += lambdaTypes.size();
+            }
+            if (bodyMayDeclare(caller, name, known)) {
                 return null;
             }
             return receiverOfType(written);
