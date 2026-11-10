@@ -60,4 +60,23 @@ public class TypeScriptCrossLanguageParityTest {
         assertTrue(targets.toString(), targets.contains("src.types.Cfg"));
         assertFalse(targets.toString(), targets.contains("src.use.U"));
     }
+
+    @Test
+    public void aNamespaceMemberIsNotGivenAMadeUpName() throws Exception {
+        final Set<String> targets = targets("src.use.viaNamespace",
+                "/src/ns.ts", "export namespace NS { export class Baz { static make(): number { return 1; } } }\n",
+                "/src/use.ts", "import { NS } from './ns';\n"
+                        + "export function viaNamespace() { return NS.Baz.make(); }\n");
+        assertFalse(targets.toString(), targets.contains("src.ns.Baz"));
+    }
+
+    @Test
+    public void aMemberOfAClassMergedNamespaceIsNotGivenAMadeUpName() throws Exception {
+        final Set<String> targets = targets("src.holder.make",
+                "/src/holder.ts", "export function make(): Holder.Inner { return new Holder.Inner(); }\n"
+                        + "export class Holder { h = 1; }\n"
+                        + "export namespace Holder { export class Inner { i = 1; } }\n");
+        assertFalse(targets.toString(), targets.contains("src.holder.Inner"));
+        assertTrue(targets.toString(), targets.contains("src.holder.Holder"));
+    }
 }

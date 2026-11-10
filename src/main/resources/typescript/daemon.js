@@ -1471,6 +1471,22 @@ function isInternalFile(filePath, repoRootOverride) {
   return true;
 }
 
+/**
+ * Whether a declaration sits inside a `namespace` block (or `declare global`). A namespace is not a
+ * component, so a member of one has no name in the model: a target built from the member's own
+ * name and its file would name a component that does not exist. (A `declare module "x"` block is
+ * different: its declarations are modelled as declarations of the file.)
+ */
+function declaredInNamespace(declaration) {
+  const ts = state.ts;
+  for (let current = declaration && declaration.parent; current; current = current.parent) {
+    if (ts.isModuleDeclaration(current) && !ts.isStringLiteral(current.name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function resolveSymbolName(symbol, checker) {
   let actual = symbol;
   if (symbol.flags & state.ts.SymbolFlags.Alias) {
@@ -1648,6 +1664,9 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
     }
     const name = resolveSymbolName(entry.symbol, checker);
     if (isInternalSymbolName(name)) {
+      continue;
+    }
+    if (fileName && name && isInternalFile(fileName) && declaredInNamespace(decl)) {
       continue;
     }
     if (fileName && name && isInternalFile(fileName)) {
