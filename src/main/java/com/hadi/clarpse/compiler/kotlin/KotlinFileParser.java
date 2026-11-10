@@ -357,6 +357,7 @@ final class KotlinFileParser {
                         break;
                     case "CLASS_INITIALIZER":
                         type.ownUsages.addAll(typeUsagesIn(child, null));
+                        type.initializerDeclarations.addAll(declaredNames(child));
                         break;
                     default:
                         break;
@@ -387,6 +388,7 @@ final class KotlinFileParser {
             readParameters(node.child(VALUE_PARAMETER_LIST), member);
             member.typeUsages.addAll(typeUsagesIn(node, member));
             member.codeFragment = member.name + "(" + parameterTypes(member) + ")";
+            countDeclarations(node, member);
             readBodyDetails(node, member);
             return member;
         }
@@ -420,6 +422,7 @@ final class KotlinFileParser {
                 fragment += " : " + member.declaredType;
             }
             member.codeFragment = fragment;
+            countDeclarations(node, member);
             readBodyDetails(node, member);
             return member;
         }
@@ -453,7 +456,34 @@ final class KotlinFileParser {
             } else {
                 member.codeFragment = member.name + " : " + member.declaredType;
             }
+            countDeclarations(node, member);
             return member;
+        }
+
+        /** Counts the values a declaration's text declares, by name, nested declarations included. */
+        private void countDeclarations(final KotlinSyntaxNode declaration, final KotlinMemberModel member) {
+            for (final KotlinSyntaxNode node : declaration.descendants()) {
+                if (node.is("VALUE_PARAMETER") || node.is("DESTRUCTURING_DECLARATION_ENTRY") || node.is(PROPERTY)) {
+                    final String name = identifier(node);
+                    if (name != null) {
+                        member.declarations.merge(name, 1, Integer::sum);
+                    }
+                }
+            }
+        }
+
+        private Set<String> declaredNames(final KotlinSyntaxNode node) {
+            final Set<String> names = new HashSet<>();
+            for (final KotlinSyntaxNode descendant : node.descendants()) {
+                if (descendant.is("VALUE_PARAMETER") || descendant.is("DESTRUCTURING_DECLARATION_ENTRY")
+                        || descendant.is(PROPERTY)) {
+                    final String name = identifier(descendant);
+                    if (name != null) {
+                        names.add(name);
+                    }
+                }
+            }
+            return names;
         }
 
         private KotlinMemberModel newMember(final KotlinSyntaxNode node, final MemberKind kind) {

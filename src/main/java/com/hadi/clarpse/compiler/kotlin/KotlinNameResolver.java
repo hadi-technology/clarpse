@@ -39,6 +39,11 @@ final class KotlinNameResolver {
 
     private static final int MAX_ALIAS_DEPTH = 8;
 
+    /** The first segments of the packages libraries and platforms publish under. */
+    private static final Set<String> PACKAGE_ROOTS = Set.of("com", "org", "net", "io", "edu", "gov", "java",
+            "javax", "jakarta", "android", "androidx", "kotlin", "kotlinx", "scala", "sun", "jdk", "de", "fr",
+            "uk", "nl", "ch", "se", "cn", "jp", "ru", "br", "in", "co", "dev", "app");
+
     /** The types Kotlin's default imports bring into every file, by simple name. */
     private static final Map<String, String> DEFAULT_IMPORTS = defaultImports();
 
@@ -160,6 +165,49 @@ final class KotlinNameResolver {
             return new Resolution(defaultImport, ResolutionKind.EXACT);
         }
         return null;
+    }
+
+    /** Whether a simple name is a type, or a type alias, something in scope declares. */
+    boolean namesTypeInScope(final String name, final Scope scope) {
+        return scope.typeParameters().contains(name) || resolveSimple(name, scope, true, 0) != null;
+    }
+
+    /**
+     * Whether a simple name is a top-level property or function the file can see without a
+     * qualifier: one imported by name that is no type, or one of its own package or of a
+     * star-imported package.
+     */
+    boolean topLevelValueMayBe(final String name, final Scope scope) {
+        final KotlinFileModel file = scope.file();
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (!kotlinImport.star() && name.equals(kotlinImport.visibleName())
+                    && !index.isType(kotlinImport.target())) {
+                return true;
+            }
+        }
+        if (index.fileClassOf(KotlinDeclarationIndex.qualify(file.packageName, name)) != null) {
+            return true;
+        }
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (kotlinImport.star() && index.fileClassOf(kotlinImport.target() + "." + name) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a name starts the package of the file, a package it imports from, or a published root. */
+    static boolean isKnownPackageRoot(final String root, final KotlinFileModel file) {
+        if (PACKAGE_ROOTS.contains(root) || file.packageName.equals(root)
+                || file.packageName.startsWith(root + ".")) {
+            return true;
+        }
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (kotlinImport.target().startsWith(root + ".")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The repository type, or type alias, of exactly this name, or null. */

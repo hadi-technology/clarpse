@@ -143,7 +143,9 @@ final class KotlinModelAssembler {
         for (final KotlinSuperType superType : type.superTypes) {
             addSuperTypeReference(component, type, superType, scope);
         }
-        addTypeReferences(component, type.ownUsages, scope, memberNames);
+        final Set<String> ownNames = new HashSet<>(memberNames);
+        ownNames.addAll(type.initializerDeclarations);
+        addTypeReferences(component, type.ownUsages, scope, new Shadow(ownNames, inheritsMembers));
 
         final List<Object> declarations = new ArrayList<>(type.members);
         declarations.addAll(type.nestedTypes);
@@ -234,7 +236,7 @@ final class KotlinModelAssembler {
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
         addAnnotationReferences(component, member.annotations, scope);
-        final Set<String> closer = closerNames(member, context);
+        final Shadow closer = new Shadow(closerNames(member, context), context.inheritsMembers);
         if (componentType.isMethodComponent()) {
             for (final KotlinParameterModel parameter : member.parameters) {
                 addParameter(file, parameter, member, component, scope, closer);
@@ -253,7 +255,7 @@ final class KotlinModelAssembler {
 
     private void addParameter(final KotlinFileModel file, final KotlinParameterModel parameter,
                               final KotlinMemberModel member, final Component owner, final Scope scope,
-                              final Set<String> closer) {
+                              final Shadow closer) {
         final Component component = new Component();
         component.setPkg(owner.pkg());
         component.setModule(file.moduleName);
@@ -278,7 +280,7 @@ final class KotlinModelAssembler {
     }
 
     private void addLocal(final KotlinFileModel file, final KotlinMemberModel local, final Component owner,
-                          final Scope scope, final Set<String> closer) {
+                          final Scope scope, final Shadow closer) {
         if (local.name == null || local.name.isEmpty()) {
             return;
         }
@@ -440,7 +442,7 @@ final class KotlinModelAssembler {
     }
 
     private void addTypeReferences(final Component component, final Collection<TypeUsage> usages, final Scope scope) {
-        addTypeReferences(component, usages, scope, Set.of());
+        addTypeReferences(component, usages, scope, new Shadow(Set.of(), false));
     }
 
     /**
@@ -450,10 +452,13 @@ final class KotlinModelAssembler {
      * it names.
      */
     private void addTypeReferences(final Component component, final Collection<TypeUsage> usages, final Scope scope,
-                                   final Set<String> closer) {
+                                   final Shadow closer) {
         final Set<String> seen = new HashSet<>();
         for (final TypeUsage usage : usages) {
-            if (usage.value() && (closer.contains(usage.name())
+            if (carriedByAValue(usage, scope, closer)) {
+                continue;
+            }
+            if (usage.value() && (closer.names().contains(usage.name())
                     || !KotlinDeclarationIndex.readsAsTypeName(usage.name())
                     || resolver.index().fileClassOf(KotlinDeclarationIndex.qualify(
                             scope.file().packageName, usage.name())) != null)) {
@@ -463,6 +468,27 @@ final class KotlinModelAssembler {
                 addTypeReference(component, usage, scope);
             }
         }
+    }
+
+    /**
+     * Whether a dotted chain in an expression starts with a value rather than a package: a
+     * parameter, local or member, a top-level property in scope, or, when a supertype the parse
+     * cannot see may declare it, any name that is neither a type in scope nor the root of a package.
+     */
+    private boolean carriedByAValue(final TypeUsage usage, final Scope scope, final Shadow closer) {
+        final int dot = usage.name().indexOf('.');
+        if (!usage.expression() || usage.value() || dot < 0) {
+            return false;
+        }
+        final String head = usage.name().substring(0, dot);
+        if (KotlinDeclarationIndex.readsAsTypeName(head)) {
+            return false;
+        }
+        if (closer.names().contains(head) || resolver.topLevelValueMayBe(head, scope)) {
+            return true;
+        }
+        return closer.ancestryUnknown() && !resolver.namesTypeInScope(head, scope)
+                && !KotlinNameResolver.isKnownPackageRoot(head, scope.file());
     }
 
     private void addTypeReference(final Component component, final TypeUsage usage, final Scope scope) {
@@ -487,6 +513,7 @@ final class KotlinModelAssembler {
         for (final KotlinMemberModel local : member.locals) {
             closer.add(local.name);
         }
+        closer.addAll(member.declarations.keySet());
         return closer;
     }
 
@@ -641,6 +668,13 @@ final class KotlinModelAssembler {
             return "";
         }
         return text;
+    }
+
+    /**
+     * What may stand closer in scope than a type: the names declared there, and whether a supertype
+     * the parse cannot see may declare more.
+     */
+    private record Shadow(Set<String> names, boolean ancestryUnknown) {
     }
 
     /** What a member's calls are resolved in: its scope, and what in closer scope may shadow a call. */

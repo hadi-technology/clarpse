@@ -4,8 +4,10 @@ import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.ProjectFile;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -159,6 +161,8 @@ final class KotlinModel {
          * the arguments of a superclass constructor call, and initializer blocks.
          */
         final List<TypeUsage> ownUsages = new ArrayList<>();
+        /** Names that initializer blocks declare, which are values in the scope of their own text. */
+        final Set<String> initializerDeclarations = new LinkedHashSet<>();
         final List<KotlinMemberModel> members = new ArrayList<>();
         final List<KotlinTypeModel> nestedTypes = new ArrayList<>();
         /** Names of this type's type parameters, which shadow types of the same name. */
@@ -194,6 +198,12 @@ final class KotlinModel {
         final Set<String> calledInLambdas = new LinkedHashSet<>();
         /** Names of this member's own type parameters. */
         final Set<String> typeParameters = new LinkedHashSet<>();
+        /**
+         * How many times the member's text declares each name as a value: its parameters, its
+         * locals, and the parameters of lambdas, loops and catch clauses and the entries of
+         * destructuring declarations anywhere inside it.
+         */
+        final Map<String, Integer> declarations = new HashMap<>();
     }
 
     /** A parameter of a function or constructor. */
