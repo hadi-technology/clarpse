@@ -230,4 +230,59 @@ public class CSharpCrossLanguageParityTest {
         assertFalse(references(model, "App.T").stream()
                 .anyMatch(r -> r.invokedComponent().startsWith("App.E")));
     }
+
+    // ---- ambiguity follows visibility ----
+
+    private static ProjectFile dup(final String namespace) {
+        return new ProjectFile("/" + namespace + "/Dup.cs",
+                "namespace " + namespace + " { public class Dup { } }");
+    }
+
+    private static ProjectFile holder(final String usings) {
+        return new ProjectFile("/Holder.cs", usings + "\nnamespace App { public class Holder { public Dup d; } }");
+    }
+
+    /** Two usings that both supply the name leave it ambiguous: no binding, the name as written. */
+    @Test
+    public void twoUsingsSupplyingTheNameAreAmbiguous() throws Exception {
+        final OOPSourceCodeModel model = model(dup("One.Place"), dup("Two.Place"),
+                holder("using One.Place; using Two.Place;"));
+        assertEquals(ResolutionKind.AMBIGUOUS, kindOf(model, "App.Holder.d", "Dup"));
+        assertFalse(references(model, "App.Holder.d", "One.Place.Dup"));
+        assertFalse(references(model, "App.Holder.d", "Two.Place.Dup"));
+    }
+
+    /** One using supplying the name binds it, however many other namespaces declare one. */
+    @Test
+    public void oneUsingSupplyingTheNameIsExact() throws Exception {
+        final OOPSourceCodeModel model = model(dup("One.Place"), dup("Two.Place"), dup("Three.Place"),
+                holder("using Two.Place;"));
+        assertEquals(ResolutionKind.EXACT, kindOf(model, "App.Holder.d", "Two.Place.Dup"));
+        assertFalse(references(model, "App.Holder.d", "Dup"));
+    }
+
+    /** Several types of the name, none visible: unresolved, as written. */
+    @Test
+    public void severalTypesOfTheNameNoneVisibleAreUnresolved() throws Exception {
+        final OOPSourceCodeModel model = model(dup("One.Place"), dup("Two.Place"), holder("using System;"));
+        assertEquals(ResolutionKind.UNRESOLVED, kindOf(model, "App.Holder.d", "Dup"));
+    }
+
+    /** A type of the file's own namespace is found before any using is consulted. */
+    @Test
+    public void aTypeOfTheOwnNamespaceOutranksTwoUsings() throws Exception {
+        final OOPSourceCodeModel model = model(dup("One.Place"), dup("Two.Place"), dup("App"),
+                holder("using One.Place; using Two.Place;"));
+        assertEquals(ResolutionKind.EXACT, kindOf(model, "App.Holder.d", "App.Dup"));
+    }
+
+    /** A repository type called {@code Decimal} is not the keyword type, and stays visible by scope. */
+    @Test
+    public void aRepositoryTypeNamedLikeAFrameworkTypeIsNotTheFrameworkType() throws Exception {
+        final OOPSourceCodeModel model = model(
+                new ProjectFile("/Decimal.cs", "namespace App { public class Decimal { } }"),
+                new ProjectFile("/Use.cs", "namespace App { public class Use { public Decimal a; public decimal b; } }"));
+        assertEquals(ResolutionKind.EXACT, kindOf(model, "App.Use.a", "App.Decimal"));
+        assertEquals(ResolutionKind.EXACT, kindOf(model, "App.Use.b", "System.Decimal"));
+    }
 }

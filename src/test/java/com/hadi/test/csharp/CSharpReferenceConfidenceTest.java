@@ -88,10 +88,13 @@ public class CSharpReferenceConfidenceTest {
         assertFalse(invokes(component("Demo.App.Widget.gadget"), "Other.Place.Gadget"));
     }
 
-    /** Two types carry the name and nothing chose between them. */
+    /**
+     * Two types carry the name, but neither namespace is visible from the file, so neither is a
+     * candidate: the name is unresolved, not ambiguous. Ambiguity needs several visible candidates.
+     */
     @Test
-    public void anAmbiguousShortNameSaysSo() {
-        assertEquals(ResolutionKind.AMBIGUOUS, kindOf("Demo.App.Widget.dup", "Dup"));
+    public void severalTypesOfTheNameNoneOfThemVisibleIsUnresolved() {
+        assertEquals(ResolutionKind.UNRESOLVED, kindOf("Demo.App.Widget.dup", "Dup"));
     }
 
     @Test

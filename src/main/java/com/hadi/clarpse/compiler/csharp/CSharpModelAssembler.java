@@ -22,7 +22,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Set;
@@ -51,6 +50,15 @@ final class CSharpModelAssembler {
             Map.entry("object", "System.Object"),
             Map.entry("void", "System.Void")
     );
+
+    /** The framework types the keywords stand for, by the names they are also written with: {@code String}. */
+    private static final Map<String, String> BCL_TYPES = new HashMap<>();
+
+    static {
+        for (final String name : BUILTIN_TYPES.values()) {
+            BCL_TYPES.put(name.substring("System.".length()), name);
+        }
+    }
 
     private CSharpModelAssembler() {
     }
@@ -613,11 +621,8 @@ final class CSharpModelAssembler {
             while (true) {
                 final Resolution candidate = typeIndex.resolveType(prefix, ownerType, memberModel);
                 // A leading run of segments may be a namespace or a member rather than a type, so
-                // only the whole name may be taken on a unique simple name; a shorter run needs an
-                // exact resolution.
-                final boolean whole = prefix.equals(receiver);
-                if (candidate != null && (candidate.kind() == ResolutionKind.EXACT
-                        || (whole && candidate.kind() == ResolutionKind.UNIQUE_SIMPLE_NAME))) {
+                // it needs an exact resolution.
+                if (candidate != null && candidate.kind() == ResolutionKind.EXACT) {
                     resolved = candidate;
                     bound = prefix;
                     break;
@@ -1094,8 +1099,6 @@ final class CSharpModelAssembler {
     private static final class TypeIndex {
         /** Unique names by lookup name ({@link CSharpTypeNames#lookupName}), then by arity. */
         private final Map<String, NavigableMap<Integer, String>> typesByLookupName = new HashMap<>();
-        /** Lookup names by simple name. */
-        private final Map<String, Set<String>> typesBySimpleName = new HashMap<>();
         /** Every namespace the repository declares a type in, and every namespace enclosing one. */
         private final Set<String> namespaces = new HashSet<>();
         private final Map<String, String> memberByTypeAndName = new HashMap<>();
@@ -1410,7 +1413,6 @@ final class CSharpModelAssembler {
                 final String lookupName = CSharpTypeNames.lookupName(type.uniqueName);
                 typesByLookupName.computeIfAbsent(lookupName, ignored -> new TreeMap<>())
                         .putIfAbsent(type.arity, type.uniqueName);
-                typesBySimpleName.computeIfAbsent(type.name, ignored -> new LinkedHashSet<>()).add(lookupName);
                 typeModelsByName.putIfAbsent(type.uniqueName, type);
                 for (String space = type.namespaceName; space != null && !space.isEmpty();
                      space = space.substring(0, Math.max(0, space.lastIndexOf('.')))) {
@@ -1671,7 +1673,7 @@ final class CSharpModelAssembler {
                 return null;
             }
             final String cleaned = rawToken.replace("?", "").trim();
-            final String builtin = BUILTIN_TYPES.get(cleaned.toLowerCase(Locale.ROOT));
+            final String builtin = BUILTIN_TYPES.get(cleaned);
             if (builtin != null) {
                 return new Resolution(builtin, ResolutionKind.EXACT);
             }
@@ -1697,28 +1699,26 @@ final class CSharpModelAssembler {
             if (namespaceCandidate != null) {
                 return new Resolution(namespaceCandidate, ResolutionKind.EXACT);
             }
-            // Imports are consulted before any repository-wide guess. They used to come after, and
-            // `resolveNamespace` ended in a guess, so the guess always won: a file declaring
-            // `using ...Modules.Meetings.Application.Contracts;` and extending `CommandBase<Unit>`
-            // bound to Administration's `CommandBase` -- one of five identically named types, chosen
-            // by insertion order. A `using` is evidence; a name match across the repository is not.
-            final String usingCandidate = resolveUsing(cleaned, arity, ownerType.imports);
-            if (usingCandidate != null) {
-                return new Resolution(usingCandidate, ResolutionKind.EXACT);
+            // A using is evidence; a name match across the repository is not. The usings of the
+            // file are one level of lookup: a name that exactly one of them supplies resolves to it,
+            // and a name that several supply is ambiguous (CS0104) and binds to none of them.
+            final Set<String> supplied = resolveUsing(cleaned, arity, ownerType.imports);
+            if (supplied.size() == 1) {
+                return new Resolution(supplied.iterator().next(), ResolutionKind.EXACT);
             }
-            // Nothing in scope named this type: not the enclosing types, the file's namespace or the
-            // namespaces enclosing it, a using, an alias or a global using. A repository type that
-            // carries the same short name but sits in a namespace the name is not visible from is
-            // not the type meant -- `ScrollViewer` written against `using Avalonia.Controls;` is
-            // Avalonia's, however many repository types are called that. Returning the bare token
-            // leaves it unresolved, and a consumer drops an edge that points outside the codebase --
-            // which is the right outcome.
-            // Silence costs a missing edge; a guess costs a fabricated one, and a fabricated edge
-            // reads as a fact. Which of the two this is -- several types carry the name and none was
-            // chosen, or none does -- is reported rather than left for the consumer to infer.
-            final Set<String> sharingTheName = typesBySimpleName.get(cleaned);
-            if (sharingTheName != null && sharingTheName.size() > 1) {
+            if (supplied.size() > 1) {
                 return new Resolution(cleaned, ResolutionKind.AMBIGUOUS);
+            }
+            // Nothing visible from the file's scope carries this name: not the enclosing types, the
+            // namespace or the namespaces enclosing it, a using, an alias or a global using. A
+            // repository type of the same short name in a namespace the name is not visible from is
+            // not the type meant -- `ScrollViewer` written against `using Avalonia.Controls;` is
+            // Avalonia's, however many repository types are called that, so that count decides
+            // nothing. The name stays as written, and a consumer drops an edge that points outside
+            // the codebase. Silence costs a missing edge; a guess costs a fabricated one.
+            final String bcl = BCL_TYPES.get(cleaned);
+            if (bcl != null) {
+                return new Resolution(bcl, ResolutionKind.EXACT);
             }
             return new Resolution(cleaned, ResolutionKind.UNRESOLVED);
         }
@@ -1811,9 +1811,11 @@ final class CSharpModelAssembler {
             }
         }
 
-        private String resolveUsing(final String simpleName, final int arity, final Set<String> imports) {
+        /** The types the usings of a scope supply under the name: none, one, or several that clash. */
+        private Set<String> resolveUsing(final String simpleName, final int arity, final Set<String> imports) {
+            final Set<String> supplied = new LinkedHashSet<>();
             if (imports == null) {
-                return null;
+                return supplied;
             }
             for (final String importTarget : imports) {
                 if (importTarget == null || importTarget.isBlank()) {
@@ -1822,15 +1824,15 @@ final class CSharpModelAssembler {
                 if (importTarget.endsWith("." + simpleName)) {
                     final String imported = lookup(importTarget, arity);
                     if (imported != null) {
-                        return imported;
+                        supplied.add(imported);
                     }
                 }
                 final String candidate = lookup(importTarget + "." + simpleName, arity);
                 if (candidate != null) {
-                    return candidate;
+                    supplied.add(candidate);
                 }
             }
-            return null;
+            return supplied;
         }
 
     }
