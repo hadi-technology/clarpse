@@ -141,4 +141,13 @@ public class TypeScriptCrossLanguageParityTest {
                         + "export class K { run(items: any[]) { items.forEach(function (b: Bar) { }); } }\n");
         assertTrue(targets.toString(), targets.contains("src.types.Bar"));
     }
+
+    @Test
+    public void typeofInATypeAliasReferencesTheValue() throws Exception {
+        final String use = "import { config, factory } from './types';\n"
+                + "export type C = typeof config;\n"
+                + "export type R = ReturnType<typeof factory>;\n";
+        assertTrue(targets("src.use.C", "/src/use.ts", use).contains("src.types.config"));
+        assertTrue(targets("src.use.R", "/src/use.ts", use).contains("src.types.factory"));
+    }
 }

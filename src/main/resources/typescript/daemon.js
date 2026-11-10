@@ -3313,6 +3313,13 @@ function typeParameterReferences(node, checker) {
 function buildTypeAliasModel(node, checker) {
   const references = [];
   function visit(child) {
+    if (state.ts.isTypeQueryNode(child) && state.ts.isIdentifier(child.exprName)) {
+      // `typeof config`: the value's declaration is what the alias is made of.
+      const value = buildValueReference(child.exprName, checker, null);
+      if (value) {
+        references.push(value);
+      }
+    }
     if (state.ts.isTypeReferenceNode(child) || state.ts.isExpressionWithTypeArguments(child)) {
       const named = typeAliasReference(child, checker);
       const referenced = checker.getTypeAtLocation(child);
