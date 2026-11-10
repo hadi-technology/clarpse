@@ -927,6 +927,8 @@ final class CSharpModelAssembler {
             if (fromMember != null) {
                 distinct.add(fromMember.scope().uniqueName + "|" + fromMember.text().trim());
                 declared = fromMember;
+            } else if (local.inferredType && !local.plainNewInitializer) {
+                return null;
             } else if (local.declaredType != null && !local.declaredType.isBlank()
                     && !"var".equals(local.declaredType.trim())) {
                 distinct.add(local.declaredType.trim());
