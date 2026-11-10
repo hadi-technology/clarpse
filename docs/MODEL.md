@@ -692,6 +692,17 @@ User-visible changes in this release.
     expression-bodied members are read; an array or pointer type is not read as its element type;
     an inferred `var` local is typed only by a plain `new` initializer; a receiver name the body may
     declare again is not taken as the outer parameter.
+- **C#, more fixes.** Type tests, casts and patterns (`is`, `as`, `(T)x`, `nameof`, `default`,
+  `case T t`), `[Mark]` for `MarkAttribute`, `typeof` inside attribute arguments and method and
+  delegate constraints are references. An inherited member is not read as a repository type, a
+  namespace qualifier is not a type, and a name two visible namespaces supply is `AMBIGUOUS`.
+- **Changed: a C# type no longer references its extension methods.** The extension class references
+  the type it extends, and a caller references the extension class.
+- **One failing file fails alone.** In every language, a file whose parse throws is reported as a
+  `CompileFailure` for that file, and the rest of the project is modelled.
+- **Performance.** Python parsing evaluates types with Pyright for inferred locals and member
+  references, and is two to four times slower than in 11.16.0 on large projects. Java, Kotlin, C#
+  and TypeScript are within about 20% of 11.16.0.
 - **Release size.** The bundled Pyright and TypeScript runtimes now hold only the files their
   daemons load, and the sources jar leaves the runtime bundles out.
 - **Dependency updates.** `jackson-databind` 2.22.0 to 2.22.3; `log4j-api` and `log4j-core` to
