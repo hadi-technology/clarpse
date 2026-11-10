@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.typescript.NodeRuntime;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.TypeReferences;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -59,25 +60,6 @@ public class TypeScriptCrossLanguageParityTest {
                         + "export function run<U extends Cfg>(u: U): number { return 1; }\n");
         assertTrue(targets.toString(), targets.contains("src.types.Cfg"));
         assertFalse(targets.toString(), targets.contains("src.use.U"));
-    }
-
-    @Test
-    public void aNamespaceMemberIsNotGivenAMadeUpName() throws Exception {
-        final Set<String> targets = targets("src.use.viaNamespace",
-                "/src/ns.ts", "export namespace NS { export class Baz { static make(): number { return 1; } } }\n",
-                "/src/use.ts", "import { NS } from './ns';\n"
-                        + "export function viaNamespace() { return NS.Baz.make(); }\n");
-        assertFalse(targets.toString(), targets.contains("src.ns.Baz"));
-    }
-
-    @Test
-    public void aMemberOfAClassMergedNamespaceIsNotGivenAMadeUpName() throws Exception {
-        final Set<String> targets = targets("src.holder.make",
-                "/src/holder.ts", "export function make(): Holder.Inner { return new Holder.Inner(); }\n"
-                        + "export class Holder { h = 1; }\n"
-                        + "export namespace Holder { export class Inner { i = 1; } }\n");
-        assertFalse(targets.toString(), targets.contains("src.holder.Inner"));
-        assertTrue(targets.toString(), targets.contains("src.holder.Holder"));
     }
 
     @Test
@@ -198,5 +180,108 @@ public class TypeScriptCrossLanguageParityTest {
         final Set<String> viaNamespace = targets("src.use.viaNamespace",
                 "/src/objects.ts", objects, "/src/use.ts", use);
         assertTrue(viaNamespace.toString(), viaNamespace.contains("src.objects.other"));
+    }
+
+    private static CompileResult compile(final String... pathsAndSources) throws Exception {
+        return TypeScriptReferenceGapsTest.compile(pathsAndSources);
+    }
+
+    private static Set<String> referencesOf(final CompileResult result, final String name) {
+        return TypeScriptReferenceGapsTest.targets(TypeScriptReferenceGapsTest.component(result, name));
+    }
+
+    /** Every reference that names a component of the repository names one the model holds. */
+    private static void assertNoMadeUpNames(final CompileResult result) {
+        final Set<String> held = result.model().components()
+                .map(c -> c.uniqueName()).collect(Collectors.toSet());
+        result.model().components().forEach(c -> c.references().forEach(r -> {
+            final String target = r.invokedComponent();
+            if (target.startsWith("src.")) {
+                assertTrue(c.uniqueName() + " references " + target + " which is not in " + held,
+                        held.contains(target));
+            }
+        }));
+    }
+
+    @Test
+    public void aNamespaceClassUsedFromAnotherFileIsARealComponent() throws Exception {
+        final CompileResult result = compile(
+                "/src/ns.ts", "export namespace NS { export class Baz { static make(): number { return 1; } } }\n",
+                "/src/use.ts", "import { NS } from './ns';\n"
+                        + "export function viaNamespace() { return NS.Baz.make(); }\n"
+                        + "export function made() { return new NS.Baz(); }\n");
+        assertTrue(result.model().component("src.ns.NS").get().componentType() == ComponentType.NAMESPACE);
+        assertTrue(result.model().component("src.ns.NS.Baz").get().componentType() == ComponentType.CLASS);
+        assertTrue(result.model().component("src.ns.NS").get().children().contains("src.ns.NS.Baz"));
+        assertTrue(referencesOf(result, "src.use.viaNamespace").contains("src.ns.NS.Baz"));
+        assertTrue(referencesOf(result, "src.use.made").contains("src.ns.NS.Baz"));
+        assertFalse(referencesOf(result, "src.use.viaNamespace").contains("src.ns.Baz"));
+        assertNoMadeUpNames(result);
+    }
+
+    @Test
+    public void aNestedNamespaceIsOneComponentPerSegment() throws Exception {
+        final CompileResult result = compile(
+                "/src/ns.ts", "export namespace A.B { export class C { c = 1; } }\n"
+                        + "export namespace A { export namespace D { export const E = 1; } }\n",
+                "/src/use.ts", "import { A } from './ns';\n"
+                        + "export function use(): A.B.C { return new A.B.C(); }\n");
+        assertTrue(result.model().component("src.ns.A").get().componentType() == ComponentType.NAMESPACE);
+        assertTrue(result.model().component("src.ns.A.B").get().componentType() == ComponentType.NAMESPACE);
+        assertTrue(result.model().component("src.ns.A.D").isPresent());
+        assertTrue(result.model().component("src.ns.A.B.C").isPresent());
+        assertTrue(result.model().component("src.ns.A.D.E").isPresent());
+        assertTrue(referencesOf(result, "src.use.use").contains("src.ns.A.B.C"));
+        assertNoMadeUpNames(result);
+    }
+
+    @Test
+    public void aNamespaceMergedWithAClassOrFunctionAddsItsMembersToIt() throws Exception {
+        final CompileResult result = compile(
+                "/src/holder.ts", "export function make(): Holder.Inner { return new Holder.Inner(); }\n"
+                        + "export class Holder { h = 1; }\n"
+                        + "export namespace Holder { export class Inner { i = 1; } }\n"
+                        + "export function fn(): number { return 1; }\n"
+                        + "export namespace fn { export const LIMIT = 2; }\n"
+                        + "export function other(): number { return fn.LIMIT; }\n");
+        assertTrue(result.model().component("src.holder.Holder.Inner").get().componentType() == ComponentType.CLASS);
+        assertTrue(result.model().component("src.holder.Holder").get().componentType() == ComponentType.CLASS);
+        assertTrue(result.model().component("src.holder.fn.LIMIT").isPresent());
+        assertTrue(result.model().components().filter(c -> c.uniqueName().equals("src.holder.Holder")).count() == 1);
+        final Set<String> make = referencesOf(result, "src.holder.make");
+        assertTrue(make.toString(), make.contains("src.holder.Holder.Inner"));
+        assertFalse(make.toString(), make.contains("src.holder.Inner"));
+        assertNoMadeUpNames(result);
+    }
+
+    @Test
+    public void aNamespaceOfTwoBlocksIsOneComponentAndOneOfTwoFilesIsOnePerFile() throws Exception {
+        final CompileResult result = compile(
+                "/src/one.ts", "export namespace Shared { export class One { o = 1; } }\n"
+                        + "export namespace Shared { export class Again { a = 1; } }\n",
+                "/src/two.ts", "export namespace Shared { export class Two { t = 1; } }\n",
+                "/src/use.ts", "import { Shared as S1 } from './one';\nimport { Shared as S2 } from './two';\n"
+                        + "export function use(a: S1.One, b: S2.Two, c: S1.Again) { return 1; }\n");
+        assertTrue(result.model().components().filter(c -> c.uniqueName().equals("src.one.Shared")).count() == 1);
+        assertTrue(result.model().component("src.one.Shared").get().children().contains("src.one.Shared.One"));
+        assertTrue(result.model().component("src.one.Shared").get().children().contains("src.one.Shared.Again"));
+        assertTrue(result.model().component("src.two.Shared.Two").isPresent());
+        final Set<String> use = referencesOf(result, "src.use.use");
+        assertTrue(use.toString(), use.contains("src.one.Shared.One"));
+        assertTrue(use.toString(), use.contains("src.two.Shared.Two"));
+        assertTrue(use.toString(), use.contains("src.one.Shared.Again"));
+        assertNoMadeUpNames(result);
+    }
+
+    @Test
+    public void aNamespaceMemberThatIsNotExportedAndDeclareGlobalAreNotRecorded() throws Exception {
+        final CompileResult result = compile(
+                "/src/ns.ts", "export namespace NS { class Hidden { h = 1; } export function open(): Hidden { return new Hidden(); } }\n"
+                        + "declare global { interface Window { w: number } }\n"
+                        + "export function g(w: Window) { return 1; }\n");
+        assertFalse(result.model().component("src.ns.NS.Hidden").isPresent());
+        assertFalse(result.model().component("src.ns.Window").isPresent());
+        assertFalse(referencesOf(result, "src.ns.g").stream().anyMatch(t -> t.startsWith("src.ns.Window")));
+        assertNoMadeUpNames(result);
     }
 }

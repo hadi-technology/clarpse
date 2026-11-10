@@ -136,7 +136,8 @@ final class TypeScriptModelAssembler {
         final OOPSourceModelConstants.ComponentType type = component.componentType();
         return type == OOPSourceModelConstants.ComponentType.FUNCTION
                 || type == OOPSourceModelConstants.ComponentType.MODULE_FIELD
-                || type == OOPSourceModelConstants.ComponentType.TYPE_ALIAS;
+                || type == OOPSourceModelConstants.ComponentType.TYPE_ALIAS
+                || type == OOPSourceModelConstants.ComponentType.NAMESPACE;
     }
 
     /**
@@ -299,6 +300,8 @@ final class TypeScriptModelAssembler {
                 return OOPSourceModelConstants.ComponentType.FIELD;
             case "moduleField":
                 return OOPSourceModelConstants.ComponentType.MODULE_FIELD;
+            case "namespace":
+                return OOPSourceModelConstants.ComponentType.NAMESPACE;
             case "typeAlias":
                 return OOPSourceModelConstants.ComponentType.TYPE_ALIAS;
             case "enumMember":

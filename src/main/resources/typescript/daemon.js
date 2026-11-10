@@ -1471,20 +1471,84 @@ function isInternalFile(filePath, repoRootOverride) {
   return true;
 }
 
-/**
- * Whether a declaration sits inside a `namespace` block (or `declare global`). A namespace is not a
- * component, so a member of one has no name in the model: a target built from the member's own
- * name and its file would name a component that does not exist. (A `declare module "x"` block is
- * different: its declarations are modelled as declarations of the file.)
- */
-function declaredInNamespace(declaration) {
+/** Whether a statement is on its container's surface: exported, or inside an ambient declaration. */
+function isExportedStatement(node) {
   const ts = state.ts;
-  for (let current = declaration && declaration.parent; current; current = current.parent) {
-    if (ts.isModuleDeclaration(current) && !ts.isStringLiteral(current.name)) {
-      return true;
-    }
+  if (node.flags & ts.NodeFlags.Ambient) {
+    return true;
   }
-  return false;
+  return !!(node.modifiers && node.modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword));
+}
+
+/**
+ * The namespaces a declaration is a member of, outermost first, or undefined where the model has no
+ * component for it. A namespace (`namespace A.B { export class C {} }`) is a component of the file
+ * that holds the block, named by its path (`A.B`), and its exported declarations are components
+ * under it, so the declaration above is `<module>.A.B.C`. A declaration of the file itself has the
+ * empty path. What is not exported, what sits in a function or class body, and what `declare
+ * global` holds have no component. A `declare module "x"` block's declarations are the file's own;
+ * they have the empty path only when `allowAmbientModule` says the caller reads them.
+ */
+function namespaceHome(declaration, allowAmbientModule) {
+  const ts = state.ts;
+  let node = declaration;
+  if (node && ts.isVariableDeclaration(node)) {
+    node = node.parent && node.parent.parent;
+  }
+  const names = [];
+  while (node && node.parent) {
+    while (ts.isModuleDeclaration(node) && ts.isModuleDeclaration(node.parent)) {
+      names.unshift(node.parent.name.text);
+      node = node.parent;
+    }
+    const container = node.parent;
+    if (ts.isSourceFile(container)) {
+      return names;
+    }
+    if (!ts.isModuleBlock(container)) {
+      return undefined;
+    }
+    const owner = container.parent;
+    if (owner.flags & ts.NodeFlags.GlobalAugmentation) {
+      return undefined;
+    }
+    if (ts.isStringLiteral(owner.name)) {
+      return allowAmbientModule ? names : undefined;
+    }
+    if (!isExportedStatement(node)) {
+      return undefined;
+    }
+    names.unshift(owner.name.text);
+    node = owner;
+  }
+  return undefined;
+}
+
+/** The name the model gives a declaration: its namespaces' path, then its own name; null if it has none. */
+function modelledName(declaration, name, allowAmbientModule) {
+  const home = namespaceHome(declaration, allowAmbientModule);
+  return home === undefined ? null : home.concat(name).join(".");
+}
+
+/**
+ * The declaration of a symbol the model names. A symbol merged from several declarations is named
+ * by its first non-namespace one; one made of namespace blocks alone, by the block in the file that
+ * sorts first, so that the choice never depends on the order the program was read in.
+ */
+function primaryDeclaration(declarations) {
+  const ts = state.ts;
+  if (!declarations || !declarations.length) {
+    return null;
+  }
+  const others = declarations.filter((declaration) => !ts.isModuleDeclaration(declaration));
+  if (others.length) {
+    return others[0];
+  }
+  return declarations.slice().sort((a, b) => {
+    const left = a.getSourceFile().fileName;
+    const right = b.getSourceFile().fileName;
+    return left < right ? -1 : left > right ? 1 : a.pos - b.pos;
+  })[0];
 }
 
 function resolveSymbolName(symbol, checker) {
@@ -1652,7 +1716,7 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
       ? checker.getAliasedSymbol(entry.symbol)
       : entry.symbol;
     const decls = actual.declarations;
-    const decl = decls && decls.length ? decls[0] : null;
+    const decl = primaryDeclaration(decls);
     const fileName = decl && decl.getSourceFile ? decl.getSourceFile().fileName : null;
     if (isSourceFileModule(actual)) {
       // A whole module is referenced by its file: the target has no symbol name, and the module's
@@ -1675,17 +1739,19 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
     if (isInternalSymbolName(name)) {
       continue;
     }
-    if (fileName && name && isInternalFile(fileName) && declaredInNamespace(decl)) {
+    const modelled = fileName && name && isInternalFile(fileName) ? modelledName(decl, name, true) : null;
+    if (fileName && name && isInternalFile(fileName) && modelled === null) {
+      // A declaration the model has no component for (a namespace member that is not exported).
       continue;
     }
     if (fileName && name && isInternalFile(fileName)) {
       const normalized = path.resolve(fileName);
-      const key = `${kind}|internal|${normalized}|${name}`;
+      const key = `${kind}|internal|${normalized}|${modelled}`;
       if (!seen.has(key)) {
         references.push({
           kind,
           external: false,
-          target: { filePath: normalized, symbolName: name }
+          target: { filePath: normalized, symbolName: modelled }
         });
         seen.add(key);
       }
@@ -2006,8 +2072,9 @@ function readNamedArgument(node, checker) {
   }
   if (ts.isClassDeclaration(declaration) && declaration.name) {
     const fileName = declaration.getSourceFile().fileName;
-    const target = fileName && isInternalFile(fileName)
-      ? { filePath: path.resolve(fileName), symbolName: declaration.name.text }
+    const modelled = modelledName(declaration, declaration.name.text);
+    const target = fileName && isInternalFile(fileName) && modelled !== null
+      ? { filePath: path.resolve(fileName), symbolName: modelled }
       : null;
     return { kind: "class", text: declaration.name.text, target };
   }
@@ -2059,9 +2126,8 @@ function buildCalleeReference(node, checker) {
   if (!declaration || !declaration.getSourceFile) {
     return null;
   }
-  if (!state.ts.isFunctionDeclaration(declaration)
-    || !declaration.parent
-    || !state.ts.isSourceFile(declaration.parent)) {
+  const modelled = state.ts.isFunctionDeclaration(declaration) ? modelledName(declaration, name) : null;
+  if (modelled === null || !declaration.parent) {
     return null;
   }
   const fileName = declaration.getSourceFile().fileName;
@@ -2071,7 +2137,7 @@ function buildCalleeReference(node, checker) {
   return {
     kind: "type",
     external: false,
-    target: { filePath: path.resolve(fileName), symbolName: name }
+    target: { filePath: path.resolve(fileName), symbolName: modelled }
   };
 }
 
@@ -2225,11 +2291,11 @@ function isModelledValueDeclaration(declaration) {
   if (!declaration || !declaration.parent) {
     return false;
   }
-  if (ts.isClassDeclaration(declaration) || ts.isEnumDeclaration(declaration)) {
-    return !!declaration.name && ts.isSourceFile(declaration.parent);
-  }
-  if (ts.isFunctionDeclaration(declaration)) {
-    return !!declaration.name && ts.isSourceFile(declaration.parent);
+  if (ts.isClassDeclaration(declaration) || ts.isEnumDeclaration(declaration)
+      || ts.isFunctionDeclaration(declaration) || ts.isModuleDeclaration(declaration)) {
+    return !!declaration.name && ts.isIdentifier(declaration.name)
+      && !(declaration.flags & ts.NodeFlags.GlobalAugmentation)
+      && namespaceHome(declaration) !== undefined;
   }
   if (ts.isVariableDeclaration(declaration)) {
     const list = declaration.parent;
@@ -2237,8 +2303,7 @@ function isModelledValueDeclaration(declaration) {
     return ts.isIdentifier(declaration.name)
       && !!statement
       && ts.isVariableStatement(statement)
-      && !!statement.parent
-      && ts.isSourceFile(statement.parent);
+      && namespaceHome(declaration) !== undefined;
   }
   return false;
 }
@@ -2603,19 +2668,19 @@ function buildValueReference(identifier, checker, owner) {
   if (!declarations.length) {
     return null;
   }
-  const declaration = declarations.find(isModelledValueDeclaration);
+  const declaration = primaryDeclaration(declarations.filter(isModelledValueDeclaration));
   if (!declaration || declaration === owner) {
     return null;
   }
   const fileName = declaration.getSourceFile().fileName;
-  const name = declaration.name.getText();
-  if (!fileName || !name || isInternalSymbolName(name) || !isInternalFile(fileName)) {
+  const written = declaration.name.getText();
+  if (!fileName || !written || isInternalSymbolName(written) || !isInternalFile(fileName)) {
     return null;
   }
   return {
     kind: "type",
     external: false,
-    target: { filePath: path.resolve(fileName), symbolName: name }
+    target: { filePath: path.resolve(fileName), symbolName: modelledName(declaration, written) }
   };
 }
 
@@ -3144,13 +3209,13 @@ function typeAliasReference(node, checker) {
   if (!symbol || !(symbol.flags & state.ts.SymbolFlags.TypeAlias)) {
     return null;
   }
-  const declaration = symbol.declarations && symbol.declarations.length ? symbol.declarations[0] : null;
+  const declaration = primaryDeclaration(symbol.declarations);
   const fileName = declaration && declaration.getSourceFile ? declaration.getSourceFile().fileName : null;
-  if (!fileName || !isInternalFile(fileName) || !declaration.parent
-    || !state.ts.isSourceFile(declaration.parent)) {
+  const modelled = declaration ? modelledName(declaration, symbol.getName()) : null;
+  if (!fileName || !isInternalFile(fileName) || !declaration.parent || modelled === null) {
     return null;
   }
-  return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: symbol.getName() } };
+  return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: modelled } };
 }
 
 /**
@@ -3174,13 +3239,13 @@ function declaredTypeReference(node, checker) {
   if (!symbol || !(symbol.flags & kinds)) {
     return null;
   }
-  const declaration = symbol.declarations && symbol.declarations.length ? symbol.declarations[0] : null;
+  const declaration = primaryDeclaration(symbol.declarations);
   const fileName = declaration && declaration.getSourceFile ? declaration.getSourceFile().fileName : null;
-  if (!fileName || !isInternalFile(fileName) || !declaration.parent
-    || !state.ts.isSourceFile(declaration.parent)) {
+  const modelled = declaration ? modelledName(declaration, symbol.getName()) : null;
+  if (!fileName || !isInternalFile(fileName) || !declaration.parent || modelled === null) {
     return null;
   }
-  return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: symbol.getName() } };
+  return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: modelled } };
 }
 
 /**
@@ -3256,12 +3321,18 @@ function typeQueryReference(node, checker) {
   } catch (err) {
     symbol = null;
   }
-  const declaration = symbol && symbol.declarations ? symbol.declarations.find(isModelledValueDeclaration) : null;
+  const declaration = symbol && symbol.declarations
+    ? primaryDeclaration(symbol.declarations.filter(isModelledValueDeclaration))
+    : null;
   if (declaration) {
     const fileName = declaration.getSourceFile().fileName;
     const declared = declaration.name.getText();
     if (fileName && isInternalFile(fileName) && !isInternalSymbolName(declared)) {
-      return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: declared } };
+      return {
+        kind: "type",
+        external: false,
+        target: { filePath: path.resolve(fileName), symbolName: modelledName(declaration, declared) }
+      };
     }
   }
   return buildValueReference(leftmostIdentifier(name), checker, null);
@@ -3456,7 +3527,87 @@ function withListedExports(ts, sourceFile, declarations) {
  * What a module-level statement declares: a class, interface, enum, type alias, function or the
  * variables of a variable statement. Anything else declares nothing that is modelled.
  */
+/**
+ * A namespace block (`namespace N { }`, `module N { }`, `namespace A.B { }`) as a component whose
+ * members are the block's exported declarations. A dotted name is a namespace inside a namespace.
+ * `declare global` and `declare module "x"` are not namespaces.
+ */
+function buildNamespaceModel(ts, node, checker, unresolvedBases) {
+  let members = [];
+  if (node.body && ts.isModuleDeclaration(node.body)) {
+    members = [buildNamespaceModel(ts, node.body, checker, unresolvedBases)];
+  } else if (node.body && ts.isModuleBlock(node.body)) {
+    for (const statement of node.body.statements) {
+      if (isExportedStatement(statement)) {
+        members.push(...declarationsOfStatement(ts, statement, checker, unresolvedBases).filter(Boolean));
+      }
+    }
+  }
+  return {
+    kind: "namespace",
+    name: node.name.text,
+    signature: "",
+    implementationHash: stableImplementationHash(node.getText()),
+    modifiers: collectModifiers(ts, node),
+    jsDoc: getJsDoc(node),
+    members,
+    references: []
+  };
+}
+
+/**
+ * Merges the namespaces of one file. A namespace named as a class, interface, enum, function or
+ * other declaration of the file adds its members to that declaration (`class Holder` with
+ * `namespace Holder { export class Inner {} }` has `Holder.Inner`); namespaces of one name are one
+ * component, and so are their nested namespaces. A member is kept once: the first of a name stays.
+ * Namespaces of one name in different files are one component in each file, named by the file.
+ */
+function mergeNamespaces(declarations) {
+  const result = [];
+  const byName = new Map();
+  for (const declaration of declarations) {
+    if (declaration.kind !== "namespace") {
+      result.push(declaration);
+      if (!byName.has(declaration.name)) {
+        byName.set(declaration.name, declaration);
+      }
+    }
+  }
+  for (const declaration of declarations) {
+    if (declaration.kind !== "namespace") {
+      continue;
+    }
+    const host = byName.get(declaration.name);
+    if (host) {
+      addNamespaceMembers(host, declaration.members);
+    } else {
+      byName.set(declaration.name, declaration);
+      result.push(declaration);
+    }
+  }
+  return result;
+}
+
+function addNamespaceMembers(host, members) {
+  host.members = host.members || [];
+  for (const member of members) {
+    const existing = host.members.find((other) => other.name === member.name
+      && (member.kind === "namespace") === (other.kind === "namespace"));
+    if (!existing) {
+      if (!host.members.some((other) => other.name === member.name)) {
+        host.members.push(member);
+      }
+    } else if (member.kind === "namespace") {
+      addNamespaceMembers(existing, member.members);
+    }
+  }
+}
+
 function declarationsOfStatement(ts, node, checker, unresolvedBases) {
+  if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)
+      && !(node.flags & ts.NodeFlags.GlobalAugmentation)) {
+    return [buildNamespaceModel(ts, node, checker, unresolvedBases)];
+  }
   if (ts.isClassDeclaration(node) && node.name) {
     return [buildClassModel(node, checker, unresolvedBases)];
   }
@@ -3515,7 +3666,7 @@ function collectTopLevelDeclarations(ts, sourceFile, checker, unresolvedBases) {
       }
     }
   });
-  return withoutShadowedAliases(withListedExports(ts, sourceFile, declarations.filter(Boolean)));
+  return withoutShadowedAliases(withListedExports(ts, sourceFile, mergeNamespaces(declarations.filter(Boolean))));
 }
 
 /**
