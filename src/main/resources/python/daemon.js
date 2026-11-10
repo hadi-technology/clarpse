@@ -1299,7 +1299,50 @@ function resolveCandidate(candidate, ctx) {
   return null;
 }
 
-function resolveTypeFromRaw(raw, ctx) {
+/**
+ * The unique name of a class nested in a class of this file that an annotation names: `Late` written
+ * inside `Holder` is `Holder.Late` when `Holder` declares it, and `Holder.Deep.Leaf` is the class of
+ * that path whether or not `Holder` is imported. Classes are looked for from the innermost
+ * enclosing class outwards; a bare name is never looked for at module level here, where an ordinary
+ * lookup already finds it. Null when this file declares no such class.
+ */
+function resolveNestedClass(candidate, ctx) {
+  if (!candidate || !ctx.classNames) {
+    return null;
+  }
+  const moduleUnique = localUniqueName('', ctx).slice(0, -1);
+  let scope = ctx.classUniqueName || null;
+  while (scope && scope.length > moduleUnique.length) {
+    const nested = scope + '.' + candidate;
+    if (ctx.classNames.has(nested)) {
+      return nested;
+    }
+    scope = scope.slice(0, scope.lastIndexOf('.'));
+  }
+  if (candidate.includes('.') && ctx.classNames.has(moduleUnique + '.' + candidate)) {
+    return moduleUnique + '.' + candidate;
+  }
+  return null;
+}
+
+/** The unique names of every class a module declares, nested ones included. */
+function collectClassNames(statements, prefix, parseNodeType, into) {
+  for (const statement of statements) {
+    if (!statement || !isClassNode(statement, parseNodeType)) {
+      continue;
+    }
+    const name = nameFromNode(statement.d && statement.d.name ? statement.d.name : null);
+    if (!name) {
+      continue;
+    }
+    const unique = prefix + '.' + name;
+    into.add(unique);
+    collectClassNames(getStatementsFromSuite(statement.d ? statement.d.suite : null), unique, parseNodeType, into);
+  }
+  return into;
+}
+
+function resolveTypeFromRaw(raw, ctx, inAnnotation) {
   if (!raw) {
     return null;
   }
@@ -1307,6 +1350,10 @@ function resolveTypeFromRaw(raw, ctx) {
   for (const cand of candidates) {
     if (!cand) {
       continue;
+    }
+    const nested = inAnnotation ? resolveNestedClass(cand, ctx) : null;
+    if (nested) {
+      return nested;
     }
     const resolved = resolveCandidate(cand, ctx);
     if (resolved) {
@@ -2708,7 +2755,7 @@ function resolveSingleTypeRefPlain(annotationNode, rawText, ctx) {
   if (evaluated && evaluated.targetUniqueName) {
     return { raw, targetUniqueName: evaluated.targetUniqueName, externalLabel: null, alternates: [] };
   }
-  const resolved = resolveTypeFromRaw(raw, ctx);
+  const resolved = resolveTypeFromRaw(raw, ctx, true);
   if (resolved) {
     return { raw, targetUniqueName: resolved, externalLabel: null, alternates: [] };
   }
@@ -2754,6 +2801,86 @@ function resolveTypeRef(annotationNode, rawText, ctx) {
   primary.alternates = primary.alternates.concat(further);
   primary.raw = raw;
   return primary;
+}
+
+/**
+ * An annotation as written, with each string forward reference replaced by the type expression it
+ * holds, so `Optional["Late"]` reads `Optional[Late]` and `"Holder.Deep.Leaf"` reads
+ * `Holder.Deep.Leaf`. Strings that are not types -- the arguments of `Literal[...]` and the metadata of
+ * `Annotated[...]` -- stay as written. `quoted` says whether any string was replaced.
+ */
+function annotationText(node, ctx, parseNodeType) {
+  if (!node || typeof node.start !== 'number' || typeof node.length !== 'number') {
+    return { text: '', quoted: false };
+  }
+  const types = parseNodeType || ctx.parseNodeType || {};
+  const replacements = [];
+  const visit = (n) => {
+    if (!n || typeof n !== 'object' || n.nodeType === undefined) {
+      return;
+    }
+    if (n.nodeType === types.StringList) {
+      const inner = n.d && n.d.annotation;
+      if (inner && Array.isArray(n.d.strings) && n.d.strings.length === 1) {
+        replacements.push({ start: n.start, end: n.start + n.length, text: annotationText(inner, ctx, types).text });
+      }
+      return;
+    }
+    if (n.nodeType === types.Index) {
+      const form = textForNode(n.d && n.d.leftExpr, ctx.fileText).split('.').pop();
+      if (form === 'Literal') {
+        return;
+      }
+      visit(n.d && n.d.leftExpr);
+      const args = (n.d && n.d.items) || [];
+      (form === 'Annotated' ? args.slice(0, 1) : args).forEach(visit);
+      return;
+    }
+    for (const key of Object.keys(n.d || {})) {
+      const child = n.d[key];
+      if (Array.isArray(child)) {
+        child.forEach(visit);
+      } else if (child && typeof child === 'object' && key !== 'parent') {
+        visit(child);
+      }
+    }
+  };
+  visit(node);
+  if (!replacements.length) {
+    return { text: textForNode(node, ctx.fileText), quoted: false };
+  }
+  replacements.sort((a, b) => b.start - a.start);
+  let text = ctx.fileText.slice(node.start, node.start + node.length);
+  for (const r of replacements) {
+    text = text.slice(0, r.start - node.start) + r.text + text.slice(r.end - node.start);
+  }
+  return { text: text.trim(), quoted: true };
+}
+
+/**
+ * What an annotation that held a string forward reference depends on: what it resolves to as an
+ * unquoted one would, less any name that resolves to nothing. An unqualified name no declaration or
+ * import supplies adds nothing, and is never recorded as the quoted literal.
+ */
+function withoutUnresolvedNames(ref) {
+  if (!ref) {
+    return ref;
+  }
+  const kept = [ref].concat(ref.alternates || []).filter(arm => arm.typeVariable
+    || arm.targetUniqueName || String(arm.externalLabel || '').includes('.'));
+  if (!kept.length) {
+    // Flagged the way a type variable is: the annotation is displayed, and names nothing.
+    return { raw: ref.raw, targetUniqueName: null, externalLabel: null, typeVariable: true, alternates: [] };
+  }
+  return Object.assign({}, kept[0], { raw: ref.raw, alternates: kept.slice(1) });
+}
+
+/** The display text of an annotation and what it depends on. */
+function readAnnotation(node, ctx, parseNodeType, display) {
+  const written = annotationText(node, ctx, parseNodeType);
+  const text = display ? display(written.text) : written.text;
+  const ref = resolveTypeRef(node, text, ctx);
+  return { text, ref: written.quoted ? withoutUnresolvedNames(ref) : ref };
 }
 
 function buildSignature(name, params, returnType) {
@@ -2835,8 +2962,9 @@ function extractParams(funcNode, ctx, parseNodeType) {
     const annotationNode = getNodeProp(param, ['typeAnnotation', 'annotation', 'typeExpression']);
     // `Any` is what an unannotated parameter *displays* as, not something the author depended on, so it
     // stays in the signature but yields no reference.
-    const rawType = annotationNode ? textForNode(annotationNode, ctx.fileText) : 'Any';
-    const ref = annotationNode ? resolveTypeRef(annotationNode, rawType, ctx) : null;
+    const read = annotationNode ? readAnnotation(annotationNode, ctx, parseNodeType) : null;
+    const rawType = read ? read.text : 'Any';
+    const ref = read ? read.ref : null;
     params.push({
       name: paramName,
       rawType: ref ? ref.raw : rawType,
@@ -3594,8 +3722,9 @@ function collectLocalVariables(functionNode, ctx, parseNodeType) {
   for (const entry of found.values()) {
     // An unannotated binding displays as `Any`, the way an unannotated parameter does, and is not a
     // dependency on anything.
-    const rawType = entry.annotationNode ? textForNode(entry.annotationNode, ctx.fileText) : 'Any';
-    const ref = entry.annotationNode ? resolveTypeRef(entry.annotationNode, rawType, ctx) : null;
+    const read = entry.annotationNode ? readAnnotation(entry.annotationNode, ctx, parseNodeType) : null;
+    const rawType = read ? read.text : 'Any';
+    const ref = read ? read.ref : null;
     locals.push({
       name: entry.name,
       rawType: ref ? ref.raw : rawType,
@@ -3622,12 +3751,12 @@ function extractMethod(methodNode, enclosingCtx, parseNodeType) {
   const comment = extractSuiteDocString(methodNode.d ? methodNode.d.suite : null, ctx.fileText);
   const params = extractParams(methodNode, ctx, parseNodeType);
   const returnNode = getNodeProp(methodNode, ['returnTypeAnnotation', 'returnType', 'returnAnnotation']);
-  const returnRawText = returnNode ? textForNode(returnNode, ctx.fileText) : 'Any';
-  const returnRaw = normalizePythonTypeDisplay(returnRawText || 'Any');
+  const returnRead = returnNode ? readAnnotation(returnNode, ctx, parseNodeType, normalizePythonTypeDisplay) : null;
+  const returnRaw = returnRead ? returnRead.text : 'Any';
   const signature = buildSignature(name, params, returnRaw || 'Any');
   const uniqueName = ctx.classUniqueName + '.' + signature;
   // An absent return annotation displays as `Any` but is not a dependency on anything.
-  const returnRef = returnNode ? resolveTypeRef(returnNode, returnRaw || 'Any', ctx) : null;
+  const returnRef = returnRead ? returnRead.ref : null;
   const cyclo = computeCyclo(methodNode, ctx.fileText);
   // The whole def, not just its suite: a changed signature or decorator is a change too.
   const implementationHash = stableImplementationHash(textForNode(methodNode, ctx.fileText));
@@ -3663,15 +3792,15 @@ function extractFunction(functionNode, enclosingCtx, parseNodeType) {
   const decoratorArguments = extractDecoratorArguments(functionNode, ctx);
   const params = extractParams(functionNode, ctx, parseNodeType);
   const returnNode = getNodeProp(functionNode, ['returnTypeAnnotation', 'returnType', 'returnAnnotation']);
-  const returnRawText = returnNode ? textForNode(returnNode, ctx.fileText) : 'Any';
-  const returnRaw = normalizePythonTypeDisplay(returnRawText || 'Any');
+  const returnRead = returnNode ? readAnnotation(returnNode, ctx, parseNodeType, normalizePythonTypeDisplay) : null;
+  const returnRaw = returnRead ? returnRead.text : 'Any';
   const signature = buildSignature(name, params, returnRaw || 'Any');
   const moduleUniqueName = ctx.packageName
     ? ctx.packageName + '.' + ctx.moduleName
     : ctx.moduleName;
   const uniqueName = moduleUniqueName + '.' + signature;
   // An absent return annotation displays as `Any` but is not a dependency on anything.
-  const returnRef = returnNode ? resolveTypeRef(returnNode, returnRaw || 'Any', ctx) : null;
+  const returnRef = returnRead ? returnRead.ref : null;
   const cyclo = computeCyclo(functionNode, ctx.fileText);
   // The whole def, not just its suite: a changed signature or decorator is a change too.
   const implementationHash = stableImplementationHash(textForNode(functionNode, ctx.fileText));
@@ -3754,8 +3883,9 @@ function extractFieldFromStatement(statement, ctx, parseNodeType, options) {
   if (!fieldName) {
     return null;
   }
-  const rawType = annotationNode ? textForNode(annotationNode, ctx.fileText) : 'Any';
-  const ref = annotationNode ? resolveTypeRef(annotationNode, rawType, ctx) : null;
+  const read = annotationNode ? readAnnotation(annotationNode, ctx, parseNodeType) : null;
+  const rawType = read ? read.text : 'Any';
+  const ref = read ? read.ref : null;
   // What the annotation already records is not recorded a second time for the value.
   const annotated = new Set();
   if (ref) {
@@ -3813,8 +3943,9 @@ function extractInstanceFieldFromStatement(statement, ctx) {
     return null;
   }
   const annotationNode = annotationForFieldStatement(statement);
-  const rawType = annotationNode ? textForNode(annotationNode, fileText) : 'Any';
-  const ref = annotationNode ? resolveTypeRef(annotationNode, rawType, ctx) : null;
+  const read = annotationNode ? readAnnotation(annotationNode, ctx) : null;
+  const rawType = read ? read.text : 'Any';
+  const ref = read ? read.ref : null;
   return {
     name: fieldName,
     rawType: ref ? ref.raw : rawType,
@@ -4285,7 +4416,10 @@ async function handleGetFileModel(params) {
     localFunctions: collectLocalFunctions(parseTree, parseNodeType),
     localValues: moduleLevelValueNames(parseTree, parseNodeType),
     typeVariables: collectTypeVariableNames(parseTree, parseNodeType),
+    classNames: collectClassNames(getStatementsFromSuite(parseTree),
+      (packageName ? packageName + '.' : '') + moduleName, parseNodeType, new Set()),
     fileText,
+    parseNodeType,
     evaluator: null
   };
   let classes = [];
