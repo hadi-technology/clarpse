@@ -12,6 +12,8 @@ import com.hadi.clarpse.reference.AnnotationArgument;
 import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.MemberKind;
+import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
@@ -48,7 +50,7 @@ final class TypeScriptModelAssembler {
 
     /**
      * Inserts a file's components, collecting the names of references that resolved into the
-     * repository. A reference whose type was lost is marked {@link ResolutionKind#UNRESOLVED}.
+     * repository, and those whose type was lost to a file the program did not load.
      *
      * @param inRepositoryNames Collects those names; may be {@code null}.
      */
@@ -81,11 +83,20 @@ final class TypeScriptModelAssembler {
                                      final String sourcePath,
                                      final TypeScriptFileModel fileModel,
                                      final OOPSourceCodeModel srcModel) {
-        if (fileModel.imports == null || fileModel.imports.isEmpty()) {
+        final java.util.Set<String> importedFiles = new java.util.LinkedHashSet<>();
+        if (fileModel.importedFiles != null) {
+            fileModel.importedFiles.stream().filter(f -> f != null && !f.isEmpty()).forEach(importedFiles::add);
+        }
+        if ((fileModel.imports == null || fileModel.imports.isEmpty()) && importedFiles.isEmpty()) {
             return;
         }
         final java.util.Set<String> imports = new java.util.LinkedHashSet<>();
-        for (final com.hadi.clarpse.compiler.typescript.model.TypeScriptImportModel imported : fileModel.imports) {
+        java.util.List<com.hadi.clarpse.compiler.typescript.model.TypeScriptImportModel> importList =
+                java.util.List.of();
+        if (fileModel.imports != null) {
+            importList = fileModel.imports;
+        }
+        for (final com.hadi.clarpse.compiler.typescript.model.TypeScriptImportModel imported : importList) {
             if (imported == null) {
                 continue;
             }
@@ -103,7 +114,7 @@ final class TypeScriptModelAssembler {
                 imports.add(value);
             }
         }
-        if (imports.isEmpty()) {
+        if (imports.isEmpty() && importedFiles.isEmpty()) {
             return;
         }
         final java.util.List<Component> declared = srcModel.components()
@@ -113,7 +124,10 @@ final class TypeScriptModelAssembler {
         // just as much as the types do, so it holds them too.
         declared.stream()
                 .filter(TypeScriptModelAssembler::carriesFileImports)
-                .forEach(component -> component.setImports(imports));
+                .forEach(component -> {
+                    component.setImports(imports);
+                    component.setImportedFiles(importedFiles);
+                });
     }
 
     private static boolean carriesFileImports(final Component component) {
@@ -124,7 +138,8 @@ final class TypeScriptModelAssembler {
         final OOPSourceModelConstants.ComponentType type = component.componentType();
         return type == OOPSourceModelConstants.ComponentType.FUNCTION
                 || type == OOPSourceModelConstants.ComponentType.MODULE_FIELD
-                || type == OOPSourceModelConstants.ComponentType.TYPE_ALIAS;
+                || type == OOPSourceModelConstants.ComponentType.TYPE_ALIAS
+                || type == OOPSourceModelConstants.ComponentType.NAMESPACE;
     }
 
     /**
@@ -287,6 +302,8 @@ final class TypeScriptModelAssembler {
                 return OOPSourceModelConstants.ComponentType.FIELD;
             case "moduleField":
                 return OOPSourceModelConstants.ComponentType.MODULE_FIELD;
+            case "namespace":
+                return OOPSourceModelConstants.ComponentType.NAMESPACE;
             case "typeAlias":
                 return OOPSourceModelConstants.ComponentType.TYPE_ALIAS;
             case "enumMember":
@@ -314,15 +331,31 @@ final class TypeScriptModelAssembler {
             final ComponentReference componentReference = buildComponentReference(reference, repoRoot);
             if (componentReference != null
                     && !componentReference.invokedComponent().equals(component.uniqueName())) {
-                if (reference.unresolved) {
-                    componentReference.setResolutionKind(ResolutionKind.UNRESOLVED);
-                }
-                if (inRepositoryNames != null && !reference.external && reference.target != null) {
+                componentReference.setResolutionKind(resolutionOf(reference));
+                if (inRepositoryNames != null && ((!reference.external && reference.target != null)
+                        || reference.lost)) {
                     inRepositoryNames.add(componentReference.invokedComponent());
                 }
                 component.insertCmpRef(componentReference);
             }
         }
+    }
+
+    /** The resolution kind of a daemon reference: a repository target is exact, an external one as the daemon says. */
+    private static ResolutionKind resolutionOf(final TypeScriptReferenceModel reference) {
+        if (reference.lost) {
+            return ResolutionKind.UNSPECIFIED;
+        }
+        if ("exact".equals(reference.resolution) || (!reference.external && reference.target != null)) {
+            return ResolutionKind.EXACT;
+        }
+        if ("unresolved".equals(reference.resolution)) {
+            return ResolutionKind.UNRESOLVED;
+        }
+        if ("ambiguous".equals(reference.resolution)) {
+            return ResolutionKind.AMBIGUOUS;
+        }
+        return ResolutionKind.UNSPECIFIED;
     }
 
     private static ComponentReference buildComponentReference(final TypeScriptReferenceModel reference,
@@ -343,6 +376,9 @@ final class TypeScriptModelAssembler {
                 annotation.setArguments(decoratorArguments(reference.arguments, repoRoot));
             }
             return annotation;
+        }
+        if (reference.member != null) {
+            return new MemberReference(invoked, reference.member, MemberKind.CALL, reference.externalUnit);
         }
         return new SimpleTypeReference(invoked);
     }

@@ -2,6 +2,7 @@ package com.hadi.clarpse.compiler.kotlin;
 
 import com.hadi.clarpse.compiler.java.JavaDeclarationIndex;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinFileModel;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinImport;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinMemberModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinTypeAlias;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinTypeModel;
@@ -12,8 +13,11 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeSet;
 
 /**
@@ -23,21 +27,44 @@ import java.util.TreeSet;
  * package it star-imports, exactly as it resolves a Kotlin one.
  *
  * <p>It also maps each top-level Kotlin function and property to the file class that holds it on
- * the JVM, and each {@code typealias} to what it aliases, and answers which files declare a name.
+ * the JVM, and each {@code typealias} to what it aliases, and answers which files declare a name
+ * and which Kotlin files an import directive resolves to.
  */
 final class KotlinDeclarationIndex {
 
-    /** A Kotlin type declaration, where it is, and what kind it is. */
-    record KotlinDeclaration(String uniqueName, String path, TypeKind kind) {
+    /**
+     * A Kotlin type declaration, where it is, and what kind it is.
+     *
+     * @param uniqueName The fully qualified name.
+     * @param path       The declaring file's path.
+     * @param kind       The kind of declaration.
+     * @param type       The declaration, or null for the file class of top-level members.
+     * @param file       The declaring file, or null for a file class.
+     * @param enclosing  The unique names of the type and the types it is nested in, innermost first.
+     */
+    record KotlinDeclaration(String uniqueName, String path, TypeKind kind, KotlinTypeModel type,
+                             KotlinFileModel file, List<String> enclosing) {
+    }
+
+    /** A top-level function or property, the file class that holds it, and its modifiers. */
+    private record CallableDeclaration(String fileClass, List<String> modifiers) {
     }
 
     /** A {@code typealias} and the file it is declared in, whose scope its target is written in. */
     record AliasDeclaration(KotlinTypeAlias alias, KotlinFileModel file) {
     }
 
+    /** A top-level function, the file class that holds it, and the file that declares it. */
+    record TopLevelFunction(String fileClass, KotlinMemberModel function, KotlinFileModel file) {
+    }
+
+    private final Map<String, List<TopLevelFunction>> topLevelFunctions = new HashMap<>();
+    private final Set<String> packages = new HashSet<>();
     private final Map<String, List<KotlinDeclaration>> kotlinTypes = new HashMap<>();
     private final Map<String, String> fileClassByCallable = new HashMap<>();
+    private final Map<String, List<CallableDeclaration>> declarationsByCallable = new HashMap<>();
     private final Map<String, AliasDeclaration> aliases = new HashMap<>();
+    private final Map<String, Set<String>> filesByCallable = new HashMap<>();
     private final JavaDeclarationIndex javaIndex;
 
     /**
@@ -53,15 +80,27 @@ final class KotlinDeclarationIndex {
         final List<KotlinFileModel> ordered = new ArrayList<>(kotlinFiles);
         ordered.sort(Comparator.comparing(KotlinFileModel::path));
         for (final KotlinFileModel file : ordered) {
+            for (final KotlinMemberModel member : file.topLevelMembers) {
+                if (member.name != null && !member.name.isEmpty()) {
+                    filesByCallable.computeIfAbsent(qualify(file.packageName, member.name),
+                            key -> new LinkedHashSet<>()).add(file.path());
+                }
+            }
+            packages.add(file.packageName);
             for (final KotlinTypeModel type : file.types) {
-                addType(type, qualify(file.packageName, type.name), file.path());
+                addType(type, qualify(file.packageName, type.name), file, List.of());
             }
             final String fileClass = fileClassName(file);
             if (fileClass != null) {
-                addDeclaration(new KotlinDeclaration(fileClass, file.path(), TypeKind.CLASS));
+                addDeclaration(new KotlinDeclaration(fileClass, file.path(), TypeKind.CLASS, null, null, List.of()));
                 for (final KotlinMemberModel member : file.topLevelMembers) {
                     if (member.name != null && !member.name.isEmpty()) {
-                        fileClassByCallable.putIfAbsent(qualify(file.packageName, member.name), fileClass);
+                        declarationsByCallable.computeIfAbsent(qualify(file.packageName, member.name),
+                                key -> new ArrayList<>()).add(new CallableDeclaration(fileClass, member.modifiers));
+                        if (member.kind == KotlinModel.MemberKind.FUNCTION) {
+                            topLevelFunctions.computeIfAbsent(qualify(file.packageName, member.name),
+                                    key -> new ArrayList<>()).add(new TopLevelFunction(fileClass, member, file));
+                        }
                     }
                 }
             }
@@ -70,15 +109,47 @@ final class KotlinDeclarationIndex {
             }
         }
         kotlinTypes.values().forEach(list -> list.sort((left, right) -> left.path().compareTo(right.path())));
+        declarationsByCallable.forEach((callable, declarations) -> {
+            final String fileClass = declaringFileClass(declarations);
+            if (fileClass != null) {
+                fileClassByCallable.put(callable, fileClass);
+            }
+        });
     }
 
-    private void addType(final KotlinTypeModel type, final String uniqueName, final String path) {
+    /**
+     * The file class a call to a name binds to, given every top-level declaration of the name in path
+     * order. A declaration alone is the one meant. Of several, the {@code expect} declaration is
+     * what common code resolves to; when all of them are {@code actual} and no {@code expect} is in
+     * the project, none is the one meant and the call binds to none. Declarations that are neither
+     * (overloads in several files) keep the first in path order.
+     */
+    private static String declaringFileClass(final List<CallableDeclaration> declarations) {
+        for (final CallableDeclaration declaration : declarations) {
+            if (declaration.modifiers().contains("expect")) {
+                return declaration.fileClass();
+            }
+        }
+        final boolean allActual = declarations.stream().allMatch(
+                declaration -> declaration.modifiers().contains("actual"));
+        if (allActual && declarations.stream().map(CallableDeclaration::fileClass).distinct().count() > 1) {
+            return null;
+        }
+        return declarations.get(0).fileClass();
+    }
+
+    private void addType(final KotlinTypeModel type, final String uniqueName, final KotlinFileModel file,
+                         final List<String> outer) {
         if (type.name == null || type.name.isEmpty()) {
             return;
         }
-        addDeclaration(new KotlinDeclaration(uniqueName, path, type.kind));
+        final List<String> enclosing = new ArrayList<>();
+        enclosing.add(uniqueName);
+        enclosing.addAll(outer);
+        addDeclaration(new KotlinDeclaration(uniqueName, file.path(), type.kind, type, file,
+                List.copyOf(enclosing)));
         for (final KotlinTypeModel nested : type.nestedTypes) {
-            addType(nested, uniqueName + "." + nested.name, path);
+            addType(nested, uniqueName + "." + nested.name, file, enclosing);
         }
     }
 
@@ -195,6 +266,30 @@ final class KotlinDeclarationIndex {
     }
 
     /**
+     * Whether a Kotlin file of the repository declares this package.
+     *
+     * @param packageName A package name.
+     * @return Whether some Kotlin file's package is exactly that.
+     */
+    boolean declaresPackage(final String packageName) {
+        return packages.contains(packageName);
+    }
+
+    /**
+     * The one Kotlin declaration of a type.
+     *
+     * @param uniqueName A fully qualified name.
+     * @return The declaration, or null when no Kotlin file declares the name as a type, or several do.
+     */
+    KotlinDeclaration declaration(final String uniqueName) {
+        final List<KotlinDeclaration> declarations = kotlinTypes.get(uniqueName);
+        if (declarations == null || declarations.size() != 1 || declarations.get(0).type() == null) {
+            return null;
+        }
+        return declarations.get(0);
+    }
+
+    /**
      * The file class holding a top-level function or property.
      *
      * @param callable The function's or property's fully qualified name.
@@ -202,6 +297,16 @@ final class KotlinDeclarationIndex {
      */
     String fileClassOf(final String callable) {
         return fileClassByCallable.get(callable);
+    }
+
+    /**
+     * The top-level functions of a name, extensions included.
+     *
+     * @param callable The functions' fully qualified name.
+     * @return Every declaration of it, in path order; empty when no Kotlin file declares one.
+     */
+    List<TopLevelFunction> functionsNamed(final String callable) {
+        return topLevelFunctions.getOrDefault(callable, List.of());
     }
 
     /**
@@ -236,6 +341,58 @@ final class KotlinDeclarationIndex {
             candidate = candidate.substring(0, dot);
         }
         return Collections.emptyList();
+    }
+
+    /**
+     * The Kotlin files an import directive resolves to.
+     *
+     * <p>A name import gives the files declaring a type, a {@code typealias} or a top-level
+     * function or property of that name: every file that does, since overloads and a type and a
+     * factory function can share a name. A name that matches none is read as a member of a type
+     * ({@code Obj.member}, {@code Color.RED}, a nested type) and gives the files declaring the
+     * nearest enclosing type. A star import of a package names no file and gives nothing; one
+     * whose name is a type gives the files declaring it. An alias changes the name the file sees, never the
+     * target. A name no Kotlin file declares is looked up among the
+     * project's Java files, in the same way; a library or unresolved name gives nothing.
+     *
+     * @param directive The import directive.
+     * @return The files' paths, each directive's files sorted by path; never null.
+     */
+    Set<String> filesImportedBy(final KotlinImport directive) {
+        final Set<String> found = new LinkedHashSet<>();
+        final String target = directive.target();
+        if (target == null || target.isEmpty()) {
+            return found;
+        }
+        addDeclaringFiles(target, found);
+        if (directive.star()) {
+            if (found.isEmpty() && javaIndex != null) {
+                found.addAll(javaIndex.filesDeclaring(target));
+            }
+            return found;
+        }
+        found.addAll(filesByCallable.getOrDefault(target, Set.of()));
+        final AliasDeclaration alias = aliases.get(target);
+        if (alias != null) {
+            found.add(alias.file().path());
+        }
+        if (found.isEmpty()) {
+            final int dot = target.lastIndexOf('.');
+            if (dot > 0) {
+                found.addAll(kotlinFilesDeclaring(target.substring(0, dot)));
+            }
+        }
+        if (found.isEmpty() && javaIndex != null) {
+            found.addAll(javaIndex.filesDeclaring(target));
+        }
+        return found;
+    }
+
+    private void addDeclaringFiles(final String uniqueName, final Set<String> into) {
+        final List<KotlinDeclaration> declarations = kotlinTypes.get(uniqueName);
+        if (declarations != null) {
+            declarations.forEach(declaration -> into.add(declaration.path()));
+        }
     }
 
     /**

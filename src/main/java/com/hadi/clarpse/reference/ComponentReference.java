@@ -21,7 +21,8 @@ import java.io.Serializable;
         @Type(value = SimpleTypeReference.class, name = "simple"),
         @Type(value = TypeExtensionReference.class, name = "extension"),
         @Type(value = TypeImplementationReference.class, name = "implementation"),
-        @Type(value = AnnotationReference.class, name = "annotation")})
+        @Type(value = AnnotationReference.class, name = "annotation"),
+        @Type(value = MemberReference.class, name = "member")})
 public abstract class ComponentReference implements Serializable, Cloneable {
 
     private static final long serialVersionUID = -242718695900611890L;
@@ -73,10 +74,11 @@ public abstract class ComponentReference implements Serializable, Cloneable {
      * available in the parsed model, and it costs nothing semantically: the strings are immutable
      * and compared by value everywhere.
      *
-     * <p>It matters because striff holds <em>two</em> models at once, base and head, for the whole
-     * of a differential analysis. One medium repository was measured at ~4GB of live heap, which is
-     * enough to put the JVM into a garbage-collection spiral it never leaves -- 95% GC overhead, an
-     * analysis that never completes, and a pod that serves nothing while reporting healthy.
+     * <p>It matters to a tool that holds <em>two</em> models of the same project at once, such as a
+     * before and an after, for the whole of a comparison. One medium repository was measured at
+     * ~4GB of live heap, which is enough to put the JVM into a garbage-collection spiral it never
+     * leaves -- 95% GC overhead, an analysis that never completes, and a service that answers
+     * nothing while reporting healthy.
      *
      * <p><b>Deliberately {@link String#intern()} and not a pool of our own.</b> A static
      * {@code Map} here would be the shape of the bug fixed in 10.1.2, where
@@ -107,17 +109,31 @@ public abstract class ComponentReference implements Serializable, Cloneable {
         return invokedComponent;
     }
 
+    /**
+     * Whether this reference names something that is not a component of the model.
+     *
+     * <p>That is the whole meaning. It holds for library and platform names, and also for a name
+     * kept as written because nothing in scope declared it, or because several things did; such a
+     * name may be a repository type that was not visible from the file. It does not hold for a
+     * declaration the model lacks only because a one-level analysis did not load it: that is
+     * {@link #isNotLoaded()}. To tell a library name from a name that merely did not resolve, read
+     * {@link #resolutionKind()}: {@code UNRESOLVED} and {@code AMBIGUOUS} names may be repository
+     * types.
+     *
+     * @return {@code true} when the model holds no component of this name and the target is not
+     *         known to be declared in the repository.
+     */
     public boolean isExternal() {
         return external;
     }
 
     /**
-     * Marks this reference as naming a type outside the codebase, or clears that mark.
+     * Marks this reference as naming something that is not a component of the model, or clears that mark.
      *
      * <p>Marking a reference external clears {@link #isNotLoaded()}: a reference is in at most one
      * of the two states.
      *
-     * @param external Whether the referenced type lies outside the codebase.
+     * @param external Whether the model holds no component of the referenced name.
      */
     public void setExternal(final boolean external) {
         this.external = external;
@@ -155,14 +171,14 @@ public abstract class ComponentReference implements Serializable, Cloneable {
     }
 
     /**
-     * How this reference was resolved, so a consumer can tell a name an import settled from one a
-     * short-name match guessed at.
+     * How this reference was resolved, so a consumer can tell a name the scoping rules settled from
+     * one that was kept as written. See {@link ResolutionKind} for the contract.
      *
      * <p>Deliberately not part of {@link #equals}: two references to the same type are the same
      * reference however each was arrived at, and folding this in would change what a set of
      * references deduplicates to.
      *
-     * @return The resolution kind, {@link ResolutionKind#UNSPECIFIED} where the front end did not say.
+     * @return The resolution kind, {@link ResolutionKind#UNSPECIFIED} where the language cannot say.
      */
     public ResolutionKind resolutionKind() {
         return resolutionKind;

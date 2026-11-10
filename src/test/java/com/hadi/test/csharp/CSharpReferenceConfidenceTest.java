@@ -81,17 +81,20 @@ public class CSharpReferenceConfidenceTest {
         assertEquals(ResolutionKind.EXACT, kindOf("Demo.App.Widget.Value", "System.Int32"));
     }
 
-    /** Nothing in scope named it, but exactly one type in the repository carries the name. */
+    /** Exactly one type in the repository carries the name, but its namespace is not one the name is visible from. */
     @Test
-    public void aSoleShortNameMatchIsReportedAsAGuess() {
-        assertEquals(ResolutionKind.UNIQUE_SIMPLE_NAME,
-                kindOf("Demo.App.Widget.gadget", "Other.Place.Gadget"));
+    public void aSoleShortNameMatchInANamespaceOutOfScopeStaysUnresolved() {
+        assertEquals(ResolutionKind.UNRESOLVED, kindOf("Demo.App.Widget.gadget", "Gadget"));
+        assertFalse(invokes(component("Demo.App.Widget.gadget"), "Other.Place.Gadget"));
     }
 
-    /** Two types carry the name and nothing chose between them. */
+    /**
+     * Two types carry the name, but neither namespace is visible from the file, so neither is a
+     * candidate: the name is unresolved, not ambiguous. Ambiguity needs several visible candidates.
+     */
     @Test
-    public void anAmbiguousShortNameSaysSo() {
-        assertEquals(ResolutionKind.AMBIGUOUS, kindOf("Demo.App.Widget.dup", "Dup"));
+    public void severalTypesOfTheNameNoneOfThemVisibleIsUnresolved() {
+        assertEquals(ResolutionKind.UNRESOLVED, kindOf("Demo.App.Widget.dup", "Dup"));
     }
 
     @Test
@@ -99,19 +102,16 @@ public class CSharpReferenceConfidenceTest {
         assertEquals(ResolutionKind.UNRESOLVED, kindOf("Demo.App.Widget.missing", "Missing"));
     }
 
-    /**
-     * The other front ends do not report how they resolved a name. They say that, rather than
-     * claiming a confidence nothing measured.
-     */
+    /** Java reports how it resolved a name too: an implicit {@code java.lang} type is exact. */
     @Test
-    public void aLanguageThatDoesNotReportConfidenceSaysUnspecified() throws Exception {
+    public void javaReportsHowItResolvedANameToo() throws Exception {
         final ProjectFiles files = new ProjectFiles();
         files.insertFile(new ProjectFile("/app/Client.java",
                 "package app;\npublic class Client { private String name; }\n"));
         final OOPSourceCodeModel javaModel = new ClarpseProject(files, Lang.JAVA).result().model();
         final Component field = javaModel.copyOfComponent("app.Client.name").orElseThrow();
         for (final ComponentReference reference : field.references()) {
-            assertEquals(ResolutionKind.UNSPECIFIED, reference.resolutionKind());
+            assertEquals(ResolutionKind.EXACT, reference.resolutionKind());
         }
     }
 

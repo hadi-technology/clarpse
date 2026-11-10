@@ -14,8 +14,8 @@ import static org.junit.Assert.assertTrue;
  * Resolution coverage for the reference shapes that dominate modern C# codebases: constructor
  * injection, generic inheritance, nested generic type arguments, fully-qualified references,
  * global usings, and C# 12 primary constructors. Each shape must produce a resolved edge to
- * the declared component, since striff's coupling and boundary detectors are starved when any
- * of them silently fail.
+ * the declared component, since coupling and boundary analyses built on these edges are starved
+ * when any of them silently fail.
  */
 public class CSharpModernPatternsResolutionTest {
 

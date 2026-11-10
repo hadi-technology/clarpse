@@ -109,10 +109,6 @@ final class CSharpFileParser {
     private static final Pattern TYPE_TOKEN_PATTERN = Pattern.compile("[A-Za-z_][A-Za-z0-9_\\.]*");
     private static final Pattern THIS_MEMBER_ASSIGN_PATTERN =
             Pattern.compile("\\bthis\\.(\\w+)\\s*=\\s*(\\w+)\\b");
-    private static final Pattern STATIC_RECEIVER_PATTERN =
-            Pattern.compile("(?<![\\w.@])([A-Z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)"
-                    + "\\s*(?:<[\\w.,\\s?\\[\\]]*(?:<[\\w.,\\s?\\[\\]]*>[\\w.,\\s?\\[\\]]*)*>)?\\s*\\.");
-
     private CSharpFileParser() {
     }
 
@@ -136,7 +132,7 @@ final class CSharpFileParser {
                     CompilerSupport.moduleNameForFile(file.path())
             );
             for (final String implicitNamespace : implicitNamespaces) {
-                fileModel.usings.add(new CSharpModel.CSharpUsingModel(null, implicitNamespace, false, false, false));
+                fileModel.usings.add(CSharpModel.CSharpUsingModel.implicitNamespace(implicitNamespace));
             }
             final SyntaxTree tree = parseSyntaxTree(withoutTypeParameterAttributes(sourceText), braceMatches);
             for (final SyntaxNode child : tree.root().children) {
@@ -322,7 +318,7 @@ final class CSharpFileParser {
                                 nestedInsideFileScoped);
                     }
                 } else if ("cs:namespace-header-node-statement".equals(child.type)) {
-                    addUsingEndingHeader(child, fileModel);
+                    addUsingEndingHeader(child, fileModel, currentNamespace);
                 } else if (!"cs:id-role".equals(child.type)) {
                     parseTopLevelNode(child, fileModel, namespaceName, laterAlternatives,
                             nestedInsideFileScoped);
@@ -340,14 +336,14 @@ final class CSharpFileParser {
         if ("cs:using-list-role".equals(type)) {
             for (final SyntaxNode child : node.children) {
                 if ("cs:using-directive-statement".equals(child.type)) {
-                    fileModel.usings.add(parseUsing(child.text));
+                    fileModel.usings.add(parseUsing(child.text).inNamespace(currentNamespace));
                 }
             }
             return;
         }
         if (MISPLACED_USING_STATEMENTS.contains(type)
                 && USING_DIRECTIVE_PATTERN.matcher(normalizeWhitespace(node.text)).matches()) {
-            fileModel.usings.add(parseUsing(node.text));
+            fileModel.usings.add(parseUsing(node.text).inNamespace(currentNamespace));
             return;
         }
         if (TYPE_DECLARATIONS.contains(type)) {
@@ -598,7 +594,8 @@ final class CSharpFileParser {
      * otherwise. Directives are not evaluated, so the using is recorded whichever alternative it is in.
      */
     private static void addUsingEndingHeader(final SyntaxNode header,
-                                             final CSharpModel.CSharpFileModel fileModel) {
+                                             final CSharpModel.CSharpFileModel fileModel,
+                                             final String currentNamespace) {
         if (!DIRECTIVE_LINE_PATTERN.matcher(header.text).find()) {
             return;
         }
@@ -606,7 +603,7 @@ final class CSharpFileParser {
                 COMMENT_PATTERN.matcher(header.text).replaceAll(" ")).replaceAll(" ");
         final Matcher using = HEADER_TRAILING_USING_PATTERN.matcher(code);
         if (using.find()) {
-            fileModel.usings.add(parseUsing(using.group(1)));
+            fileModel.usings.add(parseUsing(using.group(1)).inNamespace(currentNamespace));
         }
     }
 
@@ -649,7 +646,7 @@ final class CSharpFileParser {
         typeModel.kind = mapTypeKind(node.type);
         if ("record".equals(typeModel.kind)
                 && Pattern.compile("(?<![\\w@])record\\s+struct\\b")
-                        .matcher(withoutCommentsAndStrings(headerOf(node, fileModel.sourceText))).find()) {
+                        .matcher(CSharpBodyText.withoutCommentsAndStrings(headerOf(node, fileModel.sourceText))).find()) {
             typeModel.kind = "recordStruct";
         }
         final String declaredIdentifier = firstIdentifier(node);
@@ -667,7 +664,7 @@ final class CSharpFileParser {
         typeModel.modifiers = parseModifiers(node.text);
         typeModel.annotations = precedingAttributes(node);
         if (Pattern.compile("(?<![\\w@])ref\\s+(?:readonly\\s+)?(?:record\\s+)?struct\\b")
-                .matcher(withoutCommentsAndStrings(headerOf(node, fileModel.sourceText))).find()) {
+                .matcher(CSharpBodyText.withoutCommentsAndStrings(headerOf(node, fileModel.sourceText))).find()) {
             typeModel.modifiers.add("ref");
         }
         typeModel.partial = typeModel.modifiers.contains("partial");
@@ -700,6 +697,8 @@ final class CSharpFileParser {
             for (final SyntaxNode child : blockNode.children) {
                 if (TYPE_DECLARATIONS.contains(child.type)) {
                     typeModel.nestedTypes.add(parseType(child, fileModel, namespaceName, typeModel.componentName));
+                } else if (isExtensionBlock(child, typeModel)) {
+                    typeModel.members.addAll(parseExtensionBlock(child, fileModel, typeModel));
                 } else if (MEMBER_DECLARATIONS.contains(child.type)) {
                     typeModel.members.addAll(parseMember(child, fileModel, typeModel));
                 }
@@ -708,6 +707,10 @@ final class CSharpFileParser {
 
         if ("delegate".equals(typeModel.kind)) {
             typeModel.members.addAll(parseParametersAsMembers(node, fileModel, typeModel, "parameter"));
+            final SyntaxNode parameters = firstChild(node, "cs:parent-list");
+            if (parameters != null) {
+                typeModel.constraintTypes.addAll(constraintsAfter(parameters, node, fileModel.sourceText));
+            }
         }
         if ("class".equals(typeModel.kind) || "struct".equals(typeModel.kind)) {
             final SyntaxNode parentList = firstChild(node, "cs:parent-list");
@@ -740,6 +743,93 @@ final class CSharpFileParser {
             }
         }
         return typeModel;
+    }
+
+    private static final Pattern GENERIC_EXTENSION_BLOCK = Pattern.compile("^extension\\s*<");
+
+    /**
+     * Whether a node of a type's body is a C# 14 {@code extension(T x) { ... }} block, which the syntax
+     * parser reads as a constructor named {@code extension}, or, when it has type parameters, as a
+     * statement around a call.
+     */
+    private static boolean isExtensionBlock(final SyntaxNode node, final CSharpModel.CSharpTypeModel ownerType) {
+        if ("extension".equals(ownerType.name)) {
+            return false;
+        }
+        if ("cs:ctor-declaration".equals(node.type)) {
+            return "extension".equals(firstIdentifier(node)) && firstChild(node, "cs:block-list") != null;
+        }
+        return "cs:kops-statement".equals(node.type) && GENERIC_EXTENSION_BLOCK.matcher(node.text).find()
+                && firstChild(node, "cs:fun-call-role") != null && firstChild(node, "cs:block-list") != null;
+    }
+
+    /**
+     * The members of an {@code extension(T x) { ... }} block, as members of the static class that holds
+     * the block, modelled the way {@code static R M(this T x, ...)} is: an instance method takes the
+     * receiver as its first parameter, flagged as the extension receiver; any other member records the
+     * type the block extends. The type parameters the block declares are the members' own.
+     */
+    private static List<CSharpModel.CSharpMemberModel> parseExtensionBlock(
+            final SyntaxNode block, final CSharpModel.CSharpFileModel fileModel,
+            final CSharpModel.CSharpTypeModel ownerType) {
+        final Set<String> blockTypeParameters = new LinkedHashSet<>();
+        SyntaxNode receiverNode = null;
+        SyntaxNode parameterList = firstChild(block, "cs:parent-list");
+        if (parameterList == null) {
+            final SyntaxNode call = firstChild(block, "cs:fun-call-role");
+            if (call == null) {
+                return new ArrayList<>();
+            }
+            parameterList = firstChild(call, "cs:parent-list");
+            final SyntaxNode typeList = firstChild(call, "cs:type-list-role");
+            if (typeList != null) {
+                for (final SyntaxNode parameter : typeList.children) {
+                    blockTypeParameters.add(parameter.text.trim());
+                }
+            }
+        }
+        if (parameterList != null) {
+            for (final SyntaxNode child : parameterList.children) {
+                if ("cs:parameter-declaration".equals(child.type) || "cs:var-def-statement".equals(child.type)) {
+                    receiverNode = child;
+                    break;
+                }
+            }
+        }
+        final List<CSharpModel.CSharpMemberModel> members = new ArrayList<>();
+        final SyntaxNode body = firstChild(block, "cs:block-list");
+        if (receiverNode == null || body == null) {
+            return members;
+        }
+        final String receiverType = trimTypeText(firstDirectChildText(receiverNode, "cs:type-usage-role"));
+        if (receiverType == null || receiverType.isEmpty()) {
+            return members;
+        }
+        String receiverName = firstIdentifier(receiverNode);
+        if (receiverName == null || receiverName.isEmpty()) {
+            receiverName = "receiver";
+        }
+        for (final SyntaxNode child : body.children) {
+            if (!MEMBER_DECLARATIONS.contains(child.type)) {
+                continue;
+            }
+            for (final CSharpModel.CSharpMemberModel member : parseMember(child, fileModel, ownerType)) {
+                member.typeParameters.addAll(blockTypeParameters);
+                if ("method".equals(member.kind) && !member.modifiers.contains("static")) {
+                    final CSharpModel.CSharpParameterModel receiver = new CSharpModel.CSharpParameterModel();
+                    receiver.name = receiverName;
+                    receiver.declaredType = receiverType;
+                    receiver.extensionReceiver = true;
+                    receiver.modifiers = parseModifiers(receiverNode.text);
+                    receiver.implementationHash = implementationHash(receiverNode.text);
+                    member.parameters.add(0, receiver);
+                } else {
+                    member.simpleTypeUsages.add(receiverType);
+                }
+                members.add(member);
+            }
+        }
+        return members;
     }
 
     private static List<CSharpModel.CSharpMemberModel> parseMember(final SyntaxNode node,
@@ -843,17 +933,57 @@ final class CSharpFileParser {
                     // `this` is not in the modifier vocabulary, but it is what makes the method an
                     // extension of the type this parameter names.
                     parameter.extensionReceiver = normalizeWhitespace(child.text).startsWith("this ");
+                    final String parameterText = CSharpBodyText.withoutCommentsAndStrings(child.text);
+                    parameter.optional = parameterText.indexOf('=') >= 0;
+                    parameter.paramsArray = PARAMS_MODIFIER.matcher(parameterText).find();
                     member.parameters.add(parameter);
                 }
             }
+            member.constraintTypes.addAll(constraintsAfter(parentList, node, fileModel.sourceText));
         }
         final SyntaxNode block = firstChild(node, "cs:block-list");
         if (block != null) {
             member.cyclo = calculateCyclo(block.text);
             member.locals.addAll(parseLocals(block, fileModel, ownerType));
             collectBodyRefs(block, member, fileModel.sourceText);
+        } else {
+            final int bodyStart = expressionBodyStart(node, parentList, fileModel.sourceText);
+            if (bodyStart >= 0) {
+                member.cyclo = calculateCyclo(fileModel.sourceText.substring(bodyStart, node.endOffset));
+                collectBodyRefs(node, member, fileModel.sourceText, bodyStart);
+            }
         }
         return member;
+    }
+
+    /** The types the {@code where} clauses after a parameter list constrain the type parameters to. */
+    private static List<String> constraintsAfter(final SyntaxNode parameterList, final SyntaxNode node,
+                                                 final String sourceText) {
+        if (sourceText == null || node.endOffset > sourceText.length()
+                || parameterList.endOffset > node.endOffset) {
+            return new ArrayList<>();
+        }
+        return CSharpConstraintText.constraintTypes(sourceText.substring(parameterList.endOffset, node.endOffset));
+    }
+
+    private static final Pattern PARAMS_MODIFIER = Pattern.compile("(?:^|\\s)params\\s");
+
+    /**
+     * The offset just past the {@code =>} of an expression-bodied callable, or -1 when it has none.
+     * The arrow is the first one after the parameter list outside comments and strings.
+     */
+    private static int expressionBodyStart(final SyntaxNode node, final SyntaxNode parameterList,
+                                           final String sourceText) {
+        if (parameterList == null || sourceText == null || node.endOffset > sourceText.length()
+                || parameterList.endOffset > node.endOffset) {
+            return -1;
+        }
+        final String tail = CSharpBodyText.withoutCommentsAndStrings(sourceText.substring(parameterList.endOffset, node.endOffset));
+        final int arrow = tail.indexOf("=>");
+        if (arrow < 0) {
+            return -1;
+        }
+        return parameterList.endOffset + arrow + 2;
     }
 
     private static List<CSharpModel.CSharpMemberModel> parseLocals(final SyntaxNode block,
@@ -873,6 +1003,13 @@ final class CSharpFileParser {
                     if (newExpression != null) {
                         declaredType = firstDirectChildText(newExpression, "cs:type-usage-role");
                         inferred = declaredType != null && !declaredType.isEmpty();
+                    } else {
+                        // A literal fixes its type, which is the type written out would be.
+                        final String literalType = CSharpBodyText.literalType(descendant.text, localName);
+                        if (literalType != null) {
+                            declaredType = literalType;
+                            inferred = true;
+                        }
                     }
                 }
                 final CSharpModel.CSharpMemberModel local = buildSingleMember(
@@ -885,6 +1022,12 @@ final class CSharpFileParser {
                         null
                 );
                 local.inferredType = inferred;
+                local.plainNewInitializer = inferred && (CSharpBodyText.isPlainNewInitializer(descendant.text, localName)
+                        || CSharpBodyText.literalType(descendant.text, localName) != null);
+                if (!inferred && (declaredType == null || declaredType.isEmpty()
+                        || "var".equals(trimTypeText(declaredType)))) {
+                    local.initializerAccess = CSharpBodyText.initializerAccess(descendant.text, localName);
+                }
                 locals.add(local);
             }
         }
@@ -894,8 +1037,33 @@ final class CSharpFileParser {
     private static void collectBodyRefs(final SyntaxNode block,
                                         final CSharpModel.CSharpMemberModel member,
                                         final String sourceText) {
+        collectBodyRefs(block, member, sourceText, -1);
+    }
+
+    /**
+     * Collects the references in a body. With a {@code bodyStart}, only what the declaration holds
+     * from that offset on is read: the expression of an expression-bodied member, not its signature.
+     */
+    private static void collectBodyRefs(final SyntaxNode block,
+                                        final CSharpModel.CSharpMemberModel member,
+                                        final String sourceText,
+                                        final int bodyStart) {
         for (final SyntaxNode descendant : descendants(block)) {
-            if ("cs:new-expression".equals(descendant.type)) {
+            if (bodyStart >= 0 && descendant.startOffset < bodyStart) {
+                continue;
+            }
+            if ("cs:lambda-parameter-role".equals(descendant.type)) {
+                // A lambda's parameter is no parameter of the member: its type is written in the
+                // member's body and is referenced from it. An implicitly typed one names no type.
+                collectLambdaVariable(descendant, member);
+            } else if ("cs:delegate-kops-statement".equals(descendant.type)) {
+                final SyntaxNode parameters = firstChild(descendant, "cs:parent-list");
+                if (parameters != null) {
+                    for (final SyntaxNode parameter : parameters.children) {
+                        collectLambdaVariable(parameter, member);
+                    }
+                }
+            } else if ("cs:new-expression".equals(descendant.type)) {
                 final String typeText = firstDirectChildText(descendant, "cs:type-usage-role");
                 if (typeText != null && !typeText.isEmpty()) {
                     member.simpleTypeUsages.add(typeText);
@@ -919,7 +1087,29 @@ final class CSharpFileParser {
                 }
             }
         }
-        collectStaticReceivers(blockText(block, sourceText), member);
+        String text = blockText(block, sourceText);
+        if (bodyStart >= 0 && sourceText != null && block.endOffset <= sourceText.length()) {
+            text = sourceText.substring(bodyStart, block.endOffset);
+        }
+        CSharpBodyText.collectStaticReceivers(text, member);
+        CSharpBodyText.collectTypeofOperands(text, member);
+        CSharpTypeTestText.collect(text, member);
+        CSharpBodyText.collectExtensionCalls(text, member);
+    }
+
+    private static void collectLambdaVariable(final SyntaxNode parameter,
+                                              final CSharpModel.CSharpMemberModel member) {
+        final String name = firstIdentifier(parameter);
+        if (name == null || name.isEmpty()) {
+            return;
+        }
+        final String type = firstDirectChildText(parameter, "cs:type-usage-role");
+        String written = null;
+        if (type != null && !type.isBlank()) {
+            written = type.trim();
+            member.simpleTypeUsages.add(written);
+        }
+        member.lambdaVariables.computeIfAbsent(name, key -> new ArrayList<>()).add(written);
     }
 
     /**
@@ -939,98 +1129,6 @@ final class CSharpFileParser {
             return block.text;
         }
         return sourceText.substring(name.endOffset, block.endOffset);
-    }
-
-    /**
-     * Records every dotted name that is written before a further member access, outside comments
-     * and string literals, and does not itself follow a member access.
-     */
-    private static void collectStaticReceivers(final String text, final CSharpModel.CSharpMemberModel member) {
-        final Matcher matcher = STATIC_RECEIVER_PATTERN.matcher(withoutCommentsAndStrings(text));
-        while (matcher.find()) {
-            member.staticReceivers.add(matcher.group(1));
-        }
-    }
-
-    /** The text with comments and the contents of plain string and character literals blanked out. */
-    static String withoutCommentsAndStrings(final String text) {
-        final StringBuilder out = new StringBuilder(text.length());
-        int i = 0;
-        final int n = text.length();
-        while (i < n) {
-            final char c = text.charAt(i);
-            final char next;
-            if (i + 1 < n) {
-                next = text.charAt(i + 1);
-            } else {
-                next = '\0';
-            }
-            if (c == '/' && next == '/') {
-                while (i < n && text.charAt(i) != '\n') {
-                    out.append(' ');
-                    i += 1;
-                }
-            } else if (c == '/' && next == '*') {
-                final int close = text.indexOf("*/", i + 2);
-                int end = n;
-                if (close >= 0) {
-                    end = close + 2;
-                }
-                for (; i < end; i++) {
-                    appendBlanked(out, text.charAt(i));
-                }
-            } else if (c == '$' && (next == '"' || (next == '@' && i + 2 < n && text.charAt(i + 2) == '"'))
-                    || c == '@' && next == '$') {
-                // An interpolated string holds code in its braces; it is left as written.
-                out.append(c);
-                i += 1;
-            } else if (c == '"' || c == '\'') {
-                final boolean verbatim = i > 0 && text.charAt(i - 1) == '@';
-                final int end = literalEnd(text, i, verbatim);
-                out.append(c);
-                for (int k = i + 1; k < end - 1; k++) {
-                    appendBlanked(out, text.charAt(k));
-                }
-                if (end - 1 > i) {
-                    out.append(c);
-                }
-                i = end;
-            } else {
-                out.append(c);
-                i += 1;
-            }
-        }
-        return out.toString();
-    }
-
-    private static void appendBlanked(final StringBuilder out, final char c) {
-        if (c == '\n') {
-            out.append('\n');
-        } else {
-            out.append(' ');
-        }
-    }
-
-    /** The index just past the literal that opens at {@code start}. */
-    private static int literalEnd(final String text, final int start, final boolean verbatim) {
-        final char quote = text.charAt(start);
-        final int n = text.length();
-        int i = start + 1;
-        while (i < n) {
-            final char c = text.charAt(i);
-            if (verbatim && c == quote && i + 1 < n && text.charAt(i + 1) == quote) {
-                i += 2;
-            } else if (!verbatim && c == '\\') {
-                i += 2;
-            } else if (c == quote) {
-                return i + 1;
-            } else if (!verbatim && c == '\n') {
-                return i;
-            } else {
-                i += 1;
-            }
-        }
-        return n;
     }
 
     /**
@@ -1231,7 +1329,7 @@ final class CSharpFileParser {
         if (sourceText == null || headerEnd > sourceText.length() || node.startOffset >= headerEnd) {
             return headerEnd;
         }
-        final String header = withoutCommentsAndStrings(sourceText.substring(node.startOffset, headerEnd));
+        final String header = CSharpBodyText.withoutCommentsAndStrings(sourceText.substring(node.startOffset, headerEnd));
         final Matcher where = Pattern.compile("(?<![\\w@])where\\s+[A-Za-z_@]").matcher(header);
         if (where.find()) {
             return node.startOffset + where.start();

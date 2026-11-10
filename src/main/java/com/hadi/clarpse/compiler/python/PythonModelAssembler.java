@@ -14,6 +14,9 @@ import com.hadi.clarpse.reference.AnnotationArgument;
 import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.ResolutionKind;
+import com.hadi.clarpse.reference.MemberKind;
+import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.sourcemodel.Component;
@@ -140,23 +143,31 @@ final class PythonModelAssembler {
     }
 
     /**
-     * Attaches the file's imports to the types it declares; a file declaring no type gives them to
-     * its module-level functions and variables instead, and a file declaring one gives nothing to
-     * those.
+     * Attaches the file's imports, and the repository files they resolve to, to the types it
+     * declares; a file declaring no type gives them to its module-level functions and variables
+     * instead, and a file declaring one gives nothing to those.
      *
      * <p>Applied after insertion rather than threaded through {@code insertClass}, which already
      * takes seven parameters — one more trips the parameter-count rule, and bundling arguments to
      * carry a value two frames down is worse than reading it back off the model. Fields, methods
      * and locals never carry imports, matching Java: a field reporting its file's import list as
-     * its own is what made {@code imports()} mean a different thing in each language.
+     * its own is what made {@code imports()} mean a different thing in each language. The two sets
+     * go to the same components.
      */
     private static void applyImports(final String sourcePath,
                                      final PythonFileModel fileModel,
                                      final OOPSourceCodeModel srcModel) {
-        if (fileModel.imports == null || fileModel.imports.isEmpty()) {
+        final java.util.Set<String> imports = new java.util.LinkedHashSet<>();
+        if (fileModel.imports != null) {
+            imports.addAll(fileModel.imports);
+        }
+        final java.util.Set<String> importedFiles = new java.util.LinkedHashSet<>();
+        if (fileModel.importedFiles != null) {
+            fileModel.importedFiles.stream().filter(f -> f != null && !f.isEmpty()).forEach(importedFiles::add);
+        }
+        if (imports.isEmpty() && importedFiles.isEmpty()) {
             return;
         }
-        final java.util.Set<String> imports = new java.util.LinkedHashSet<>(fileModel.imports);
         final java.util.List<Component> declared = srcModel.components()
                 .filter(component -> sourcePath.equals(component.sourceFile()))
                 .collect(java.util.stream.Collectors.toList());
@@ -166,9 +177,11 @@ final class PythonModelAssembler {
             if (declaresAType) {
                 if (component.componentType().isBaseComponent()) {
                     component.setImports(imports);
+                    component.setImportedFiles(importedFiles);
                 }
             } else if (isModuleLevelDeclaration(component)) {
                 component.setImports(imports);
+                component.setImportedFiles(importedFiles);
             }
         }
     }
@@ -278,6 +291,11 @@ final class PythonModelAssembler {
                 insertReferences(component, argument, false);
             }
         }
+        if (classModel.decoratorReferences != null) {
+            for (final PythonTypeRefModel decoratorRef : classModel.decoratorReferences) {
+                insertReferences(component, decoratorRef, false);
+            }
+        }
         attachDecoratorReferences(component, classModel.decorators, classModel.decoratorArguments);
         return component;
     }
@@ -307,6 +325,8 @@ final class PythonModelAssembler {
                 continue;
             }
             final AnnotationReference reference = new AnnotationReference(invoked);
+            // Only the decorator's written name is known here, so it is kept as written.
+            reference.setResolutionKind(ResolutionKind.UNRESOLVED);
             if (decoratorArguments != null && i < decoratorArguments.size()
                     && decoratorArguments.get(i) != null) {
                 reference.setArguments(decoratorArgumentMap(decoratorArguments.get(i)));
@@ -411,7 +431,9 @@ final class PythonModelAssembler {
         typeRef.raw = field.rawType;
         typeRef.targetUniqueName = field.targetUniqueName;
         typeRef.externalLabel = field.externalLabel;
+        typeRef.unresolved = field.unresolved;
         typeRef.alternates = field.alternates;
+        typeRef.typeVariable = field.typeVariable;
         insertReferences(component, typeRef, false);
         if (field.valueReferences != null) {
             for (final PythonTypeRefModel valueRef : field.valueReferences) {
@@ -456,7 +478,9 @@ final class PythonModelAssembler {
         typeRef.raw = field.rawType;
         typeRef.targetUniqueName = field.targetUniqueName;
         typeRef.externalLabel = field.externalLabel;
+        typeRef.unresolved = field.unresolved;
         typeRef.alternates = field.alternates;
+        typeRef.typeVariable = field.typeVariable;
         insertReferences(component, typeRef, false);
         if (field.valueReferences != null) {
             for (final PythonTypeRefModel valueRef : field.valueReferences) {
@@ -582,7 +606,9 @@ final class PythonModelAssembler {
         typeRef.raw = param.rawType;
         typeRef.targetUniqueName = param.targetUniqueName;
         typeRef.externalLabel = param.externalLabel;
+        typeRef.unresolved = param.unresolved;
         typeRef.alternates = param.alternates;
+        typeRef.typeVariable = param.typeVariable;
         insertReferences(component, typeRef, false);
         return component;
     }
@@ -612,7 +638,9 @@ final class PythonModelAssembler {
         typeRef.raw = param.rawType;
         typeRef.targetUniqueName = param.targetUniqueName;
         typeRef.externalLabel = param.externalLabel;
+        typeRef.unresolved = param.unresolved;
         typeRef.alternates = param.alternates;
+        typeRef.typeVariable = param.typeVariable;
         insertReferences(component, typeRef, false);
         return component;
     }
@@ -742,7 +770,9 @@ final class PythonModelAssembler {
         typeRef.raw = local.rawType;
         typeRef.targetUniqueName = local.targetUniqueName;
         typeRef.externalLabel = local.externalLabel;
+        typeRef.unresolved = local.unresolved;
         typeRef.alternates = local.alternates;
+        typeRef.typeVariable = local.typeVariable;
         insertReferences(component, typeRef, false);
         return component;
     }
@@ -819,7 +849,7 @@ final class PythonModelAssembler {
 
     private static ComponentReference buildReference(final PythonTypeRefModel ref,
                                                      final boolean isExtends) {
-        if (ref == null) {
+        if (ref == null || ref.typeVariable) {
             return null;
         }
         String invoked = null;
@@ -838,9 +868,24 @@ final class PythonModelAssembler {
         if (!resolvedInRepo && isTypeSystemPlaceholder(invoked)) {
             return null;
         }
-        if (isExtends) {
-            return new TypeExtensionReference(invoked);
+        // A repository target or a name an import or the checker settled is exact; a name that is
+        // only written is kept as written.
+        ResolutionKind kind = ResolutionKind.UNRESOLVED;
+        if (resolvedInRepo || (ref.externalLabel != null && !ref.externalLabel.isEmpty() && !ref.unresolved)) {
+            kind = ResolutionKind.EXACT;
         }
-        return new SimpleTypeReference(invoked);
+        if (ref.member != null) {
+            final MemberReference member = new MemberReference(invoked, ref.member, MemberKind.CALL, ref.externalUnit);
+            member.setResolutionKind(kind);
+            return member;
+        }
+        final ComponentReference built;
+        if (isExtends) {
+            built = new TypeExtensionReference(invoked);
+        } else {
+            built = new SimpleTypeReference(invoked);
+        }
+        built.setResolutionKind(kind);
+        return built;
     }
 }

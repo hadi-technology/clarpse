@@ -1,15 +1,19 @@
 package com.hadi.clarpse.compiler.kotlin;
 
 import com.hadi.clarpse.compiler.kotlin.KotlinDeclarationIndex.AliasDeclaration;
+import com.hadi.clarpse.compiler.kotlin.KotlinDeclarationIndex.TopLevelFunction;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinFileModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinImport;
 import com.hadi.clarpse.reference.ResolutionKind;
 
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Resolves a name written in a Kotlin file to the fully qualified name of the type it denotes, in
@@ -38,6 +42,14 @@ final class KotlinNameResolver {
     }
 
     private static final int MAX_ALIAS_DEPTH = 8;
+
+    /** Whether the platform declares a public top-level type of a name, by name. */
+    private static final Map<String, Boolean> PLATFORM_TYPES = new ConcurrentHashMap<>();
+
+    /** The first segments of the packages libraries and platforms publish under. */
+    private static final Set<String> PACKAGE_ROOTS = Set.of("com", "org", "net", "io", "edu", "gov", "java",
+            "javax", "jakarta", "android", "androidx", "kotlin", "kotlinx", "scala", "sun", "jdk", "de", "fr",
+            "uk", "nl", "ch", "se", "cn", "jp", "ru", "br", "in", "co", "dev", "app");
 
     /** The types Kotlin's default imports bring into every file, by simple name. */
     private static final Map<String, String> DEFAULT_IMPORTS = defaultImports();
@@ -85,6 +97,9 @@ final class KotlinNameResolver {
         final Resolution resolvedHead = resolveSimple(head, scope, expression || !rest.isEmpty(), depth);
         if (rest.isEmpty()) {
             if (resolvedHead != null) {
+                if (expression && resolvedHead.kind() != ResolutionKind.EXACT) {
+                    return null;
+                }
                 return resolvedHead;
             }
             if (expression) {
@@ -92,7 +107,7 @@ final class KotlinNameResolver {
             }
             return new Resolution(name, ResolutionKind.UNRESOLVED);
         }
-        if (resolvedHead != null && resolvedHead.kind() != ResolutionKind.UNRESOLVED) {
+        if (resolvedHead != null && resolvedHead.kind() == ResolutionKind.EXACT) {
             final String candidate = resolvedHead.name() + "." + rest;
             if (index.isType(candidate)) {
                 return new Resolution(candidate, ResolutionKind.EXACT);
@@ -147,19 +162,202 @@ final class KotlinNameResolver {
         if (samePackage != null) {
             return samePackage;
         }
+        // Star imports are one level of lookup: a name that several of them supply is ambiguous
+        // and binds to none of them.
+        final Set<String> starred = new java.util.LinkedHashSet<>();
+        Resolution starredResolution = null;
         for (final KotlinImport kotlinImport : file.imports) {
             if (kotlinImport.star()) {
-                final Resolution starred = repositoryType(kotlinImport.target() + "." + name, expression, depth);
-                if (starred != null) {
-                    return starred;
+                final Resolution found = repositoryType(kotlinImport.target() + "." + name, expression, depth);
+                if (found != null && starred.add(found.name())) {
+                    starredResolution = found;
                 }
             }
         }
         final String defaultImport = DEFAULT_IMPORTS.get(name);
+        if (defaultImport == null) {
+            starred.addAll(platformStarImports(name, file));
+        }
+        if (starred.size() > 1) {
+            return new Resolution(name, ResolutionKind.AMBIGUOUS);
+        }
+        if (starredResolution != null) {
+            return starredResolution;
+        }
         if (defaultImport != null) {
             return new Resolution(defaultImport, ResolutionKind.EXACT);
         }
+        if (starred.size() == 1) {
+            return new Resolution(starred.iterator().next(), ResolutionKind.EXACT);
+        }
         return null;
+    }
+
+    /**
+     * The JDK type a name denotes through the star imports of {@code java} and {@code javax}
+     * packages, read from the running platform as the Java side's type solver reads it. Only a name
+     * that exactly one such package declares as a public type is answered; a package outside the JDK
+     * cannot be asked, so it adds nothing. Kotlin's default imports are looked up first, so a name
+     * they bring in is never read here.
+     */
+    private Set<String> platformStarImports(final String name, final KotlinFileModel file) {
+        final Set<String> found = new java.util.LinkedHashSet<>();
+        if (name.isEmpty() || !Character.isUpperCase(name.charAt(0))) {
+            return found;
+        }
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (!kotlinImport.star() || !(kotlinImport.target().startsWith("java.")
+                    || kotlinImport.target().startsWith("javax."))) {
+                continue;
+            }
+            final String candidate = kotlinImport.target() + "." + name;
+            if (isPlatformType(candidate)) {
+                found.add(candidate);
+            }
+        }
+        return found;
+    }
+
+    private static boolean isPlatformType(final String qualifiedName) {
+        return PLATFORM_TYPES.computeIfAbsent(qualifiedName, name -> {
+            try {
+                final Class<?> type = Class.forName(name, false, ClassLoader.getPlatformClassLoader());
+                return Modifier.isPublic(type.getModifiers()) && type.getEnclosingClass() == null;
+            } catch (final ClassNotFoundException | LinkageError | SecurityException unreadable) {
+                return false;
+            }
+        });
+    }
+
+    /** Where in the order of lookup a simple name is found. */
+    enum Origin {
+        /** An enclosing type, or a type nested in one. */
+        ENCLOSING,
+        /** An import of that exact name. */
+        IMPORT,
+        /** The file's own package. */
+        PACKAGE,
+        /** A star import of a package the repository declares the type in. */
+        STAR,
+        /** A package every Kotlin file imports. */
+        DEFAULT,
+        /** Nothing in scope declares a type of that name. */
+        NONE
+    }
+
+    /**
+     * Where a simple name is found, in the order {@link #resolve} looks.
+     *
+     * @param name  The name.
+     * @param scope Where it is written.
+     * @return The level of the lookup that settles it.
+     */
+    Origin originOf(final String name, final Scope scope) {
+        final KotlinFileModel file = scope.file();
+        for (final String enclosing : scope.enclosingTypes()) {
+            if (enclosing.endsWith("." + name) || enclosing.equals(name) || declares(enclosing + "." + name)) {
+                return Origin.ENCLOSING;
+            }
+        }
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (!kotlinImport.star() && name.equals(kotlinImport.visibleName())) {
+                return Origin.IMPORT;
+            }
+        }
+        if (declares(KotlinDeclarationIndex.qualify(file.packageName, name))) {
+            return Origin.PACKAGE;
+        }
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (kotlinImport.star() && declares(kotlinImport.target() + "." + name)) {
+                return Origin.STAR;
+            }
+        }
+        if (DEFAULT_IMPORTS.containsKey(name)) {
+            return Origin.DEFAULT;
+        }
+        if (!platformStarImports(name, file).isEmpty()) {
+            return Origin.STAR;
+        }
+        return Origin.NONE;
+    }
+
+    private boolean declares(final String uniqueName) {
+        return index.isType(uniqueName) || index.alias(uniqueName) != null;
+    }
+
+    /** Whether a simple name is a type, or a type alias, something in scope declares. */
+    boolean namesTypeInScope(final String name, final Scope scope) {
+        return scope.typeParameters().contains(name) || resolveSimple(name, scope, true, 0) != null;
+    }
+
+    /**
+     * Whether a simple name is a top-level property or function the file can see without a
+     * qualifier: one imported by name that is no type, or one of its own package or of a
+     * star-imported package.
+     */
+    boolean topLevelValueMayBe(final String name, final Scope scope) {
+        final KotlinFileModel file = scope.file();
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (!kotlinImport.star() && name.equals(kotlinImport.visibleName())
+                    && !index.isType(kotlinImport.target())) {
+                return true;
+            }
+        }
+        if (index.fileClassOf(KotlinDeclarationIndex.qualify(file.packageName, name)) != null) {
+            return true;
+        }
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (kotlinImport.star() && index.fileClassOf(kotlinImport.target() + "." + name) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The top-level functions a bare name can call from this file, by the order Kotlin looks a
+     * function up: the ones an import by that name brings in, which decide alone when there is one;
+     * otherwise the ones of the file's own package and of every star-imported package.
+     *
+     * @param name  The name as the file writes it.
+     * @param scope Where it is written.
+     * @return The declarations, extensions included; empty when no repository function is visible.
+     */
+    List<TopLevelFunction> visibleFunctions(final String name, final Scope scope) {
+        final KotlinFileModel file = scope.file();
+        final List<TopLevelFunction> imported = new ArrayList<>();
+        boolean importedByName = false;
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (!kotlinImport.star() && name.equals(kotlinImport.visibleName())) {
+                importedByName = true;
+                imported.addAll(index.functionsNamed(kotlinImport.target()));
+            }
+        }
+        if (importedByName) {
+            return imported;
+        }
+        final List<TopLevelFunction> visible = new ArrayList<>(
+                index.functionsNamed(KotlinDeclarationIndex.qualify(file.packageName, name)));
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (kotlinImport.star()) {
+                visible.addAll(index.functionsNamed(kotlinImport.target() + "." + name));
+            }
+        }
+        return visible;
+    }
+
+    /** Whether a name starts the package of the file, a package it imports from, or a published root. */
+    static boolean isKnownPackageRoot(final String root, final KotlinFileModel file) {
+        if (PACKAGE_ROOTS.contains(root) || file.packageName.equals(root)
+                || file.packageName.startsWith(root + ".")) {
+            return true;
+        }
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (kotlinImport.target().startsWith(root + ".")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The repository type, or type alias, of exactly this name, or null. */
@@ -181,7 +379,7 @@ final class KotlinNameResolver {
         }
         final Resolution target = resolve(alias.alias().target().get(0),
                 new Scope(alias.file(), List.of(), Set.of()), expression, depth + 1);
-        if (target == null || target.kind() == ResolutionKind.UNRESOLVED) {
+        if (target == null || target.kind() != ResolutionKind.EXACT) {
             return target;
         }
         return new Resolution(target.name(), ResolutionKind.EXACT);
@@ -196,12 +394,19 @@ final class KotlinNameResolver {
      * @param scope    Where the call is written.
      * @param shadowed Whether something in closer scope -- a parameter, a local, a member, an
      *                 implicit receiver -- may declare a function of that name.
+     * @param importShadowed Whether something in closer scope may declare it ahead of an import
+     *                 by name too: a name a parameter, local or member of the class or its readable
+     *                 supertypes declares, or one a supertype the parse cannot read may pass down.
      * @return The file class's fully qualified name, or null.
      */
-    String fileClassOfCall(final String name, final Scope scope, final boolean shadowed) {
+    String fileClassOfCall(final String name, final Scope scope, final boolean shadowed,
+                           final boolean importShadowed) {
         final KotlinFileModel file = scope.file();
         for (final KotlinImport kotlinImport : file.imports) {
             if (!kotlinImport.star() && name.equals(kotlinImport.visibleName())) {
+                if (importShadowed) {
+                    return null;
+                }
                 return index.fileClassOf(kotlinImport.target());
             }
         }

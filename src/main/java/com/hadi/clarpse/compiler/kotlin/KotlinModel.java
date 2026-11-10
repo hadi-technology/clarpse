@@ -4,8 +4,10 @@ import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.ProjectFile;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -95,11 +97,17 @@ final class KotlinModel {
      *                   rather than in a type position.
      * @param value      Whether it is a name used as a value on its own, such as an object passed as
      *                   an argument, which counts only when it names a repository type.
+     * @param call       Whether it is the name of a call, {@code Name(...)}, which a function or a
+     *                   property closer in scope may be the target of.
      */
-    record TypeUsage(String name, boolean expression, boolean value) {
+    record TypeUsage(String name, boolean expression, boolean value, boolean call) {
 
         TypeUsage(final String name, final boolean expression) {
-            this(name, expression, false);
+            this(name, expression, false, false);
+        }
+
+        TypeUsage(final String name, final boolean expression, final boolean value) {
+            this(name, expression, value, false);
         }
     }
 
@@ -142,6 +150,57 @@ final class KotlinModel {
     record KotlinAnnotationValue(KotlinAnnotationValueKind kind, String text, List<KotlinAnnotationValue> elements) {
     }
 
+    /**
+     * An expression whose type a declaration can tell: a name, a call of a bare name, or a member of
+     * another such expression reached by {@code .} or {@code ?.}. Any other expression is not read.
+     */
+    sealed interface KotlinExpr {
+    }
+
+    /** A simple name: a parameter, a local, a property or an object. */
+    record NameExpr(String name) implements KotlinExpr {
+    }
+
+    /**
+     * A literal whose type its text fixes: a string, a character, a boolean, or a number without
+     * a suffix that makes it unsigned.
+     *
+     * @param type The type's fully qualified name.
+     */
+    record LiteralExpr(String type) implements KotlinExpr {
+    }
+
+    /** The enclosing class, {@code this}. */
+    record ThisExpr() implements KotlinExpr {
+    }
+
+    /** A call of a bare name, {@code name(...)}: a constructor or a top-level function. */
+    record CallExpr(String name) implements KotlinExpr {
+    }
+
+    /**
+     * A property read or a call of a member on a receiver.
+     *
+     * @param receiver The expression the member is reached on.
+     * @param name     The member's name.
+     * @param call     Whether it is called, {@code receiver.name(...)}, rather than read.
+     */
+    record MemberExpr(KotlinExpr receiver, String name, boolean call) implements KotlinExpr {
+    }
+
+    /**
+     * A call of a member on a receiver that is a single name, {@code receiver.name(arguments)}, on
+     * {@code this.property}, on {@code this}, or with no receiver at all, which the enclosing class
+     * receives.
+     *
+     * @param receiver  The receiver's name, {@code this.name} for a property reached through
+     *                  {@code this}, or {@code this} for the enclosing class itself.
+     * @param name      The called name.
+     * @param arguments How many arguments the call passes, a trailing lambda included.
+     */
+    record ReceiverCall(String receiver, String name, int arguments) {
+    }
+
     /** A class, interface, object, enum class or annotation class. */
     static final class KotlinTypeModel {
         TypeKind kind;
@@ -151,6 +210,8 @@ final class KotlinModel {
         int implementationHash;
         int startOffset;
         boolean companion;
+        /** Whether it is a {@code data} class, which generates {@code copy} and the component functions. */
+        boolean data;
         final List<String> modifiers = new ArrayList<>();
         final List<KotlinAnnotationUse> annotations = new ArrayList<>();
         final List<KotlinSuperType> superTypes = new ArrayList<>();
@@ -159,6 +220,8 @@ final class KotlinModel {
          * the arguments of a superclass constructor call, and initializer blocks.
          */
         final List<TypeUsage> ownUsages = new ArrayList<>();
+        /** Names that initializer blocks declare, which are values in the scope of their own text. */
+        final Set<String> initializerDeclarations = new LinkedHashSet<>();
         final List<KotlinMemberModel> members = new ArrayList<>();
         final List<KotlinTypeModel> nestedTypes = new ArrayList<>();
         /** Names of this type's type parameters, which shadow types of the same name. */
@@ -194,6 +257,25 @@ final class KotlinModel {
         final Set<String> calledInLambdas = new LinkedHashSet<>();
         /** Names of this member's own type parameters. */
         final Set<String> typeParameters = new LinkedHashSet<>();
+        /** The type parameters of this member that carry a bound, in the list or in a {@code where} clause. */
+        final Set<String> boundedTypeParameters = new LinkedHashSet<>();
+        /**
+         * How many times the member's text declares each name as a value: its parameters, its
+         * locals, and the parameters of lambdas, loops and catch clauses and the entries of
+         * destructuring declarations anywhere inside it.
+         */
+        final Map<String, Integer> declarations = new HashMap<>();
+        /**
+         * Names whose type at some point may differ from the declared one: tested or cast with
+         * {@code is} or {@code as}, matched by a {@code when} with {@code is} entries, or assigned.
+         */
+        final Set<String> narrowed = new LinkedHashSet<>();
+        /** For a local declared without a type, the expression that initializes it, when readable. */
+        KotlinExpr initializer;
+        /** Whether the text holds a lambda, whose receiver may stand in for {@code this}. */
+        boolean hasLambda;
+        /** The calls on a receiver that is a single name. */
+        final List<ReceiverCall> receiverCalls = new ArrayList<>();
     }
 
     /** A parameter of a function or constructor. */
@@ -206,5 +288,8 @@ final class KotlinModel {
         /** Whether a primary constructor parameter declares a property ({@code val} or {@code var}). */
         boolean property;
         boolean mutable;
+        /** Whether a call may leave the parameter out: it has a default value, or takes a vararg. */
+        boolean optional;
+        boolean vararg;
     }
 }

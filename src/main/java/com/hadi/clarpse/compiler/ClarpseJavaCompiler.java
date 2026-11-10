@@ -3,6 +3,7 @@ package com.hadi.clarpse.compiler;
 import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
 import com.hadi.clarpse.compiler.java.IndexedTypeSolver;
 import com.hadi.clarpse.compiler.java.JavaDeclarationIndex;
+import com.hadi.clarpse.compiler.java.JavaImportResolver;
 import com.hadi.clarpse.compiler.java.JavaLoadTracker;
 import com.hadi.clarpse.compiler.java.JavaParserFactory;
 import com.hadi.clarpse.compiler.java.JavaUnitCache;
@@ -54,11 +55,14 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             try {
                 persistDir = projectFiles.projectDir();
                 final String projectDir = persistDir;
-                final Set<String> sourceRoots = sourceRoots(javaFiles, projectDir);
+                final Set<String> sourceRoots = sourceRoots(projectFiles, javaFiles, projectDir);
                 final KotlinDeclarations kotlin = kotlinDeclarations(projectFiles);
+                final JavaDeclarationIndex importIndex = JavaDeclarationIndex.of(projectFiles.files(Lang.JAVA));
+                final Predicate<String> declaredTypes = declaredTypes(importIndex, kotlin);
                 final ParseResults parseResults = parseJavaFiles(javaFiles,
                         () -> new ParserContext(projectDir, sourceRoots).withOtherLanguageTypes(
-                                kotlinTypes(kotlin)), false);
+                                declaredTypes).withImportResolver(
+                                new JavaImportResolver(importIndex, kotlinFiles(kotlin))), false);
                 requireKotlinRead(kotlin);
                 srcModel.merge(parseResults.model());
                 compileFailures.addAll(parseResults.failures());
@@ -97,6 +101,24 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
         }
     }
 
+    private static java.util.function.Function<String, List<String>> kotlinFiles(final KotlinDeclarations kotlin) {
+        if (kotlin == null) {
+            return null;
+        }
+        return kotlin::filesDeclaring;
+    }
+
+    /**
+     * Whether a type of this qualified name is declared by one of the project's files -- Java files
+     * wherever they sit, whatever their directory says of their package, and Kotlin files -- so that
+     * a name is bound to a type of the project only when the project has it.
+     */
+    private static Predicate<String> declaredTypes(final JavaDeclarationIndex index,
+                                                   final KotlinDeclarations kotlin) {
+        final Predicate<String> kotlinTypes = kotlinTypes(kotlin);
+        return name -> index.declares(name) || kotlinTypes != null && kotlinTypes.test(name);
+    }
+
     private static Predicate<String> kotlinTypes(final KotlinDeclarations kotlin) {
         if (kotlin == null) {
             return null;
@@ -113,10 +135,13 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
      * layouts and anything unconventional, and costs one regex per file. Guessing
      * {@code src/main/java} by name would have missed the second half of that list.
      */
-    private static Set<String> sourceRoots(final List<ProjectFile> files, final String persistDir) {
+    private static Set<String> sourceRoots(final ProjectFiles projectFiles, final List<ProjectFile> files,
+                                           final String persistDir) {
         final Set<String> roots = new HashSet<>();
         for (final ProjectFile file : files) {
-            final String path = file.path();
+            // Relative to the project root, so a directory load, which holds absolute paths, reads the
+            // same roots as an archive of the same tree.
+            final String path = projectFiles.pathInProject(file.path());
             if (path == null || file.content() == null) {
                 continue;
             }
@@ -311,7 +336,8 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
         ParserContext newContext() {
             return new ParserContext(JavaParserFactory.setupIndexedTypeSolver(
-                    new IndexedTypeSolver(index, units))).withOtherLanguageTypes(kotlinTypes(kotlin));
+                    new IndexedTypeSolver(index, units))).withOtherLanguageTypes(kotlinTypes(kotlin))
+                    .withImportResolver(new JavaImportResolver(index, kotlinFiles(kotlin)));
         }
 
         /** Whether the repository declares the named type, in a Java file or a Kotlin one. */

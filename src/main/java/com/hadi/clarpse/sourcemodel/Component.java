@@ -45,6 +45,8 @@ public final class Component implements Serializable {
     @JsonInclude(Include.NON_EMPTY)
     private Set<String> imports = new HashSet<>();
     @JsonInclude(Include.NON_EMPTY)
+    private Set<String> importedFiles = new LinkedHashSet<>();
+    @JsonInclude(Include.NON_EMPTY)
     private Set<String> modifiers = new LinkedHashSet<>();
     private ComponentType type;
     @JsonIgnore
@@ -80,6 +82,7 @@ public final class Component implements Serializable {
         if (pool == null) {
             this.modifiers = new LinkedHashSet<>(component.modifiers);
             this.imports = new LinkedHashSet<>(component.imports);
+            this.importedFiles = new LinkedHashSet<>(component.importedFiles());
             this.codeFragment = component.codeFragment;
             this.componentName = component.componentName;
             this.pkg = component.pkg;
@@ -92,6 +95,7 @@ public final class Component implements Serializable {
         } else {
             this.modifiers = pool.pooledSet(component.modifiers);
             this.imports = pool.pooledSet(component.imports);
+            this.importedFiles = pool.pooledSet(component.importedFiles);
             this.codeFragment = pool.pooled(component.codeFragment);
             this.componentName = pool.pooled(component.componentName);
             this.pkg = pool.pooled(component.pkg);
@@ -197,7 +201,10 @@ public final class Component implements Serializable {
     }
 
     /**
-     * The references this component makes to types outside the codebase.
+     * The references this component makes to names that are not components of the model: library
+     * and platform names, and names kept as written because nothing in scope declared them or
+     * several things did, which may be repository types (see
+     * {@link ComponentReference#isExternal()} and {@link ComponentReference#resolutionKind()}).
      *
      * <p>An unmodifiable view rather than a copy. Relationship extraction reads both dependency sets
      * three times per component and was paying for six set copies each time.
@@ -256,6 +263,79 @@ public final class Component implements Serializable {
      */
     public Set<String> imports() {
         return Collections.unmodifiableSet(imports);
+    }
+
+    /**
+     * The project files that the import directives of this component's file name.
+     *
+     * <p>For TypeScript and Python that is a module file an import resolves to. For Java, Kotlin
+     * and C# it is the file or files declaring the single type or member a directive names. A
+     * namespace or package wildcard ({@code import a.b.*}, Kotlin {@code import a.b.*}, C#
+     * {@code using A.B;}, a namespace alias) names no file and contributes nothing; a wildcard
+     * over a type contributes that type's file. A library, framework, JDK or unresolved target,
+     * a file outside the project, and the component's own file contribute nothing.
+     *
+     * <p>An empty set is not always "no imports". For a file listed in a
+     * {@link com.hadi.clarpse.compiler.CompileFailure}, or among
+     * {@link com.hadi.clarpse.compiler.ProjectFiles#unreadSourceFiles()}, an empty set means
+     * "unknown": the file was not read, or not read in full, so its imports were not resolved.
+     *
+     * <p>Each entry is a path in the form of {@link #sourceFile()}, so it can be compared with the
+     * source file of another component directly. The order is the source order of first appearance,
+     * without repeats. No path is derived from the text of an import.
+     *
+     * <ul>
+     *   <li><b>TypeScript.</b> The target of every relative import, and of every workspace-package
+     *       or path-alias import that resolves to a source file inside the project, whether written
+     *       as a static import, {@code export ... from}, {@code import()} or {@code require} with a
+     *       literal argument. A target counts whether or not it declares a type. A package resolved
+     *       into {@code node_modules} and a specifier that does not resolve contribute
+     *       nothing.</li>
+     *   <li><b>Python.</b> Each import is resolved from the importing file by the type checker's
+     *       import resolution. {@code import a.b.c} gives the file of the module {@code a.b.c}
+     *       ({@code a/b/c.py}, or {@code a/b/c/__init__.py} for a package); the {@code __init__.py}
+     *       files of the parent packages are not listed. {@code from a.b import c} gives
+     *       {@code a/b/c.py} when {@code c} is a submodule, and otherwise the file of
+     *       {@code a.b}; {@code from a.b import *} gives the file of {@code a.b}. Relative imports
+     *       resolve against the importing file's package, and {@code importlib.import_module},
+     *       {@code import_module} and {@code __import__} with a literal argument count as imports,
+     *       as do imports inside functions, classes and {@code if TYPE_CHECKING:}. A resolution
+     *       that lands on a {@code .pyi} stub records the {@code .py} beside it (or the
+     *       {@code __init__.py} beside an {@code __init__.pyi}); a stub with none beside it names
+     *       no file. The standard library, bundled stubs and installed packages contribute
+     *       nothing.</li>
+     *   <li><b>Java.</b> A single-type import gives the file declaring the top-level type its name
+     *       falls under, so a nested type leads to the file of the type containing it. A static
+     *       import gives the file declaring the type whose member it names, and a static
+     *       on-demand import the file declaring that type. An on-demand import over a nested type
+     *       gives the file of the top-level type. When no Java file declares the name, the
+     *       project's Kotlin files are asked, a Kotlin top-level function going through the file
+     *       class it compiles into.</li>
+     *   <li><b>Kotlin.</b> A name import gives every file declaring a type, a typealias or a
+     *       top-level function or property of that name, so overloads spread over several files
+     *       are all listed. A name that matches none is read as a member of a type (an object
+     *       member, an enum entry, a nested type) and gives the file declaring the nearest
+     *       enclosing type. An alias changes the name a file sees, not the target. A name no
+     *       Kotlin file declares is looked up among the project's Java files by the Java rule.</li>
+     *   <li><b>C#.</b> A {@code using static} gives every file declaring the type, so all parts of
+     *       a partial type are listed, and an alias of a type gives the files declaring it. A
+     *       directive written inside a namespace is looked up from the innermost enclosing
+     *       namespace outwards, and a {@code global::} name from the root. A global using belongs
+     *       to the file that writes it and is not applied to the others. A partial type's
+     *       component carries the directives of every part.</li>
+     * </ul>
+     *
+     * <p>A component of a boundary file reports what the resolution of its file gives, exactly as
+     * for an analysed file.
+     *
+     * @return Unmodifiable set of paths, in the order the imports first appear in the file; never
+     *         {@code null}.
+     */
+    public Set<String> importedFiles() {
+        if (importedFiles == null) {
+            return Collections.emptySet();
+        }
+        return Collections.unmodifiableSet(importedFiles);
     }
 
     public String componentName() {
@@ -335,6 +415,19 @@ public final class Component implements Serializable {
             imports = new LinkedHashSet<>();
         } else {
             imports = new LinkedHashSet<>(currentImports);
+        }
+    }
+
+    /**
+     * Sets the repository files this component's imports resolve to; see {@link #importedFiles()}.
+     *
+     * @param files The paths, in order; {@code null} is the empty set.
+     */
+    public void setImportedFiles(final Set<String> files) {
+        if (files == null) {
+            importedFiles = new LinkedHashSet<>();
+        } else {
+            importedFiles = new LinkedHashSet<>(files);
         }
     }
 

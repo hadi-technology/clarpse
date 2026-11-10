@@ -1471,6 +1471,97 @@ function isInternalFile(filePath, repoRootOverride) {
   return true;
 }
 
+/** Whether a statement is on its container's surface: exported, or inside an ambient declaration. */
+function isExportedStatement(node) {
+  const ts = state.ts;
+  if (node.flags & ts.NodeFlags.Ambient) {
+    return true;
+  }
+  return !!(node.modifiers && node.modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword));
+}
+
+/**
+ * The namespaces a declaration is a member of, outermost first, or undefined where the model has no
+ * component for it. A namespace (`namespace A.B { export class C {} }`) is a component of the file
+ * that holds the block, named by its path (`A.B`), and its exported declarations are components
+ * under it, so the declaration above is `<module>.A.B.C`. A declaration of the file itself has the
+ * empty path. What is not exported, what sits in a function or class body, and what `declare
+ * global` holds have no component. A `declare module "x"` block's declarations are the file's own;
+ * they have the empty path only when `allowAmbientModule` says the caller reads them.
+ */
+function namespaceHome(declaration, allowAmbientModule) {
+  const ts = state.ts;
+  let node = declaration;
+  if (node && ts.isVariableDeclaration(node)) {
+    node = node.parent && node.parent.parent;
+  }
+  const names = [];
+  while (node && node.parent) {
+    while (ts.isModuleDeclaration(node) && ts.isModuleDeclaration(node.parent)) {
+      names.unshift(node.parent.name.text);
+      node = node.parent;
+    }
+    const container = node.parent;
+    if (ts.isSourceFile(container)) {
+      return names;
+    }
+    if (!ts.isModuleBlock(container)) {
+      return undefined;
+    }
+    const owner = container.parent;
+    if (owner.flags & ts.NodeFlags.GlobalAugmentation) {
+      return undefined;
+    }
+    if (ts.isStringLiteral(owner.name)) {
+      return allowAmbientModule ? names : undefined;
+    }
+    if (!isExportedStatement(node)) {
+      return undefined;
+    }
+    names.unshift(owner.name.text);
+    node = owner;
+  }
+  return undefined;
+}
+
+/** The name the model gives a declaration: its namespaces' path, then its own name; null if it has none. */
+function modelledName(declaration, name, allowAmbientModule) {
+  const home = namespaceHome(declaration, allowAmbientModule);
+  return home === undefined ? null : home.concat(name).join(".");
+}
+
+/**
+ * The declaration of a symbol the model names. A symbol merged from several declarations is named
+ * by its first non-namespace one; one made of namespace blocks alone, by its first block when one
+ * file holds them all. A namespace declared in several files is one component per file, so
+ * nothing in the source says which block a reference to the namespace itself means: it has no
+ * primary declaration (see `isAmbiguousNamespace`).
+ */
+function primaryDeclaration(declarations) {
+  const ts = state.ts;
+  if (!declarations || !declarations.length) {
+    return null;
+  }
+  const others = declarations.filter((declaration) => !ts.isModuleDeclaration(declaration));
+  if (others.length) {
+    return others[0];
+  }
+  if (isAmbiguousNamespace(declarations)) {
+    return null;
+  }
+  return declarations.slice().sort((a, b) => a.pos - b.pos)[0];
+}
+
+/** Whether declarations are namespace blocks alone, held by more than one file, one of them the repository's. */
+function isAmbiguousNamespace(declarations) {
+  const ts = state.ts;
+  if (!declarations || declarations.length < 2 || !declarations.every((declaration) => ts.isModuleDeclaration(declaration))) {
+    return false;
+  }
+  const files = new Set(declarations.map((declaration) => declaration.getSourceFile().fileName));
+  return files.size > 1 && Array.from(files).some((file) => isInternalFile(file));
+}
+
 function resolveSymbolName(symbol, checker) {
   let actual = symbol;
   if (symbol.flags & state.ts.SymbolFlags.Alias) {
@@ -1569,13 +1660,14 @@ function referenceKey(reference) {
   if (!reference) {
     return "";
   }
+  const member = reference.member ? `|member|${reference.memberKind}|${reference.member}` : "";
   if (reference.external) {
-    return `${reference.kind}|external|${reference.displayName}`;
+    return `${reference.kind}|external|${reference.displayName}${member}`;
   }
   if (reference.target) {
-    return `${reference.kind}|internal|${reference.target.filePath}|${reference.target.symbolName}`;
+    return `${reference.kind}|internal|${reference.target.filePath}|${reference.target.symbolName}${member}`;
   }
-  return `${reference.kind}|external|${reference.displayName || ""}`;
+  return `${reference.kind}|external|${reference.displayName || ""}${member}`;
 }
 
 function mergeReferences(...lists) {
@@ -1608,6 +1700,15 @@ function isInternalSymbolName(name) {
   return !!name && TS_INTERNAL_SYMBOL_NAMES.has(name);
 }
 
+/**
+ * Whether a type's text is the checker's description of an inferred type (`(typeof Bar)[]`) rather
+ * than the name of a symbol. The symbols it is made of are recorded on their own. The text of a
+ * module (`typeof import("x")`) names that module and is not inferred.
+ */
+function isInferredTypeText(displayName) {
+  return /(^|[^A-Za-z0-9_$.])typeof\s+(?!import\()/.test(displayName);
+}
+
 function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments) {
   const references = [];
   const seen = new Set();
@@ -1627,7 +1728,7 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
       ? checker.getAliasedSymbol(entry.symbol)
       : entry.symbol;
     const decls = actual.declarations;
-    const decl = decls && decls.length ? decls[0] : null;
+    const decl = primaryDeclaration(decls);
     const fileName = decl && decl.getSourceFile ? decl.getSourceFile().fileName : null;
     if (isSourceFileModule(actual)) {
       // A whole module is referenced by its file: the target has no symbol name, and the module's
@@ -1642,35 +1743,45 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
         continue;
       }
     }
+    if (actual.flags & state.ts.SymbolFlags.TypeParameter) {
+      // A type parameter (`T` in `Box<T>`) is a placeholder, not a type any file declares.
+      continue;
+    }
     const name = resolveSymbolName(entry.symbol, checker);
     if (isInternalSymbolName(name)) {
       continue;
     }
+    const modelled = fileName && name && isInternalFile(fileName) ? modelledName(decl, name, true) : null;
+    if (fileName && name && isInternalFile(fileName) && modelled === null) {
+      // A declaration the model has no component for (a namespace member that is not exported).
+      continue;
+    }
     if (fileName && name && isInternalFile(fileName)) {
       const normalized = path.resolve(fileName);
-      const key = `${kind}|internal|${normalized}|${name}`;
+      const key = `${kind}|internal|${normalized}|${modelled}`;
       if (!seen.has(key)) {
         references.push({
           kind,
           external: false,
-          target: { filePath: normalized, symbolName: name }
+          target: { filePath: normalized, symbolName: modelled }
         });
         seen.add(key);
       }
     } else {
       const displayName = checker.typeToString(entry.type || type);
-      if (!displayName || displayName === "void") {
+      if (!displayName || displayName === "void" || isInferredTypeText(displayName)) {
         continue;
       }
       const key = `${kind}|external|${displayName}`;
       if (!seen.has(key)) {
-        references.push(externalReference(kind, displayName, !decl || isLostType(entry.type || type, displayName)));
+        references.push(externalReference(kind, displayName, !decl || isLostType(entry.type || type, displayName),
+          decl ? "exact" : "unresolved"));
         seen.add(key);
       }
     }
   }
   for (const displayName of displayNames) {
-    if (!displayName || displayName === "void") {
+    if (!displayName || displayName === "void" || isInferredTypeText(displayName)) {
       continue;
     }
     const key = `${kind}|external|${displayName}`;
@@ -1683,15 +1794,20 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
 }
 
 /**
- * An external reference, flagged `unresolved` in a one-level analysis when the type behind it was
- * lost rather than found outside the repository. Outside a one-level analysis nothing is flagged,
- * so ordinary output is unchanged.
+ * An external reference. In a one-level analysis it is flagged `lost` when the type behind it was
+ * lost rather than found outside the repository: the declaration may be in a file the program does
+ * not hold, so the reference is not loaded and says nothing about how it resolved. Outside a
+ * one-level analysis nothing is flagged, so ordinary output is unchanged. Otherwise `resolution`
+ * says how the checker settled it: `exact` or `unresolved`.
  */
-function externalReference(kind, displayName, lost) {
+function externalReference(kind, displayName, lost, resolution) {
+  const reference = { kind, external: true, displayName };
   if (state.oneLevel && lost) {
-    return { kind, external: true, unresolved: true, displayName };
+    reference.lost = true;
+  } else if (resolution) {
+    reference.resolution = resolution;
   }
-  return { kind, external: true, displayName };
+  return reference;
 }
 
 const ANY_WORD = /(^|[^A-Za-z0-9_$])any([^A-Za-z0-9_$]|$)/;
@@ -1731,6 +1847,52 @@ function writtenTypeArguments(type, depth) {
   return found;
 }
 
+/** Whether a file is one of the compiler's own library declarations or a package's `@types` file. */
+function isLibraryDeclarationFile(fileName) {
+  const ts = state.ts;
+  const libDirectory = path.dirname(ts.getDefaultLibFilePath({}));
+  const base = path.basename(fileName);
+  if (isUnder(fileName, libDirectory) && base.startsWith("lib.") && base.endsWith(".d.ts")) {
+    return true;
+  }
+  return /[\\/]node_modules[\\/]@types[\\/]/.test(fileName);
+}
+
+/**
+ * The base a heritage clause names when the name is a global and not something the repository or an
+ * import declares: `Error`, `Map`, `Array` in `extends Error`. It is a library global only when the
+ * checker resolves the name to a declaration in a default library or `@types` file; the name is then
+ * `exact`. A name no declaration answers to (a program built without a library has none for
+ * `Error`) is kept as written and is `unresolved`. A name the repository declares, or an import
+ * binds, is not read here. A library generic read through its type (`Array<string>`) would name its
+ * element type, so the name written is the base.
+ */
+function libraryBaseName(typeNode, checker) {
+  const ts = state.ts;
+  if (!ts.isExpressionWithTypeArguments(typeNode) || !ts.isIdentifier(typeNode.expression)) {
+    return null;
+  }
+  let symbol;
+  try {
+    symbol = checker.getSymbolAtLocation(typeNode.expression);
+  } catch (err) {
+    return null;
+  }
+  if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
+    return null;
+  }
+  const declarations = symbol && symbol.declarations ? symbol.declarations : [];
+  const name = typeNode.expression.text;
+  if (!declarations.length) {
+    return { name, resolution: "unresolved" };
+  }
+  const files = declarations.map((declaration) => declaration.getSourceFile().fileName);
+  if (files.some((file) => isInternalFile(file)) || !files.every((file) => isLibraryDeclarationFile(file))) {
+    return null;
+  }
+  return { name, resolution: "exact" };
+}
+
 /**
  * The references a heritage clause makes. Only the type named in the clause is extended or
  * implemented; the types written as its type arguments (`B<C>`) are ordinary references.
@@ -1743,6 +1905,14 @@ function buildHeritageReferences(node, checker) {
   for (const clause of node.heritageClauses) {
     const kind = clause.token === state.ts.SyntaxKind.ExtendsKeyword ? "extends" : "implements";
     for (const typeNode of clause.types) {
+      const libraryBase = libraryBaseName(typeNode, checker);
+      if (libraryBase) {
+        references.push(externalReference(kind, libraryBase.name, false, libraryBase.resolution));
+        for (const argument of typeNode.typeArguments || []) {
+          references.push(...buildReferenceModelsFromType(checker.getTypeAtLocation(argument), checker, "type"));
+        }
+        continue;
+      }
       const type = checker.getTypeAtLocation(typeNode);
       references.push(...buildReferenceModelsFromType(type, checker, kind, true));
       const importedBase = state.ts.isExpressionWithTypeArguments(typeNode)
@@ -1788,15 +1958,38 @@ function buildDecoratorReferences(node, checker) {
   for (const decorator of decorators) {
     const name = decoratorTypeName(decorator.expression);
     if (name) {
+      const declared = decoratorDeclaration(decorator.expression, checker);
       references.push({
         kind: "annotation",
-        external: true,
-        displayName: name,
+        external: !declared,
+        ...(declared ? { target: declared } : { displayName: name, resolution: "unresolved" }),
         arguments: readDecoratorArguments(decorator.expression, checker)
       });
     }
+    if (state.ts.isCallExpression(decorator.expression)) {
+      // What the arguments name (`providers: [FooService]`, `() => Qux`, `TOKEN`) is depended on.
+      for (const argument of decorator.expression.arguments) {
+        references.push(...collectValueReferences(argument, checker, null));
+      }
+    }
   }
   return references;
+}
+
+/**
+ * The declaration of this repository a decorator's name (`@Component`, `@Component(...)`) resolves
+ * to, as a reference target, or null where it resolves to none.
+ */
+function decoratorDeclaration(expression, checker) {
+  let callee = expression;
+  while (state.ts.isCallExpression(callee)) {
+    callee = callee.expression;
+  }
+  if (!state.ts.isIdentifier(callee)) {
+    return null;
+  }
+  const reference = buildValueReference(callee, checker, null);
+  return reference && !reference.external && reference.target ? reference.target : null;
 }
 
 // The arguments written on a decorator, in written order: an empty list for a decorator written
@@ -1905,8 +2098,9 @@ function readNamedArgument(node, checker) {
   }
   if (ts.isClassDeclaration(declaration) && declaration.name) {
     const fileName = declaration.getSourceFile().fileName;
-    const target = fileName && isInternalFile(fileName)
-      ? { filePath: path.resolve(fileName), symbolName: declaration.name.text }
+    const modelled = modelledName(declaration, declaration.name.text);
+    const target = fileName && isInternalFile(fileName) && modelled !== null
+      ? { filePath: path.resolve(fileName), symbolName: modelled }
       : null;
     return { kind: "class", text: declaration.name.text, target };
   }
@@ -1958,9 +2152,8 @@ function buildCalleeReference(node, checker) {
   if (!declaration || !declaration.getSourceFile) {
     return null;
   }
-  if (!state.ts.isFunctionDeclaration(declaration)
-    || !declaration.parent
-    || !state.ts.isSourceFile(declaration.parent)) {
+  const modelled = state.ts.isFunctionDeclaration(declaration) ? modelledName(declaration, name) : null;
+  if (modelled === null || !declaration.parent) {
     return null;
   }
   const fileName = declaration.getSourceFile().fileName;
@@ -1970,7 +2163,7 @@ function buildCalleeReference(node, checker) {
   return {
     kind: "type",
     external: false,
-    target: { filePath: path.resolve(fileName), symbolName: name }
+    target: { filePath: path.resolve(fileName), symbolName: modelled }
   };
 }
 
@@ -1993,6 +2186,7 @@ function buildCallReferences(node, checker) {
     if (libraryMethod) {
       references.push(libraryMethod);
     }
+    references.push(...buildMemberReferences(node, checker));
   }
   return references;
 }
@@ -2080,6 +2274,7 @@ function functionValueSignatureReferences(declaration, checker) {
       references.push(...writtenAliasReferences(parameter.type, checker));
     }
     references.push(...writtenAliasReferences(written.type, checker));
+    references.push(...typeParameterReferences(written, checker));
   }
   return references;
 }
@@ -2123,11 +2318,11 @@ function isModelledValueDeclaration(declaration) {
   if (!declaration || !declaration.parent) {
     return false;
   }
-  if (ts.isClassDeclaration(declaration) || ts.isEnumDeclaration(declaration)) {
-    return !!declaration.name && ts.isSourceFile(declaration.parent);
-  }
-  if (ts.isFunctionDeclaration(declaration)) {
-    return !!declaration.name && ts.isSourceFile(declaration.parent);
+  if (ts.isClassDeclaration(declaration) || ts.isEnumDeclaration(declaration)
+      || ts.isFunctionDeclaration(declaration) || ts.isModuleDeclaration(declaration)) {
+    return !!declaration.name && ts.isIdentifier(declaration.name)
+      && !(declaration.flags & ts.NodeFlags.GlobalAugmentation)
+      && namespaceHome(declaration) !== undefined;
   }
   if (ts.isVariableDeclaration(declaration)) {
     const list = declaration.parent;
@@ -2135,8 +2330,7 @@ function isModelledValueDeclaration(declaration) {
     return ts.isIdentifier(declaration.name)
       && !!statement
       && ts.isVariableStatement(statement)
-      && !!statement.parent
-      && ts.isSourceFile(statement.parent);
+      && namespaceHome(declaration) !== undefined;
   }
   return false;
 }
@@ -2176,7 +2370,7 @@ function collectValueReferences(initializer, checker, owner) {
 }
 
 function externalNamedReference(packageName, symbolName) {
-  return { kind: "type", external: true, displayName: `${packageName}:${symbolName}` };
+  return { kind: "type", external: true, displayName: `${packageName}:${symbolName}`, resolution: "exact" };
 }
 
 /** The module specifier a symbol was imported with, or null where it was not imported. */
@@ -2203,6 +2397,44 @@ function importedFrom(symbol) {
   return requiredModule(node.initializer);
 }
 
+const requireAliasCache = new WeakMap();
+
+/**
+ * The names a file binds to a `require` function made by `createRequire(...)`, which is how a module
+ * file loads CommonJS: `const require2 = createRequire(import.meta.url)`.
+ */
+function requireAliasesOf(sourceFile) {
+  const ts = state.ts;
+  let aliases = requireAliasCache.get(sourceFile);
+  if (aliases) {
+    return aliases;
+  }
+  aliases = new Set();
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+        && ts.isCallExpression(node.initializer)) {
+      const callee = node.initializer.expression;
+      if ((ts.isIdentifier(callee) && callee.text === "createRequire")
+          || (ts.isPropertyAccessExpression(callee) && callee.name.text === "createRequire")) {
+        aliases.add(node.name.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  requireAliasCache.set(sourceFile, aliases);
+  return aliases;
+}
+
+/** Whether a callee is `require`, or a function `createRequire` made in the same file. */
+function isRequireFunction(callee) {
+  const ts = state.ts;
+  if (!ts.isIdentifier(callee)) {
+    return false;
+  }
+  return callee.text === "require" || requireAliasesOf(callee.getSourceFile()).has(callee.text);
+}
+
 /** The module `require("x")` or `(await) import("x")` loads, whatever wraps it, or null. */
 function requiredModule(expression) {
   const ts = state.ts;
@@ -2215,7 +2447,7 @@ function requiredModule(expression) {
       && ts.isStringLiteralLike(node.arguments[0])) {
     const callee = node.expression;
     if (callee.kind === ts.SyntaxKind.ImportKeyword
-        || (ts.isIdentifier(callee) && callee.text === "require")) {
+        || isRequireFunction(callee)) {
       return node.arguments[0].text;
     }
   }
@@ -2315,6 +2547,92 @@ function buildNamespaceMemberReference(node, checker) {
  * class a package declares is not, and was otherwise reduced to the type the call returns.
  */
 function buildLibraryMethodReference(callNode, checker) {
+  return buildResolvedLibraryMethodReference(callNode, checker)
+    || buildUnresolvedLibraryMethodReference(callNode, checker);
+}
+
+/**
+ * The type name a declaration's written annotation names, looking through `null` and `undefined`
+ * alternatives: `Editor`, `Editor | null`, `(Editor)`. Null for any other annotation.
+ */
+function writtenReferenceName(typeNode) {
+  const ts = state.ts;
+  let node = typeNode;
+  while (node && ts.isParenthesizedTypeNode(node)) {
+    node = node.type;
+  }
+  if (node && ts.isUnionTypeNode(node)) {
+    const kept = node.types.filter((member) => member.kind !== ts.SyntaxKind.NullKeyword
+      && member.kind !== ts.SyntaxKind.UndefinedKeyword
+      && !(ts.isLiteralTypeNode(member) && member.literal.kind === ts.SyntaxKind.NullKeyword));
+    node = kept.length === 1 ? kept[0] : null;
+    while (node && ts.isParenthesizedTypeNode(node)) {
+      node = node.type;
+    }
+  }
+  return node && ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName) ? node.typeName : null;
+}
+
+/**
+ * A call to a method of an object whose declared type is imported from a package the program cannot
+ * read: the type has no declarations, so the object's type alone names nothing. The annotation the
+ * object was declared with names the import, and the reference is the imported type and the method,
+ * as it is for a package that has declarations. Only a receiver that is an identifier or a property
+ * access, whose declaration carries the annotation, is read.
+ */
+function buildUnresolvedLibraryMethodReference(callNode, checker) {
+  const receiver = unresolvedLibraryReceiver(callNode, checker);
+  return receiver
+    ? externalNamedReference(receiver.packageName, `${receiver.exportedName}.${callNode.expression.name.text}`)
+    : null;
+}
+
+/**
+ * The type a call's receiver was declared with, when it is imported from a package the program
+ * cannot read: the package as the old `package:Type.method` form names it, the specifier it was
+ * imported with, and the name the package exports the type by. Null for any other receiver.
+ */
+function unresolvedLibraryReceiver(callNode, checker) {
+  const ts = state.ts;
+  const callee = callNode.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.name)) {
+    return null;
+  }
+  const receiver = callee.expression;
+  if (!ts.isIdentifier(receiver) && !(ts.isPropertyAccessExpression(receiver)
+      && receiver.expression.kind === ts.SyntaxKind.ThisKeyword)) {
+    return null;
+  }
+  try {
+    const receiverSymbol = checker.getSymbolAtLocation(receiver);
+    const declarations = receiverSymbol && receiverSymbol.declarations;
+    if (!declarations || declarations.length !== 1) {
+      return null;
+    }
+    const typeName = writtenReferenceName(declarations[0].type);
+    const imported = typeName ? checker.getSymbolAtLocation(typeName) : null;
+    const specifier = imported && imported.declarations && imported.declarations.length === 1
+      ? imported.declarations[0] : null;
+    if (!specifier || !ts.isImportSpecifier(specifier) || !(imported.flags & ts.SymbolFlags.Alias)) {
+      return null;
+    }
+    const target = checker.getAliasedSymbol(imported);
+    if (target && target.declarations && target.declarations.length) {
+      return null;
+    }
+    const moduleSpecifier = importedFrom(imported);
+    const packageName = packageOfSpecifier(moduleSpecifier);
+    const exportedName = (specifier.propertyName || specifier.name).text;
+    if (!packageName || !exportedName || exportedName === "default") {
+      return null;
+    }
+    return { packageName, moduleSpecifier, exportedName };
+  } catch (err) {
+    return null;
+  }
+}
+
+function buildResolvedLibraryMethodReference(callNode, checker) {
   const ts = state.ts;
   const callee = callNode.expression;
   if (!ts.isPropertyAccessExpression(callee)) {
@@ -2339,6 +2657,141 @@ function buildLibraryMethodReference(callNode, checker) {
     return null;
   }
   return externalNamedReference(packageName, `${typeName}.${callee.name.text}`);
+}
+
+const NODE_BUILTIN_MODULES = new Set(require("module").builtinModules.map((name) => name.replace(/^node:/, "")));
+
+/**
+ * The unit a module specifier names for a member reference: the npm package, and a Node built-in
+ * always as `node:name`, so `fs` and `node:fs` are one unit. Null for a relative specifier.
+ */
+function externalUnitOfSpecifier(specifier) {
+  if (!specifier) {
+    return null;
+  }
+  if (specifier.startsWith("node:")) {
+    return specifier;
+  }
+  if (NODE_BUILTIN_MODULES.has(specifier)) {
+    return `node:${specifier}`;
+  }
+  return packageOfSpecifier(specifier);
+}
+
+/**
+ * The unit of a type declared in a file of `node_modules`: the package, and for the declarations of
+ * `@types/node`, the built-in module whose file declares it. Null where the unit is not known.
+ */
+function externalUnitOfFile(fileName, packageName) {
+  if (packageName !== "node") {
+    return packageName;
+  }
+  const marker = `${path.sep}@types${path.sep}node${path.sep}`;
+  const at = fileName.lastIndexOf(marker);
+  if (at < 0) {
+    return packageName;
+  }
+  const inside = fileName.slice(at + marker.length).split(path.sep).join("/").replace(/\.d\.ts$/, "");
+  return NODE_BUILTIN_MODULES.has(inside) ? `node:${inside}` : null;
+}
+
+/** The class or interface symbol a receiver of exactly one such type stands for, or null. */
+function receiverTypeSymbol(type, checker) {
+  const ts = state.ts;
+  if (!type) {
+    return null;
+  }
+  const bare = checker.getNonNullableType(type);
+  const rejected = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never | ts.TypeFlags.TypeParameter
+    | ts.TypeFlags.Union | ts.TypeFlags.Intersection | ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike
+    | ts.TypeFlags.BooleanLike | ts.TypeFlags.BigIntLike | ts.TypeFlags.ESSymbolLike | ts.TypeFlags.EnumLike
+    | ts.TypeFlags.Void | ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Index
+    | ts.TypeFlags.IndexedAccess | ts.TypeFlags.Conditional | ts.TypeFlags.Substitution;
+  if (bare.flags & rejected) {
+    return null;
+  }
+  const symbol = bare.getSymbol();
+  if (!symbol || !(symbol.flags & (ts.SymbolFlags.Class | ts.SymbolFlags.Interface))
+      || isInternalSymbolName(symbol.getName()) || !symbol.declarations || !symbol.declarations.length) {
+    return null;
+  }
+  return symbol;
+}
+
+/**
+ * The member a call on a typed receiver uses: the receiver's type, or the type declaring the member
+ * when a class of the repository does, and the member's name. A receiver that is `this` or `super`,
+ * of an unknown, union, array, primitive or type-parameter type, adds nothing. A type of a package
+ * is named only when it is declared at the top level of a file of that package, or imported from a
+ * package whose declarations are not installed, and the package is known.
+ */
+function buildMemberReferences(callNode, checker) {
+  const ts = state.ts;
+  const callee = callNode.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.name)) {
+    return [];
+  }
+  const receiver = callee.expression;
+  if (receiver.kind === ts.SyntaxKind.ThisKeyword || receiver.kind === ts.SyntaxKind.SuperKeyword) {
+    return [];
+  }
+  const member = callee.name.text;
+  try {
+    const type = checker.getTypeAtLocation(receiver);
+    const symbol = receiverTypeSymbol(type, checker);
+    if (!symbol) {
+      const unread = unresolvedLibraryReceiver(callNode, checker);
+      const unit = unread ? externalUnitOfSpecifier(unread.moduleSpecifier) : null;
+      return unit ? [libraryMemberReference(unread.exportedName, unit, member)] : [];
+    }
+    const declaration = primaryDeclaration(symbol.declarations);
+    if (!declaration || !declaration.getSourceFile) {
+      return [];
+    }
+    const fileName = declaration.getSourceFile().fileName;
+    if (isInternalFile(fileName)) {
+      const owner = declaringTypeOf(checker.getNonNullableType(type), member, checker) || declaration;
+      const ownerName = owner.name && owner.name.text ? owner.name.text : symbol.getName();
+      const modelled = modelledName(owner, ownerName, true);
+      if (modelled === null) {
+        return [];
+      }
+      return [{
+        kind: "type",
+        external: false,
+        target: { filePath: path.resolve(owner.getSourceFile().fileName), symbolName: modelled },
+        member,
+        memberKind: "call"
+      }];
+    }
+    const packageName = packageOfFile(fileName);
+    if (!packageName || isCompilerLibraryFile(fileName) || !ts.isSourceFile(declaration.parent)) {
+      return [];
+    }
+    const unit = externalUnitOfFile(fileName, packageName);
+    return unit ? [libraryMemberReference(symbol.getName(), unit, member)] : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+/** The class or interface of the repository that declares a member of a type, when one does. */
+function declaringTypeOf(type, member, checker) {
+  const ts = state.ts;
+  const property = checker.getPropertyOfType(type, member);
+  const declaration = property && property.declarations && property.declarations[0];
+  const parent = declaration && declaration.parent;
+  if (parent && (ts.isClassLike(parent) || ts.isInterfaceDeclaration(parent)) && parent.name
+      && isInternalFile(parent.getSourceFile().fileName)) {
+    return parent;
+  }
+  return null;
+}
+
+/** The owner is named as the language names an external type: `unit:Type`. */
+function libraryMemberReference(typeName, unit, member) {
+  return { kind: "type", external: true, displayName: `${unit}:${typeName}`, externalUnit: unit, member,
+    memberKind: "call", resolution: "exact" };
 }
 
 function buildValueReference(identifier, checker, owner) {
@@ -2390,20 +2843,38 @@ function buildValueReference(identifier, checker, owner) {
   if (!declarations.length) {
     return null;
   }
-  const declaration = declarations.find(isModelledValueDeclaration);
+  const modelled = declarations.filter(isModelledValueDeclaration);
+  if (isAmbiguousNamespace(modelled)) {
+    // Several files declare the namespace and none is the one meant: the name is kept as written.
+    return { kind: "type", external: true, displayName: modelled[0].name.getText(), resolution: "ambiguous" };
+  }
+  const declaration = primaryDeclaration(modelled);
   if (!declaration || declaration === owner) {
     return null;
   }
   const fileName = declaration.getSourceFile().fileName;
-  const name = declaration.name.getText();
-  if (!fileName || !name || isInternalSymbolName(name) || !isInternalFile(fileName)) {
+  const written = declaration.name.getText();
+  if (!fileName || !written || isInternalSymbolName(written) || !isInternalFile(fileName)) {
     return null;
   }
   return {
     kind: "type",
     external: false,
-    target: { filePath: path.resolve(fileName), symbolName: name }
+    target: { filePath: path.resolve(fileName), symbolName: modelledName(declaration, written) }
   };
+}
+
+/** The types an arrow function or function expression writes its parameters with. */
+function writtenParameterReferences(node, checker) {
+  const references = [];
+  for (const parameter of node.parameters) {
+    if (!parameter.type) {
+      continue;
+    }
+    references.push(...writtenAliasReferences(parameter.type, checker));
+    references.push(...buildReferenceModelsFromType(checker.getTypeAtLocation(parameter.type), checker, "type"));
+  }
+  return references;
 }
 
 function collectBodyDetails(body, checker, owner) {
@@ -2425,6 +2896,9 @@ function collectBodyDetails(body, checker, owner) {
       if (localModel) {
         locals.push(localModel);
       }
+    }
+    if (state.ts.isArrowFunction(node) || state.ts.isFunctionExpression(node)) {
+      references.push(...writtenParameterReferences(node, checker));
     }
     if (state.ts.isCallExpression(node)) {
       references.push(...buildCallReferences(node, checker));
@@ -2495,7 +2969,8 @@ function buildParameterModels(parameters, checker) {
       jsDoc: getJsDoc(param),
       references: mergeReferences(
         buildReferenceModelsFromType(paramType, checker, "type"),
-        writtenAliasReferences(param.type, checker)
+        writtenAliasReferences(param.type, checker),
+        buildDecoratorReferences(param, checker)
       )
     });
   }
@@ -2914,13 +3389,13 @@ function typeAliasReference(node, checker) {
   if (!symbol || !(symbol.flags & state.ts.SymbolFlags.TypeAlias)) {
     return null;
   }
-  const declaration = symbol.declarations && symbol.declarations.length ? symbol.declarations[0] : null;
+  const declaration = primaryDeclaration(symbol.declarations);
   const fileName = declaration && declaration.getSourceFile ? declaration.getSourceFile().fileName : null;
-  if (!fileName || !isInternalFile(fileName) || !declaration.parent
-    || !state.ts.isSourceFile(declaration.parent)) {
+  const modelled = declaration ? modelledName(declaration, symbol.getName()) : null;
+  if (!fileName || !isInternalFile(fileName) || !declaration.parent || modelled === null) {
     return null;
   }
-  return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: symbol.getName() } };
+  return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: modelled } };
 }
 
 /**
@@ -2944,13 +3419,13 @@ function declaredTypeReference(node, checker) {
   if (!symbol || !(symbol.flags & kinds)) {
     return null;
   }
-  const declaration = symbol.declarations && symbol.declarations.length ? symbol.declarations[0] : null;
+  const declaration = primaryDeclaration(symbol.declarations);
   const fileName = declaration && declaration.getSourceFile ? declaration.getSourceFile().fileName : null;
-  if (!fileName || !isInternalFile(fileName) || !declaration.parent
-    || !state.ts.isSourceFile(declaration.parent)) {
+  const modelled = declaration ? modelledName(declaration, symbol.getName()) : null;
+  if (!fileName || !isInternalFile(fileName) || !declaration.parent || modelled === null) {
     return null;
   }
-  return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: symbol.getName() } };
+  return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: modelled } };
 }
 
 /**
@@ -3006,6 +3481,44 @@ function writtenNameReference(node, checker) {
 }
 
 /**
+ * The reference a `typeof` type query makes: the declaration of the value it names, or null where
+ * it names none this repository models. A qualified name (`typeof cfg.inner`, `typeof ns.x`)
+ * resolves to the declaration of the full name when that is a module member; a member of an object
+ * (`inner`) is not a declaration of its own, so the query depends on the value it is read from.
+ */
+function typeQueryReference(node, checker) {
+  const ts = state.ts;
+  const name = node.exprName;
+  if (ts.isIdentifier(name)) {
+    return buildValueReference(name, checker, null);
+  }
+  let symbol = null;
+  try {
+    symbol = checker.getSymbolAtLocation(name.right);
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
+      symbol = checker.getAliasedSymbol(symbol);
+    }
+  } catch (err) {
+    symbol = null;
+  }
+  const declaration = symbol && symbol.declarations
+    ? primaryDeclaration(symbol.declarations.filter(isModelledValueDeclaration))
+    : null;
+  if (declaration) {
+    const fileName = declaration.getSourceFile().fileName;
+    const declared = declaration.name.getText();
+    if (fileName && isInternalFile(fileName) && !isInternalSymbolName(declared)) {
+      return {
+        kind: "type",
+        external: false,
+        target: { filePath: path.resolve(fileName), symbolName: modelledName(declaration, declared) }
+      };
+    }
+  }
+  return buildValueReference(leftmostIdentifier(name), checker, null);
+}
+
+/**
  * The declarations of the repository a type is written with: `Tracked` in `f(): Tracked`, however
  * deep in a union, an array, a type argument, or the members of an object type. The type an alias
  * stands for is what the checker reports, and for a union or an intersection that is its members,
@@ -3022,6 +3535,12 @@ function writtenAliasReferences(typeNode, checker) {
       const named = writtenNameReference(child, checker);
       if (named) {
         references.push(named);
+      }
+    }
+    if (state.ts.isTypeQueryNode(child)) {
+      const value = typeQueryReference(child, checker);
+      if (value) {
+        references.push(value);
       }
     }
     state.ts.forEachChild(child, visit);
@@ -3064,6 +3583,13 @@ function typeParameterReferences(node, checker) {
     state.ts.forEachChild(child, visit);
   }
   for (const parameter of node.typeParameters) {
+    if (parameter.default) {
+      visit(parameter.default);
+      const fallback = checker.getTypeAtLocation(parameter.default);
+      if (!(fallback.flags & state.ts.TypeFlags.TypeParameter)) {
+        references.push(...buildReferenceModelsFromType(fallback, checker, "type"));
+      }
+    }
     if (parameter.constraint) {
       visit(parameter.constraint);
       const constraint = checker.getTypeAtLocation(parameter.constraint);
@@ -3083,6 +3609,12 @@ function typeParameterReferences(node, checker) {
 function buildTypeAliasModel(node, checker) {
   const references = [];
   function visit(child) {
+    if (state.ts.isTypeQueryNode(child)) {
+      const value = typeQueryReference(child, checker);
+      if (value) {
+        references.push(value);
+      }
+    }
     if (state.ts.isTypeReferenceNode(child) || state.ts.isExpressionWithTypeArguments(child)) {
       const named = typeAliasReference(child, checker);
       const referenced = checker.getTypeAtLocation(child);
@@ -3171,43 +3703,150 @@ function withListedExports(ts, sourceFile, declarations) {
   return declarations;
 }
 
+/**
+ * What a module-level statement declares: a class, interface, enum, type alias, function or the
+ * variables of a variable statement. Anything else declares nothing that is modelled.
+ */
+/**
+ * A namespace block (`namespace N { }`, `module N { }`, `namespace A.B { }`) as a component whose
+ * members are the block's exported declarations. A dotted name is a namespace inside a namespace.
+ * `declare global` and `declare module "x"` are not namespaces.
+ */
+function buildNamespaceModel(ts, node, checker, unresolvedBases) {
+  let members = [];
+  if (node.body && ts.isModuleDeclaration(node.body)) {
+    members = [buildNamespaceModel(ts, node.body, checker, unresolvedBases)];
+  } else if (node.body && ts.isModuleBlock(node.body)) {
+    for (const statement of node.body.statements) {
+      if (isExportedStatement(statement)) {
+        members.push(...declarationsOfStatement(ts, statement, checker, unresolvedBases).filter(Boolean));
+      }
+    }
+  }
+  return {
+    kind: "namespace",
+    name: node.name.text,
+    signature: "",
+    implementationHash: stableImplementationHash(node.getText()),
+    modifiers: collectModifiers(ts, node),
+    jsDoc: getJsDoc(node),
+    members,
+    references: []
+  };
+}
+
+/**
+ * Merges the namespaces of one file. A namespace named as a class, interface, enum, function or
+ * other declaration of the file adds its members to that declaration (`class Holder` with
+ * `namespace Holder { export class Inner {} }` has `Holder.Inner`); namespaces of one name are one
+ * component, and so are their nested namespaces. A member is kept once: the first of a name stays.
+ * Namespaces of one name in different files are one component in each file, named by the file.
+ */
+function mergeNamespaces(declarations) {
+  const result = [];
+  const byName = new Map();
+  for (const declaration of declarations) {
+    if (declaration.kind !== "namespace") {
+      result.push(declaration);
+      if (!byName.has(declaration.name)) {
+        byName.set(declaration.name, declaration);
+      }
+    }
+  }
+  for (const declaration of declarations) {
+    if (declaration.kind !== "namespace") {
+      continue;
+    }
+    const host = byName.get(declaration.name);
+    if (host) {
+      addNamespaceMembers(host, declaration.members);
+    } else {
+      byName.set(declaration.name, declaration);
+      result.push(declaration);
+    }
+  }
+  return result;
+}
+
+function addNamespaceMembers(host, members) {
+  host.members = host.members || [];
+  for (const member of members) {
+    const existing = host.members.find((other) => other.name === member.name
+      && (member.kind === "namespace") === (other.kind === "namespace"));
+    if (!existing) {
+      if (!host.members.some((other) => other.name === member.name)) {
+        host.members.push(member);
+      }
+    } else if (member.kind === "namespace") {
+      addNamespaceMembers(existing, member.members);
+    }
+  }
+}
+
+function declarationsOfStatement(ts, node, checker, unresolvedBases) {
+  if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)
+      && !(node.flags & ts.NodeFlags.GlobalAugmentation)) {
+    return [buildNamespaceModel(ts, node, checker, unresolvedBases)];
+  }
+  if (ts.isClassDeclaration(node) && node.name) {
+    return [buildClassModel(node, checker, unresolvedBases)];
+  }
+  if (ts.isInterfaceDeclaration(node)) {
+    return [buildInterfaceModel(node, checker)];
+  }
+  if (ts.isEnumDeclaration(node)) {
+    return [buildEnumModel(node)];
+  }
+  if (ts.isTypeAliasDeclaration(node)) {
+    return [buildTypeAliasModel(node, checker)];
+  }
+  if (ts.isFunctionDeclaration(node)) {
+    return [buildFunctionModel(node, checker)];
+  }
+  if (ts.isVariableStatement(node)) {
+    return node.declarationList.declarations.map((declaration) => buildTopLevelVariableModel(declaration, node, checker));
+  }
+  return [];
+}
+
+/**
+ * The statements of a `declare module "specifier" { ... }` block: an ambient module, or an
+ * augmentation of the module the specifier names. A namespace (`namespace N { }`) and `declare
+ * global` are not read.
+ */
+function ambientModuleStatements(ts, node) {
+  return ts.isModuleDeclaration(node) && ts.isStringLiteral(node.name) && node.body && ts.isModuleBlock(node.body)
+    ? node.body.statements
+    : [];
+}
+
 function collectTopLevelDeclarations(ts, sourceFile, checker, unresolvedBases) {
   const declarations = [];
   sourceFile.forEachChild((node) => {
-    if (ts.isClassDeclaration(node) && node.name) {
-      declarations.push(buildClassModel(node, checker, unresolvedBases));
-      return;
-    }
-    if (ts.isInterfaceDeclaration(node)) {
-      declarations.push(buildInterfaceModel(node, checker));
-      return;
-    }
-    if (ts.isEnumDeclaration(node)) {
-      declarations.push(buildEnumModel(node));
-      return;
-    }
-    if (ts.isTypeAliasDeclaration(node)) {
-      declarations.push(buildTypeAliasModel(node, checker));
-      return;
-    }
-    if (ts.isFunctionDeclaration(node)) {
-      const model = buildFunctionModel(node, checker);
-      if (model) {
-        declarations.push(model);
-      }
-      return;
-    }
-    if (ts.isVariableStatement(node)) {
-      const list = node.declarationList;
-      for (const declaration of list.declarations) {
-        const model = buildTopLevelVariableModel(declaration, node, checker);
-        if (model) {
-          declarations.push(model);
+    declarations.push(...declarationsOfStatement(ts, node, checker, unresolvedBases));
+  });
+  // What an ambient module block declares is a declaration of this file, named as the file's own are
+  // and exported, since everything an ambient module declares is on its surface. A name the file
+  // already declares, or an earlier block declared, is the same declaration merged, and is kept once.
+  const declared = new Set(declarations.filter(Boolean).map((declaration) => declaration.name));
+  sourceFile.forEachChild((node) => {
+    for (const statement of ambientModuleStatements(ts, node)) {
+      for (const declaration of declarationsOfStatement(ts, statement, checker, unresolvedBases).filter(Boolean)) {
+        if (declared.has(declaration.name)) {
+          continue;
         }
+        declared.add(declaration.name);
+        const modifiers = declaration.modifiers || (declaration.modifiers = []);
+        for (const modifier of ["export", "public"]) {
+          if (!modifiers.includes(modifier)) {
+            modifiers.push(modifier);
+          }
+        }
+        declarations.push(declaration);
       }
     }
   });
-  return withoutShadowedAliases(withListedExports(ts, sourceFile, declarations.filter(Boolean)));
+  return withoutShadowedAliases(withListedExports(ts, sourceFile, mergeNamespaces(declarations.filter(Boolean))));
 }
 
 /**
@@ -3354,10 +3993,17 @@ async function handleGetFileModel(params) {
   } catch (err) {
     imports = [];
   }
+  let importedFiles = [];
+  try {
+    importedFiles = collectImportedFiles(ts, entryInfo.source, checker);
+  } catch (err) {
+    importedFiles = [];
+  }
   return {
     filePath: normalized,
     declarations,
     imports,
+    importedFiles,
     unresolvedBases
   };
 }
@@ -3445,6 +4091,42 @@ function collectImports(ts, source, checker) {
 }
 
 /**
+ * The repository source files a file's module specifiers resolve to, in source order and without
+ * repeats. Covers static imports, `import x = require(...)`, `export ... from`, and `import()` and
+ * `require()` calls with a literal argument, each resolved as `collectImports` resolves it. A
+ * specifier that resolves into `node_modules`, outside the repository, to a file that is not
+ * TypeScript, or not at all, adds nothing. Whether the target declares a type does not matter.
+ */
+function collectImportedFiles(ts, source, checker) {
+  const files = [];
+  const seen = new Set();
+  const record = (specifierNode) => {
+    if (!specifierNode || !ts.isStringLiteralLike(specifierNode) || !specifierNode.text) return;
+    const resolved = resolveImportedFile(specifierNode, specifierNode.text, source, checker);
+    if (resolved && isTypeScriptFile(resolved) && !seen.has(resolved)) {
+      seen.add(resolved);
+      files.push(resolved);
+    }
+  };
+  function visit(node) {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      record(node.moduleSpecifier);
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      record(node.moduleReference.expression);
+    } else if (ts.isCallExpression(node) && node.arguments.length === 1) {
+      const callee = node.expression;
+      const requireCall = isRequireFunction(callee)
+        || (ts.isPropertyAccessExpression(callee) && callee.name.text === "resolve"
+          && ts.isIdentifier(callee.expression) && callee.expression.text === "require");
+      if (callee.kind === ts.SyntaxKind.ImportKeyword || requireCall) record(node.arguments[0]);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return files;
+}
+
+/**
  * Modules a file loads from inside its code rather than in an import statement: `import("pkg")` and
  * `require("pkg")`, wherever they appear. Each binds the whole module.
  */
@@ -3454,7 +4136,7 @@ function collectLoadedModules(ts, source, checker, results) {
     if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteralLike(node.arguments[0])) {
       const callee = node.expression;
       const dynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
-      const requireCall = (ts.isIdentifier(callee) && callee.text === "require")
+      const requireCall = isRequireFunction(callee)
         || (ts.isPropertyAccessExpression(callee) && callee.name.text === "resolve"
           && ts.isIdentifier(callee.expression) && callee.expression.text === "require");
       if (dynamicImport || requireCall) {

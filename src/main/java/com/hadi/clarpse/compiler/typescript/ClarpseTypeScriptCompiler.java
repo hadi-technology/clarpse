@@ -7,6 +7,7 @@ import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.internal.DiskPaths;
 import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.Lang;
@@ -15,7 +16,6 @@ import com.hadi.clarpse.compiler.PreparedAnalysis;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptFileModel;
-import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.Package;
@@ -77,7 +77,9 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             final TypeScriptDaemon.InitResult initResult = daemon.initRepo(persistDir);
             addInvalidConfigFailures(initResult, compileFailures, persistDir);
             final ModellingBudget budget = new ModellingBudget();
-            modelFiles(daemon, persistDir, tsFiles, false,
+            final DiskPaths diskPaths = new DiskPaths(persistDir,
+                    new ArrayList<>(projectFiles.files(Lang.TYPESCRIPT)));
+            modelFiles(daemon, persistDir, diskPaths, tsFiles, false,
                     new ModelSink(srcModel, compileFailures, null), budget);
             CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(
                     OOPSourceModelConstants.ComponentType.CLASS,
@@ -114,12 +116,14 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
      * not modelled is therefore on the failure list. An interrupt of the analysing thread still
      * ends the compile with no result, as does a failure to start the daemon.
      *
+     * @param diskPaths Translation from the on-disk files the daemon resolved imports to into the
+     *                  project's file paths, over every TypeScript file of the project.
      * @param boundary Whether the files are level-one files of a one-level analysis, whose bodies
      *                 are not read.
      * @param sink     Where the models and the failures go.
      */
     private static void modelFiles(final TypeScriptDaemon daemon, final String persistDir,
-                                   final List<ProjectFile> files, final boolean boundary,
+                                   final DiskPaths diskPaths, final List<ProjectFile> files, final boolean boundary,
                                    final ModelSink sink, final ModellingBudget budget)
             throws CompileException {
         final Map<String, TypeScriptFileModel> fetched = new HashMap<>();
@@ -138,9 +142,49 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
             final Package pkg = TypeScriptModelAssembler.resolvePackage(persistDir, diskPath);
             final String moduleName = CompilerSupport.moduleNameForFile(diskPath);
-            TypeScriptModelAssembler.insertFileModel(pkg, moduleName, file.path(), persistDir, fileModel,
-                    sink.model(), sink.inRepositoryNames());
+            // A resolved file that is not a file of the project is left out rather than guessed.
+            fileModel.importedFiles = diskPaths.toProjectPaths(fileModel.importedFiles);
+            // The file is modelled apart and put into the model only once it is whole, so a failure
+            // while reading it leaves nothing of it behind.
+            final OOPSourceCodeModel fileComponents = new OOPSourceCodeModel();
+            Set<String> fileNames = null;
+            if (sink.inRepositoryNames() != null) {
+                fileNames = new HashSet<>();
+            }
+            final Set<String> collectedNames = fileNames;
+            if (!assembleIsolated(file, sink.failures(), () -> TypeScriptModelAssembler.insertFileModel(pkg,
+                    moduleName, file.path(), persistDir, fileModel, fileComponents, collectedNames))) {
+                continue;
+            }
+            fileComponents.components().forEach(sink.model()::insertComponent);
+            if (fileNames != null) {
+                sink.inRepositoryNames().addAll(fileNames);
+            }
             addUnresolvedBaseFailures(file, fileModel, sink.failures());
+        }
+    }
+
+    /**
+     * Runs the building of one file's model; a failure of it is recorded as that file's failure, so
+     * that one file's model that cannot be built does not take the other files down with it.
+     *
+     * @param file     The file.
+     * @param failures Where its failure is recorded.
+     * @param build    Builds the file's model.
+     * @return Whether the model was built.
+     */
+    static boolean assembleIsolated(final ProjectFile file, final Set<CompileFailure> failures,
+                                    final Runnable build) {
+        try {
+            build.run();
+            return true;
+        } catch (final RuntimeException | StackOverflowError e) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw e;
+            }
+            LOGGER.warn("TypeScript model of file {} could not be built.", file.path(), e);
+            failures.add(new CompileFailure(file, String.valueOf(e.getMessage()), FailureCode.PARSE_FAILED));
+            return false;
         }
     }
 
@@ -314,8 +358,8 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 daemon.planOneLevel(diskPaths.toDisk(analysed()), diskPaths.toDisk(selection.modelled()));
                 final ModellingBudget budget = new ModellingBudget();
                 final ModelSink sink = new ModelSink(srcModel, compileFailures, inRepositoryNames);
-                modelFiles(daemon, persistDir, analysed(), false, sink, budget);
-                modelFiles(daemon, persistDir, selection.modelled(), true, sink, budget);
+                modelFiles(daemon, persistDir, diskPaths, analysed(), false, sink, budget);
+                modelFiles(daemon, persistDir, diskPaths, selection.modelled(), true, sink, budget);
             } catch (final TypeScriptDaemonException e) {
                 for (final ProjectFile file : analysed()) {
                     compileFailures.add(new CompileFailure(file, e.getMessage(), daemonFailureCode(e)));
@@ -327,8 +371,7 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                     OOPSourceModelConstants.ComponentType.CLASS,
                     OOPSourceModelConstants.ComponentType.ENUM));
             CompilerSupport.classifyReferences(srcModel,
-                    reference -> reference.resolutionKind() == ResolutionKind.UNRESOLVED
-                            || inRepositoryNames.contains(reference.invokedComponent()));
+                    reference -> inRepositoryNames.contains(reference.invokedComponent()));
             CompilerSupport.markBoundary(srcModel, selection.modelledPaths());
             return new CompileResult(srcModel, compileFailures).withLevelOne(
                     CompilerSupport.levelOneReport(srcModel, selection, List.of()));
@@ -345,52 +388,6 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             return TypeScriptDaemonException.CODE_DAEMON_ERROR;
         }
         return e.code();
-    }
-
-    /**
-     * Translates between project file paths and the canonical on-disk paths the daemon reports,
-     * which may differ from a naive join where the temporary directory is reached through a
-     * symbolic link.
-     */
-    private static final class DiskPaths {
-
-        private final String persistDir;
-        private final Map<String, String> projectPathByDisk = new HashMap<>();
-
-        DiskPaths(final String persistDir, final List<ProjectFile> files) {
-            this.persistDir = persistDir;
-            for (final ProjectFile file : files) {
-                projectPathByDisk.put(canonical(CompilerSupport.resolveFileOnDisk(persistDir, file.path())),
-                        file.path());
-            }
-        }
-
-        List<String> toDisk(final List<ProjectFile> files) {
-            final List<String> disk = new ArrayList<>();
-            for (final ProjectFile file : files) {
-                disk.add(CompilerSupport.resolveFileOnDisk(persistDir, file.path()));
-            }
-            return disk;
-        }
-
-        List<String> toProjectPaths(final List<String> diskPaths) {
-            final List<String> paths = new ArrayList<>();
-            for (final String diskPath : diskPaths) {
-                final String path = projectPathByDisk.get(canonical(diskPath));
-                if (path != null) {
-                    paths.add(path);
-                }
-            }
-            return paths;
-        }
-
-        private static String canonical(final String path) {
-            try {
-                return new java.io.File(path).getCanonicalPath();
-            } catch (final java.io.IOException e) {
-                return Paths.get(path).toAbsolutePath().normalize().toString();
-            }
-        }
     }
 
     /**

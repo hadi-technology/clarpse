@@ -9,6 +9,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class CSharpConstAndExtensionMembersTest {
@@ -59,14 +60,15 @@ public class CSharpConstAndExtensionMembersTest {
     }
 
     /**
-     * Callers write `widget.Reset()`, so the extended type has to be able to find the method. It
-     * stays on the static class that declares it as well.
+     * The extension method stays on the static class that declares it. The extended type does not
+     * reference it: the class depends on the type through the `this` parameter, not the reverse.
      */
     @Test
-    public void anExtensionMethodIsReachableFromTheTypeItExtends() {
+    public void anExtensionMethodStaysOnItsClassAndTheExtendedTypeDoesNotReferenceIt() {
         assertTrue(model.containsComponent("Demo.WidgetExtensions.Reset(Widget)"));
-        assertTrue(invokes(model.copyOfComponent("Demo.Widget").orElseThrow(),
+        assertFalse(invokes(model.copyOfComponent("Demo.Widget").orElseThrow(),
                 "Demo.WidgetExtensions.Reset(Widget)"));
+        assertTrue(invokes(model.copyOfComponent("Demo.WidgetExtensions").orElseThrow(), "Demo.Widget"));
     }
 
     /** An extension on a framework type resolves to nothing this model holds, and is left alone. */

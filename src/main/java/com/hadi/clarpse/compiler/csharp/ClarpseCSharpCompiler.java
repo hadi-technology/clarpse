@@ -41,6 +41,17 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
 
     private static final Logger LOGGER = LogManager.getLogger(ClarpseCSharpCompiler.class);
 
+    private final CSharpParseTask.FileParse fileParse;
+
+    /** A compiler that reads each file with the C# file parser. */
+    public ClarpseCSharpCompiler() {
+        this(CSharpFileParser::parseFile);
+    }
+
+    ClarpseCSharpCompiler(final CSharpParseTask.FileParse fileParse) {
+        this.fileParse = fileParse;
+    }
+
     @Override
     public CompileResult compile(final ProjectFiles projectFiles,
                                  final Collection<String> analyzedFilePaths) throws CompileException {
@@ -50,12 +61,14 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
         }
         final List<CSharpModel.ParseOutcome> parseOutcomes = parseFiles(csharpFiles,
                 CSharpImplicitUsings.forFiles(projectFiles.configFiles(), csharpFiles));
+        final CSharpDeclarationIndex importIndex = new CSharpDeclarationIndex(projectFiles.files(Lang.CSHARP));
         final List<CSharpModel.CSharpFileModel> successfulFiles = new ArrayList<>();
         final Set<CompileFailure> failures = new HashSet<>();
         for (final CSharpModel.ParseOutcome outcome : parseOutcomes) {
             if (outcome.failure() != null) {
                 failures.add(outcome.failure());
             } else if (outcome.fileModel() != null) {
+                importIndex.resolveImportedFiles(outcome.fileModel());
                 successfulFiles.add(outcome.fileModel());
             }
         }
@@ -152,6 +165,7 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
                 if (outcome.failure() != null) {
                     failures.put(outcome.failure().file().path(), outcome.failure());
                 } else if (outcome.fileModel() != null) {
+                    index.resolveImportedFiles(outcome.fileModel());
                     parsed.put(outcome.fileModel().sourceFile.path(), outcome.fileModel());
                 }
             }
@@ -310,7 +324,7 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
                 }
                 final ProjectFile file = files.get(i);
                 futures.add(executor.submit(new CSharpParseTask(file, i,
-                        implicitUsings.getOrDefault(file.path(), List.of()))));
+                        implicitUsings.getOrDefault(file.path(), List.of()), fileParse)));
             }
             final List<CSharpModel.ParseOutcome> outcomes = new ArrayList<>();
             for (final Future<CSharpModel.ParseOutcome> future : futures) {

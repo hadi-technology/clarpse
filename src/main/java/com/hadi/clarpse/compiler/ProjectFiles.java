@@ -75,6 +75,8 @@ public class ProjectFiles implements AutoCloseable {
     private int size = 0;
     private String projectDir;
     private boolean tempProjectDir = false;
+    /** The absolute directory this instance was read from, or null when it was not read from one. */
+    private String loadedDirectory;
     private final Map<String, String> configFiles = new HashMap<>();
     private final Set<String> unreadSourcePaths = new LinkedHashSet<>();
     private boolean unreadSourcePathsComplete = true;
@@ -155,6 +157,7 @@ public class ProjectFiles implements AutoCloseable {
     public ProjectFiles(final ProjectFiles other) {
         this.projectDir = other.projectDir;
         this.tempProjectDir = false; // Copy doesn't own the temp dir
+        this.loadedDirectory = other.loadedDirectory;
         this.size = other.size;
         // Deep copy langToFilesMap with cloned ProjectFile instances
         other.langToFilesMap.forEach((lang, files) -> {
@@ -221,6 +224,7 @@ public class ProjectFiles implements AutoCloseable {
     private void initFilesFromDir(File projectFiles) throws IOException {
         LOGGER.info("Reading source files from dir: " + projectFiles.getPath());
         this.projectDir = projectFiles.getAbsolutePath();
+        this.loadedDirectory = this.projectDir;
         this.tempProjectDir = false;
         Iterator<File> it = FileUtils.iterateFiles(projectFiles, null, true);
         while (it.hasNext()) {
@@ -563,6 +567,28 @@ public class ProjectFiles implements AutoCloseable {
         final List<ProjectFile> result = new ArrayList<>();
         this.configFiles.forEach((path, content) -> result.add(new ProjectFile(path, content)));
         return result;
+    }
+
+    /**
+     * A file's path relative to the project root. Files read from a directory are held under their
+     * absolute path on disk, so the path inside the project is what follows the directory; any other
+     * path is already relative to the project and is returned unchanged. Internal: it lets a compiler
+     * read a path's position in the tree without the paths this class hands out changing.
+     */
+    String pathInProject(final String path) {
+        if (this.loadedDirectory == null || path == null) {
+            return path;
+        }
+        final String normalized = path.replace('\\', '/');
+        final String root = this.loadedDirectory.replace('\\', '/');
+        String prefix = root;
+        if (!prefix.endsWith("/")) {
+            prefix = prefix + "/";
+        }
+        if (normalized.startsWith(prefix)) {
+            return "/" + normalized.substring(prefix.length());
+        }
+        return path;
     }
 
     public String projectDir() {

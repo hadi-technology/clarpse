@@ -82,17 +82,47 @@ final class CSharpModel {
         final boolean aliasImport;
         final boolean globalImport;
         final boolean staticImport;
+        /** True for a namespace the project imports into the file without a directive. */
+        final boolean implicitImport;
+        /** The namespace the directive is written in, empty at the top of the file. */
+        final String scopeNamespace;
 
         CSharpUsingModel(final String alias,
                          final String target,
                          final boolean aliasImport,
                          final boolean globalImport,
                          final boolean staticImport) {
+            this(alias, target, aliasImport, globalImport, staticImport, false, "");
+        }
+
+        private CSharpUsingModel(final String alias,
+                                 final String target,
+                                 final boolean aliasImport,
+                                 final boolean globalImport,
+                                 final boolean staticImport,
+                                 final boolean implicitImport,
+                                 final String scopeNamespace) {
             this.alias = alias;
             this.target = target;
             this.aliasImport = aliasImport;
             this.globalImport = globalImport;
             this.staticImport = staticImport;
+            this.implicitImport = implicitImport;
+            this.scopeNamespace = scopeNamespace;
+        }
+
+        /** The using a project's implicit usings add for a namespace, which no directive in the file writes. */
+        static CSharpUsingModel implicitNamespace(final String namespace) {
+            return new CSharpUsingModel(null, namespace, false, false, false, true, "");
+        }
+
+        /** This directive, written inside the given namespace. */
+        CSharpUsingModel inNamespace(final String namespace) {
+            if (namespace == null || namespace.isEmpty()) {
+                return this;
+            }
+            return new CSharpUsingModel(alias, target, aliasImport, globalImport, staticImport,
+                    implicitImport, namespace);
         }
     }
 
@@ -129,6 +159,8 @@ final class CSharpModel {
         List<CSharpTypeModel> nestedTypes = new ArrayList<>();
         Set<String> imports = new LinkedHashSet<>();
         Map<String, String> usingAliases = new LinkedHashMap<>();
+        /** The repository files the using directives of the file declaring this type resolve to. */
+        Set<String> importedFiles = new LinkedHashSet<>();
 
         /** A copy with its own collections and its own copies of its nested types. */
         CSharpTypeModel assemblyCopy() {
@@ -161,6 +193,7 @@ final class CSharpModel {
             }
             copy.imports = new LinkedHashSet<>(imports);
             copy.usingAliases = new LinkedHashMap<>(usingAliases);
+            copy.importedFiles = new LinkedHashSet<>(importedFiles);
             return copy;
         }
     }
@@ -198,15 +231,57 @@ final class CSharpModel {
          * denotes a type, or a type followed by members.
          */
         List<String> staticReceivers = new ArrayList<>();
+        /** For each entry of {@code staticReceivers}, the name written after the receiver's final dot, or empty. */
+        List<String> staticReceiverMembers = new ArrayList<>();
+        /** The operands of {@code typeof} in the member's body or initializer; each is a type as written. */
+        List<String> typeofOperands = new ArrayList<>();
+        /** Types named where only a type can stand: {@code o as T}, {@code o is T t}, {@code default(T)}. */
+        List<String> typeTestOperands = new ArrayList<>();
+        /** Names that are a type only if they resolve to one: {@code o is T}, {@code nameof(T)}, {@code (T)(x)}. */
+        List<String> typeCandidates = new ArrayList<>();
+        /** The types the {@code where} clauses of a generic method constrain its type parameters to. */
+        List<String> constraintTypes = new ArrayList<>();
+        /** The parenthesised names of casts {@code (T)x}, which are a type only if they resolve to one. */
+        List<String> castTypes = new ArrayList<>();
         List<String> memberUsages = new ArrayList<>();
+        /**
+         * The calls of the form {@code receiver.Name(...)} in the member's body or initializer, each of
+         * which may be a call of an extension method.
+         */
+        Set<ExtensionCall> extensionCalls = new LinkedHashSet<>();
+        /**
+         * The variables that lambdas and anonymous methods in the member declare, by name, with the
+         * type each is written with; a null type is an implicitly typed parameter.
+         */
+        Map<String, List<String>> lambdaVariables = new LinkedHashMap<>();
         Set<String> imports = new LinkedHashSet<>();
         /** The using aliases of the file that declares this member, which a partial type's other parts lack. */
         Map<String, String> usingAliases = new LinkedHashMap<>();
         boolean inferredType;
+        /** True when an inferred local is initialised by exactly {@code new T(...)}, and so has type T. */
+        boolean plainNewInitializer;
+        /**
+         * For a {@code var} local initialised from a member access -- {@code a.Member},
+         * {@code a?.Method()}, {@code a.B.C} -- the accessed names in order, a name that is called
+         * ending in {@code ()}. The first is the receiver; empty for any other local.
+         */
+        List<String> initializerAccess = new ArrayList<>();
+    }
+
+    /**
+     * A call {@code receiver.Name(...)}. The receiver is the dotted chain of names written before the
+     * call, or null when what precedes it is not such a chain (a call result, an indexer, a literal).
+     * The argument count is -1 when it could not be read.
+     */
+    record ExtensionCall(String receiver, String name, int argumentCount) {
     }
 
     static final class CSharpParameterModel {
         String name;
+        /** True when the parameter has a default value. */
+        boolean optional;
+        /** True for a {@code params} array. */
+        boolean paramsArray;
         String declaredType;
         /** True for the {@code this} parameter of an extension method, which names the type it extends. */
         boolean extensionReceiver;

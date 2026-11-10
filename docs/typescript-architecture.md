@@ -80,8 +80,8 @@ one again over every analysed file; since no program outlives its session, nothi
 4) Analysed files are modelled in full; level-one files are modelled without reading function
    bodies.
 
-In this mode, a type the program cannot see is flagged `unresolved` rather than reported as
-external: `any`, alone or nested (`any[]`), or a symbol with no declaration. `collectImports`
+In this mode, a type the program cannot see is flagged `lost` rather than reported as
+external, and the model reports it as not loaded: `any`, alone or nested (`any[]`), or a symbol with no declaration. `collectImports`
 resolves a module the program does not hold by module resolution alone, so a boundary file's
 imports still name the file they refer to.
 
@@ -109,6 +109,23 @@ twice gives the same model:
 - Type text is written with paths relative to the repository root. The checker prints a type it
   cannot name from where it is printed as `import("<path>")`; the path is written as
   `node_modules/extlib/index`, not as an absolute path.
+
+A declaration inside a `declare module "specifier" { ... }` block (an ambient module, or an
+augmentation of the module the specifier names) is a declaration of the file that holds the block:
+it is named like the file's own declarations (`src.types.GlobalProps`), exported, and kept once when
+the file, or an earlier block, already declares the name. Namespaces and `declare global` are not
+read.
+
+A call on an object whose declared type is imported from a package the program cannot read
+(`editor.getBounds()` with `editor: Editor` from `extlib`, not installed) is the reference
+`extlib:Editor.getBounds`, as it is for a package whose declarations can be read. A class extending a
+global (`Error`, `Map`, `EventTarget`, `Array<string>`) records that name as its base. The name is a
+library global (`ResolutionKind.EXACT`) only when the checker resolves it to a declaration in a
+default library or `@types` file. In a program built without a library, or for a name nothing
+declares, the name is kept as written with `ResolutionKind.UNRESOLVED`; no list of names decides it.
+
+`require("x")` and the function `createRequire(...)` returns (`const load = createRequire(import.meta.url)`)
+load modules alike: both are imports of the file.
 
 Type text the checker renders puts the members of every union in an order of their own (by their
 text, `null` and `undefined` last). The checker orders members by when it created their types, so
@@ -229,4 +246,4 @@ Java type reports no visibility at all.
 # Non-Goals
 - No heuristic or string-based fallback resolution; symbol/type resolution is compiler-backed only.
 - No fallback parsing.
-- No modification to Striffs relation logic.
+- No modification to the relation logic of consumers.

@@ -12,6 +12,7 @@ public class ParserContext {
     private final CombinedTypeSolver typeSolver;
     private final JavaParser parser;
     private Predicate<String> otherLanguageTypes = name -> false;
+    private JavaImportResolver importResolver;
 
     public ParserContext(final String persistDir) {
         this(persistDir, java.util.List.of());
@@ -64,6 +65,26 @@ public class ParserContext {
         } else {
             this.otherLanguageTypes = types;
         }
+        return this;
+    }
+
+    /**
+     * Resolves an import directive to the repository files it names.
+     *
+     * @return The resolver, or null when the files imported are not recorded.
+     */
+    public JavaImportResolver importResolver() {
+        return importResolver;
+    }
+
+    /**
+     * This context, recording the repository files each parsed file's imports resolve to.
+     *
+     * @param resolver The resolver over the project's files; null to record none.
+     * @return This context.
+     */
+    public ParserContext withImportResolver(final JavaImportResolver resolver) {
+        this.importResolver = resolver;
         return this;
     }
 }

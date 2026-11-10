@@ -19,6 +19,7 @@ import com.hadi.clarpse.reference.AnnotationArgument;
 import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
@@ -31,6 +32,7 @@ import com.hadi.clarpse.sourcemodel.Package;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -60,11 +62,14 @@ final class KotlinModelAssembler {
     private static final Set<String> VISIBILITIES = Set.of("public", "internal", "protected", "private");
 
     private final KotlinNameResolver resolver;
+    private final KotlinTypeMembers typeMembers;
     private final OOPSourceCodeModel model = new OOPSourceCodeModel();
     private final Stack<Component> stack = new Stack<>();
+    private final Map<String, Set<String>> importedFilesByPath = new HashMap<>();
 
     private KotlinModelAssembler(final KotlinDeclarationIndex index) {
         this.resolver = new KotlinNameResolver(index);
+        this.typeMembers = new KotlinTypeMembers(resolver);
     }
 
     /**
@@ -116,6 +121,7 @@ final class KotlinModelAssembler {
         component.setSourceFilePath(file.path());
         component.setComment(nullToEmpty(type.comment));
         component.setImports(importStatements(file));
+        component.setImportedFiles(importedFiles(file));
         component.setAccessModifiers(withVisibility(type.modifiers));
         component.setCodeFragment(type.codeFragment);
         component.setCodeHash(nonZeroHash(type.implementationHash, component.componentName()));
@@ -126,13 +132,14 @@ final class KotlinModelAssembler {
         final Set<String> typeParameters = new LinkedHashSet<>(outerTypeParameters);
         typeParameters.addAll(type.typeParameters);
         final Scope scope = new Scope(file, List.copyOf(enclosing), typeParameters);
-        final Set<String> memberNames = enclosingMemberNames(type);
-        boolean inheritsMembers = !type.superTypes.isEmpty();
+        final KotlinTypeMembers.MemberSet declared = typeMembers.of(type, scope);
+        final Set<String> memberNames = new HashSet<>(declared.names());
+        boolean ancestryUnknown = !declared.complete();
         if (outer != null) {
             memberNames.addAll(outer.memberNames);
-            inheritsMembers |= outer.inheritsMembers;
+            ancestryUnknown |= outer.ancestryUnknown;
         }
-        final MemberContext context = new MemberContext(scope, memberNames, inheritsMembers);
+        final MemberContext context = new MemberContext(scope, memberNames, ancestryUnknown);
 
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
@@ -140,7 +147,9 @@ final class KotlinModelAssembler {
         for (final KotlinSuperType superType : type.superTypes) {
             addSuperTypeReference(component, type, superType, scope);
         }
-        addTypeReferences(component, type.ownUsages, scope, memberNames);
+        final Set<String> ownNames = new HashSet<>(memberNames);
+        ownNames.addAll(type.initializerDeclarations);
+        addTypeReferences(component, type.ownUsages, scope, new Shadow(ownNames, ancestryUnknown));
 
         final List<Object> declarations = new ArrayList<>(type.members);
         declarations.addAll(type.nestedTypes);
@@ -173,6 +182,7 @@ final class KotlinModelAssembler {
         component.setSourceFilePath(file.path());
         component.setComment("");
         component.setImports(importStatements(file));
+        component.setImportedFiles(importedFiles(file));
         component.setAccessModifiers(List.of("public", "final"));
         component.setCodeFragment("class " + simpleName);
         int hash = 0;
@@ -230,18 +240,21 @@ final class KotlinModelAssembler {
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
         addAnnotationReferences(component, member.annotations, scope);
-        final Set<String> closer = closerNames(member, context);
+        final Shadow closer = new Shadow(closerNames(member, context), context.ancestryUnknown);
+        final KotlinReceiverTyping typing = new KotlinReceiverTyping(member, scope, closer, context.memberNames,
+                resolver, typeMembers);
         if (componentType.isMethodComponent()) {
             for (final KotlinParameterModel parameter : member.parameters) {
                 addParameter(file, parameter, member, component, scope, closer);
             }
             for (final KotlinMemberModel local : member.locals) {
-                addLocal(file, local, component, scope, closer);
+                addLocal(file, local, component, scope, closer, typing);
             }
             component.setCyclo(member.cyclo);
         }
         addTypeReferences(component, member.typeUsages, scope, closer);
         addFileClassReferences(component, member, context, scope);
+        addExtensionReferences(component, member, typing);
         model.insertComponent(component);
         stack.pop();
         ParseUtil.copyRefsToParents(component, stack);
@@ -249,7 +262,7 @@ final class KotlinModelAssembler {
 
     private void addParameter(final KotlinFileModel file, final KotlinParameterModel parameter,
                               final KotlinMemberModel member, final Component owner, final Scope scope,
-                              final Set<String> closer) {
+                              final Shadow closer) {
         final Component component = new Component();
         component.setPkg(owner.pkg());
         component.setModule(file.moduleName);
@@ -274,7 +287,7 @@ final class KotlinModelAssembler {
     }
 
     private void addLocal(final KotlinFileModel file, final KotlinMemberModel local, final Component owner,
-                          final Scope scope, final Set<String> closer) {
+                          final Scope scope, final Shadow closer, final KotlinReceiverTyping typing) {
         if (local.name == null || local.name.isEmpty()) {
             return;
         }
@@ -290,9 +303,54 @@ final class KotlinModelAssembler {
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
         addTypeReferences(component, local.typeUsages, scope, closer);
+        addInferredType(component, local, typing);
         model.insertComponent(component);
         stack.pop();
         ParseUtil.copyRefsToParents(component, stack);
+    }
+
+    /**
+     * The type a local declared without a type depends on: the type of its initializer, when a
+     * declaration the repository holds writes it. It is recorded as a written type would be, a library
+     * or JDK type included.
+     */
+    private void addInferredType(final Component component, final KotlinMemberModel local,
+                                 final KotlinReceiverTyping typing) {
+        if (local.declaredType != null || local.initializer == null) {
+            return;
+        }
+        final String inferred = typing.typeOf(local.initializer);
+        if (inferred == null) {
+            return;
+        }
+        final SimpleTypeReference reference = new SimpleTypeReference(inferred);
+        reference.setResolutionKind(ResolutionKind.EXACT);
+        ParseUtil.insertCmpRef(component, reference, stack);
+    }
+
+    /**
+     * References to the file classes of the extension functions a member calls on a typed receiver,
+     * and the members it calls on receivers of known type.
+     */
+    private void addExtensionReferences(final Component component, final KotlinMemberModel member,
+                                        final KotlinReceiverTyping typing) {
+        for (final KotlinModel.ReceiverCall call : member.receiverCalls) {
+            final String fileClass = typing.extensionFileClass(call);
+            if (fileClass == null) {
+                final MemberReference used = typing.memberReference(call);
+                if (used != null) {
+                    ParseUtil.insertCmpRef(component, used, stack);
+                }
+                continue;
+            }
+            final SimpleTypeReference reference = new SimpleTypeReference(fileClass);
+            reference.setResolutionKind(ResolutionKind.EXACT);
+            ParseUtil.insertCmpRef(component, reference, stack);
+            final MemberReference extension = new MemberReference(fileClass, call.name(),
+                    com.hadi.clarpse.reference.MemberKind.CALL);
+            extension.setResolutionKind(ResolutionKind.EXACT);
+            ParseUtil.insertCmpRef(component, extension, stack);
+        }
     }
 
     /** The fields a primary constructor declares through its {@code val} and {@code var} parameters. */
@@ -436,7 +494,7 @@ final class KotlinModelAssembler {
     }
 
     private void addTypeReferences(final Component component, final Collection<TypeUsage> usages, final Scope scope) {
-        addTypeReferences(component, usages, scope, Set.of());
+        addTypeReferences(component, usages, scope, new Shadow(Set.of(), false));
     }
 
     /**
@@ -446,19 +504,46 @@ final class KotlinModelAssembler {
      * it names.
      */
     private void addTypeReferences(final Component component, final Collection<TypeUsage> usages, final Scope scope,
-                                   final Set<String> closer) {
+                                   final Shadow closer) {
         final Set<String> seen = new HashSet<>();
         for (final TypeUsage usage : usages) {
-            if (usage.value() && (closer.contains(usage.name())
+            if (carriedByAValue(usage, scope, closer)) {
+                continue;
+            }
+            if (usage.call() && KotlinReceiverTyping.callDeclaredCloser(resolver, usage.name(), scope, closer)) {
+                continue;
+            }
+            if (usage.value() && (closer.names().contains(usage.name())
                     || !KotlinDeclarationIndex.readsAsTypeName(usage.name())
                     || resolver.index().fileClassOf(KotlinDeclarationIndex.qualify(
                             scope.file().packageName, usage.name())) != null)) {
                 continue;
             }
-            if (seen.add(usage.name() + "|" + usage.expression() + "|" + usage.value())) {
+            if (seen.add(usage.name() + "|" + usage.expression() + "|" + usage.value() + "|" + usage.call())) {
                 addTypeReference(component, usage, scope);
             }
         }
+    }
+
+    /**
+     * Whether a dotted chain in an expression starts with a value rather than a package: a
+     * parameter, local or member, a top-level property in scope, or, when a supertype the parse
+     * cannot see may declare it, any name that is neither a type in scope nor the root of a package.
+     */
+    private boolean carriedByAValue(final TypeUsage usage, final Scope scope, final Shadow closer) {
+        final int dot = usage.name().indexOf('.');
+        if (!usage.expression() || usage.value() || dot < 0) {
+            return false;
+        }
+        final String head = usage.name().substring(0, dot);
+        if (KotlinDeclarationIndex.readsAsTypeName(head)) {
+            return false;
+        }
+        if (closer.names().contains(head) || resolver.topLevelValueMayBe(head, scope)) {
+            return true;
+        }
+        return closer.ancestryUnknown() && !resolver.namesTypeInScope(head, scope)
+                && !KotlinNameResolver.isKnownPackageRoot(head, scope.file());
     }
 
     private void addTypeReference(final Component component, final TypeUsage usage, final Scope scope) {
@@ -483,6 +568,7 @@ final class KotlinModelAssembler {
         for (final KotlinMemberModel local : member.locals) {
             closer.add(local.name);
         }
+        closer.addAll(member.declarations.keySet());
         return closer;
     }
 
@@ -493,10 +579,11 @@ final class KotlinModelAssembler {
             return;
         }
         final Set<String> closer = closerNames(member, context);
-        final boolean implicitReceiver = member.receiverType != null || context.inheritsMembers;
+        final boolean implicitReceiver = member.receiverType != null;
         for (final String called : member.calledNames) {
             final String fileClass = resolver.fileClassOfCall(called, scope,
-                    implicitReceiver || closer.contains(called) || member.calledInLambdas.contains(called));
+                    implicitReceiver || closer.contains(called) || member.calledInLambdas.contains(called),
+                    implicitReceiver || closer.contains(called));
             if (fileClass == null) {
                 continue;
             }
@@ -504,26 +591,6 @@ final class KotlinModelAssembler {
             reference.setResolutionKind(ResolutionKind.EXACT);
             ParseUtil.insertCmpRef(component, reference, stack);
         }
-    }
-
-    /** The names a type, and its companion object, declare members by. */
-    private static Set<String> enclosingMemberNames(final KotlinTypeModel type) {
-        final Set<String> names = new HashSet<>();
-        final List<KotlinMemberModel> members = new ArrayList<>(type.members);
-        for (final KotlinTypeModel nested : type.nestedTypes) {
-            if (nested.companion) {
-                members.addAll(nested.members);
-            }
-        }
-        for (final KotlinMemberModel member : members) {
-            names.add(member.name);
-            for (final KotlinParameterModel parameter : member.parameters) {
-                if (parameter.property) {
-                    names.add(parameter.name);
-                }
-            }
-        }
-        return names;
     }
 
     private static String memberIdentifier(final KotlinMemberModel member) {
@@ -555,6 +622,21 @@ final class KotlinModelAssembler {
         }
         result.addAll(modifiers);
         return result;
+    }
+
+    /**
+     * The repository files the file's import directives resolve to, in source order. The file's own
+     * path is left out: a file does not import itself.
+     */
+    private Set<String> importedFiles(final KotlinFileModel file) {
+        return importedFilesByPath.computeIfAbsent(file.path(), path -> {
+            final Set<String> files = new LinkedHashSet<>();
+            for (final KotlinImport kotlinImport : file.imports) {
+                files.addAll(resolver.index().filesImportedBy(kotlinImport));
+            }
+            files.remove(path);
+            return files;
+        });
     }
 
     private static Set<String> importStatements(final KotlinFileModel file) {
@@ -624,16 +706,23 @@ final class KotlinModelAssembler {
         return text;
     }
 
+    /**
+     * What may stand closer in scope than a type: the names declared there, and whether a supertype
+     * the parse cannot see may declare more.
+     */
+    record Shadow(Set<String> names, boolean ancestryUnknown) {
+    }
+
     /** What a member's calls are resolved in: its scope, and what in closer scope may shadow a call. */
     private static final class MemberContext {
         private final Scope scope;
         private final Set<String> memberNames;
-        private final boolean inheritsMembers;
+        private final boolean ancestryUnknown;
 
-        MemberContext(final Scope scope, final Set<String> memberNames, final boolean inheritsMembers) {
+        MemberContext(final Scope scope, final Set<String> memberNames, final boolean ancestryUnknown) {
             this.scope = scope;
             this.memberNames = memberNames;
-            this.inheritsMembers = inheritsMembers;
+            this.ancestryUnknown = ancestryUnknown;
         }
     }
 }
