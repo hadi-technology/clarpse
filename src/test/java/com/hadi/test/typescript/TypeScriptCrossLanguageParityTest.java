@@ -157,4 +157,46 @@ public class TypeScriptCrossLanguageParityTest {
                 "/src/use.ts", "import { Cfg } from './types';\nexport class WithDefault<T = Cfg> { }\n");
         assertTrue(targets.toString(), targets.contains("src.types.Cfg"));
     }
+
+    @Test
+    public void typeofIsReadInEveryTypePosition() throws Exception {
+        final String use = "import { config, factory } from './types';\n"
+                + "export function param(p: ReturnType<typeof factory>): number { return 1; }\n"
+                + "export class Holder {\n"
+                + "  x: typeof config = config;\n"
+                + "  get(): typeof config { return config; }\n"
+                + "}\n"
+                + "export function ret(): ReturnType<typeof factory> { return 1; }\n"
+                + "export function union(u: string | typeof config): number { return 1; }\n"
+                + "export function inter(i: { a: number } & typeof config): number { return 1; }\n"
+                + "export function local(): number { const l: typeof config = config; return 1; }\n";
+        for (final String owner : new String[] {"param", "ret", "union", "inter"}) {
+            final Set<String> targets = targets("src.use." + owner, "/src/use.ts", use);
+            assertTrue(owner + " " + targets, targets.stream().anyMatch(
+                    t -> t.equals("src.types.factory") || t.equals("src.types.config")));
+            assertFalse(owner + " " + targets, targets.stream().anyMatch(t -> t.contains("typeof")));
+        }
+        assertTrue(targets("src.use.param", "/src/use.ts", use).contains("src.types.factory"));
+        assertTrue(targets("src.use.ret", "/src/use.ts", use).contains("src.types.factory"));
+        assertTrue(targets("src.use.union", "/src/use.ts", use).contains("src.types.config"));
+        assertTrue(targets("src.use.inter", "/src/use.ts", use).contains("src.types.config"));
+        assertTrue(targets("src.use.Holder.x", "/src/use.ts", use).contains("src.types.config"));
+        assertTrue(targets("src.use.Holder.get()", "/src/use.ts", use).contains("src.types.config"));
+        assertTrue(targets("src.use.local", "/src/use.ts", use).contains("src.types.config"));
+    }
+
+    @Test
+    public void aQualifiedTypeofReferencesTheDeclarationItResolvesTo() throws Exception {
+        final String use = "import { cfg } from './objects';\n"
+                + "import * as ns from './objects';\n"
+                + "export function viaObject(p: typeof cfg.inner): number { return 1; }\n"
+                + "export function viaNamespace(p: typeof ns.other): number { return 1; }\n";
+        final String objects = "export const cfg = { inner: 1 };\nexport const other = { o: 1 };\n";
+        final Set<String> viaObject = targets("src.use.viaObject",
+                "/src/objects.ts", objects, "/src/use.ts", use);
+        assertTrue(viaObject.toString(), viaObject.contains("src.objects.cfg"));
+        final Set<String> viaNamespace = targets("src.use.viaNamespace",
+                "/src/objects.ts", objects, "/src/use.ts", use);
+        assertTrue(viaNamespace.toString(), viaNamespace.contains("src.objects.other"));
+    }
 }

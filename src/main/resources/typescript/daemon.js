@@ -3236,6 +3236,38 @@ function writtenNameReference(node, checker) {
 }
 
 /**
+ * The reference a `typeof` type query makes: the declaration of the value it names, or null where
+ * it names none this repository models. A qualified name (`typeof cfg.inner`, `typeof ns.x`)
+ * resolves to the declaration of the full name when that is a module member; a member of an object
+ * (`inner`) is not a declaration of its own, so the query depends on the value it is read from.
+ */
+function typeQueryReference(node, checker) {
+  const ts = state.ts;
+  const name = node.exprName;
+  if (ts.isIdentifier(name)) {
+    return buildValueReference(name, checker, null);
+  }
+  let symbol = null;
+  try {
+    symbol = checker.getSymbolAtLocation(name.right);
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
+      symbol = checker.getAliasedSymbol(symbol);
+    }
+  } catch (err) {
+    symbol = null;
+  }
+  const declaration = symbol && symbol.declarations ? symbol.declarations.find(isModelledValueDeclaration) : null;
+  if (declaration) {
+    const fileName = declaration.getSourceFile().fileName;
+    const declared = declaration.name.getText();
+    if (fileName && isInternalFile(fileName) && !isInternalSymbolName(declared)) {
+      return { kind: "type", external: false, target: { filePath: path.resolve(fileName), symbolName: declared } };
+    }
+  }
+  return buildValueReference(leftmostIdentifier(name), checker, null);
+}
+
+/**
  * The declarations of the repository a type is written with: `Tracked` in `f(): Tracked`, however
  * deep in a union, an array, a type argument, or the members of an object type. The type an alias
  * stands for is what the checker reports, and for a union or an intersection that is its members,
@@ -3252,6 +3284,12 @@ function writtenAliasReferences(typeNode, checker) {
       const named = writtenNameReference(child, checker);
       if (named) {
         references.push(named);
+      }
+    }
+    if (state.ts.isTypeQueryNode(child)) {
+      const value = typeQueryReference(child, checker);
+      if (value) {
+        references.push(value);
       }
     }
     state.ts.forEachChild(child, visit);
@@ -3320,9 +3358,8 @@ function typeParameterReferences(node, checker) {
 function buildTypeAliasModel(node, checker) {
   const references = [];
   function visit(child) {
-    if (state.ts.isTypeQueryNode(child) && state.ts.isIdentifier(child.exprName)) {
-      // `typeof config`: the value's declaration is what the alias is made of.
-      const value = buildValueReference(child.exprName, checker, null);
+    if (state.ts.isTypeQueryNode(child)) {
+      const value = typeQueryReference(child, checker);
       if (value) {
         references.push(value);
       }
