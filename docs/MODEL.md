@@ -294,7 +294,8 @@ External is the remainder. It holds:
 - library and platform names (§4);
 - names kept as written because nothing in scope declares them, which may be repository
   types that were not visible (`ResolutionKind.UNRESOLVED`/`AMBIGUOUS`);
-- member targets of the `pkg:Type.member` form (§2.3).
+- member references (§2.3) to a library owner, and, through 11.x, the deprecated TypeScript string
+  form `<package>:<Type>.<member>`, which is removed in 12.0.
 
 So "external" means "not a component of this model". It does not prove the target lies
 outside the repository. A user who wants "library dependencies" should take `externalDependencies()`
@@ -350,10 +351,11 @@ other four use dotted names. The planned form keeps the dotted name in `invokedC
 exposes the origin (package, module or assembly) separately. It includes normalising the `node:`
 prefix, which gives `node:fs:readFile` beside `fs:readFile` for the same module.
 
-**Open:**
-- **Member targets.** Until the member reference kind (§2.3) is the only form, a call on an
-  external receiver may be recorded as a string of the form `<package>:<Type>.<member>`. That
-  string cannot be told apart from a TS nested name, and its split is ambiguous for nested types.
+**Member targets.** A call on an external receiver is a `MemberReference` (§2.3): the owner is
+written in the external name form above, and the unit is `externalUnit()`. Through 11.x TypeScript
+also records the deprecated string `<package>:<Type>.<member>`. It is a duplicate of the
+`MemberReference`, cannot be told apart from a nested type name, and is removed in 12.0. Read
+`MemberReference`, not the string.
 
 ---
 
