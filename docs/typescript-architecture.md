@@ -80,8 +80,8 @@ one again over every analysed file; since no program outlives its session, nothi
 4) Analysed files are modelled in full; level-one files are modelled without reading function
    bodies.
 
-In this mode, a type the program cannot see is flagged `unresolved` rather than reported as
-external: `any`, alone or nested (`any[]`), or a symbol with no declaration. `collectImports`
+In this mode, a type the program cannot see is flagged `lost` rather than reported as
+external, and the model reports it as not loaded: `any`, alone or nested (`any[]`), or a symbol with no declaration. `collectImports`
 resolves a module the program does not hold by module resolution alone, so a boundary file's
 imports still name the file they refer to.
 

@@ -48,7 +48,7 @@ final class TypeScriptModelAssembler {
 
     /**
      * Inserts a file's components, collecting the names of references that resolved into the
-     * repository. A reference whose type was lost is marked {@link ResolutionKind#UNRESOLVED}.
+     * repository, and those whose type was lost to a file the program did not load.
      *
      * @param inRepositoryNames Collects those names; may be {@code null}.
      */
@@ -330,7 +330,8 @@ final class TypeScriptModelAssembler {
             if (componentReference != null
                     && !componentReference.invokedComponent().equals(component.uniqueName())) {
                 componentReference.setResolutionKind(resolutionOf(reference));
-                if (inRepositoryNames != null && !reference.external && reference.target != null) {
+                if (inRepositoryNames != null && ((!reference.external && reference.target != null)
+                        || reference.lost)) {
                     inRepositoryNames.add(componentReference.invokedComponent());
                 }
                 component.insertCmpRef(componentReference);
@@ -340,8 +341,8 @@ final class TypeScriptModelAssembler {
 
     /** The resolution kind of a daemon reference: a repository target is exact, an external one as the daemon says. */
     private static ResolutionKind resolutionOf(final TypeScriptReferenceModel reference) {
-        if (reference.unresolved) {
-            return ResolutionKind.UNRESOLVED;
+        if (reference.lost) {
+            return ResolutionKind.UNSPECIFIED;
         }
         if ("exact".equals(reference.resolution) || (!reference.external && reference.target != null)) {
             return ResolutionKind.EXACT;

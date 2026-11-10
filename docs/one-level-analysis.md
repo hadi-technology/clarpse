@@ -246,7 +246,7 @@ Only a one-level compile produces the not-loaded state. A reference ends up in i
 - the budget held back the file declaring its target;
 - in TypeScript, its type was lost. With `noResolve`, a type declared past level one has no
   declaration, and becomes `any` once combined with another type. Such references keep the name
-  the compiler gives them, are marked `ResolutionKind.UNRESOLVED`, and may name `any`.
+  the compiler gives them, have `ResolutionKind.UNSPECIFIED`, and may name `any`.
 
 The three sets are disjoint: `internalDependencies()`, `externalDependencies()` and
 `notLoadedDependencies()` never share a reference, and together they are `references()`. In

@@ -11,9 +11,10 @@ public class TypeScriptReferenceModel {
 
     /**
      * Set by a one-level analysis on an external reference whose type was lost, rather than found
-     * outside the repository: {@code any}, alone or nested, or a symbol with no declaration.
+     * outside the repository: {@code any}, alone or nested, or a symbol with no declaration. Such a
+     * reference is not loaded, and carries no resolution.
      */
-    public boolean unresolved;
+    public boolean lost;
     public TypeScriptTargetModel target;
 
     /**

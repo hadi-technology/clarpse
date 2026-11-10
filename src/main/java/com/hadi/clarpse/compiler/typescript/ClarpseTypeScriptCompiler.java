@@ -16,7 +16,6 @@ import com.hadi.clarpse.compiler.PreparedAnalysis;
 import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptFileModel;
-import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.Package;
@@ -334,8 +333,7 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                     OOPSourceModelConstants.ComponentType.CLASS,
                     OOPSourceModelConstants.ComponentType.ENUM));
             CompilerSupport.classifyReferences(srcModel,
-                    reference -> reference.resolutionKind() == ResolutionKind.UNRESOLVED
-                            || inRepositoryNames.contains(reference.invokedComponent()));
+                    reference -> inRepositoryNames.contains(reference.invokedComponent()));
             CompilerSupport.markBoundary(srcModel, selection.modelledPaths());
             return new CompileResult(srcModel, compileFailures).withLevelOne(
                     CompilerSupport.levelOneReport(srcModel, selection, List.of()));

@@ -132,7 +132,8 @@ public class TypeScriptOneLevelTest {
         final Component loose = component(oneLevel.model(), "src.a.A.loose");
         assertFalse(loose.notLoadedDependencies().isEmpty());
         for (final ComponentReference reference : loose.notLoadedDependencies()) {
-            assertEquals(ResolutionKind.UNRESOLVED, reference.resolutionKind());
+            assertTrue(reference.isNotLoaded());
+            assertFalse(reference.toString(), reference.resolutionKind() == ResolutionKind.UNRESOLVED);
         }
         assertTrue(targets(loose.externalDependencies()).toString(), loose.externalDependencies().isEmpty());
     }

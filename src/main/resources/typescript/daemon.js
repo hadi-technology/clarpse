@@ -1782,17 +1782,17 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
 }
 
 /**
- * An external reference, flagged `unresolved` in a one-level analysis when the type behind it was
- * lost rather than found outside the repository. Outside a one-level analysis nothing is flagged,
- * so ordinary output is unchanged. `resolution` says how the checker settled it otherwise: `exact`
- * or `unresolved`.
+ * An external reference. In a one-level analysis it is flagged `lost` when the type behind it was
+ * lost rather than found outside the repository: the declaration may be in a file the program does
+ * not hold, so the reference is not loaded and says nothing about how it resolved. Outside a
+ * one-level analysis nothing is flagged, so ordinary output is unchanged. Otherwise `resolution`
+ * says how the checker settled it: `exact` or `unresolved`.
  */
 function externalReference(kind, displayName, lost, resolution) {
   const reference = { kind, external: true, displayName };
   if (state.oneLevel && lost) {
-    reference.unresolved = true;
-  }
-  if (resolution) {
+    reference.lost = true;
+  } else if (resolution) {
     reference.resolution = resolution;
   }
   return reference;
