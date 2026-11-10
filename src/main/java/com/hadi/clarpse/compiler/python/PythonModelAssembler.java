@@ -875,7 +875,9 @@ final class PythonModelAssembler {
             kind = ResolutionKind.EXACT;
         }
         if (ref.member != null) {
-            return new MemberReference(invoked, ref.member, MemberKind.CALL, ref.externalUnit);
+            final MemberReference member = new MemberReference(invoked, ref.member, MemberKind.CALL, ref.externalUnit);
+            member.setResolutionKind(kind);
+            return member;
         }
         final ComponentReference built;
         if (isExtends) {

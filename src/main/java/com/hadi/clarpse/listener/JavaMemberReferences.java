@@ -3,6 +3,7 @@ package com.hadi.clarpse.listener;
 import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration;
 import com.hadi.clarpse.reference.MemberKind;
 import com.hadi.clarpse.reference.MemberReference;
+import com.hadi.clarpse.reference.ResolutionKind;
 
 /**
  * Builds the {@link MemberReference} for a Java method call whose receiver type the symbol solver
@@ -52,7 +53,9 @@ final class JavaMemberReferences {
         if (packageName != null && packageName.isEmpty()) {
             packageName = null;
         }
-        return new MemberReference(name, member, MemberKind.CALL, packageName);
+        final MemberReference reference = new MemberReference(name, member, MemberKind.CALL, packageName);
+        reference.setResolutionKind(ResolutionKind.EXACT);
+        return reference;
     }
 
     private static boolean isParsed(final ResolvedReferenceTypeDeclaration declaration) {

@@ -2,6 +2,7 @@ package com.hadi.test.python;
 
 import com.hadi.clarpse.reference.MemberKind;
 import com.hadi.clarpse.reference.MemberReference;
+import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.sourcemodel.Component;
 import org.junit.Assert;
 import org.junit.Test;
@@ -69,6 +70,7 @@ public class PythonMemberReferenceTest {
         Assert.assertEquals("pathlib.Path", exists.ownerType());
         Assert.assertEquals("pathlib", exists.externalUnit());
         Assert.assertTrue(exists.isExternal());
+        Assert.assertEquals(ResolutionKind.EXACT, exists.resolutionKind());
     }
 
     @Test

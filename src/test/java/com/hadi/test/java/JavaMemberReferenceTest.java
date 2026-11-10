@@ -6,6 +6,7 @@ import com.hadi.clarpse.compiler.ProjectFile;
 import com.hadi.clarpse.compiler.ProjectFiles;
 import com.hadi.clarpse.reference.MemberKind;
 import com.hadi.clarpse.reference.MemberReference;
+import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import org.junit.Test;
 
@@ -69,6 +70,7 @@ public class JavaMemberReferenceTest {
         assertEquals(ref.ownerType(), ref.invokedComponent());
         assertEquals("java.lang", ref.externalUnit());
         assertTrue(ref.isExternal());
+        assertEquals(ResolutionKind.EXACT, ref.resolutionKind());
     }
 
     @Test

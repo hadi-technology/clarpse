@@ -8,6 +8,7 @@ import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.typescript.NodeRuntime;
 import com.hadi.clarpse.reference.MemberKind;
 import com.hadi.clarpse.reference.MemberReference;
+import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.sourcemodel.Component;
 import java.util.List;
 import java.util.Set;
@@ -84,6 +85,7 @@ public class TypeScriptMemberReferenceTest {
         assertEquals("@acme/lib:Client", ref.ownerType());
         assertEquals("@acme/lib", ref.externalUnit());
         assertTrue(ref.isExternal());
+        assertEquals(ResolutionKind.EXACT, ref.resolutionKind());
         final Set<String> targets = TypeScriptReferenceGapsTest.targets(send);
         assertTrue("the string form stays until 12.0: " + targets, targets.contains("@acme/lib:Client.send"));
     }

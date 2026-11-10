@@ -2791,7 +2791,7 @@ function declaringTypeOf(type, member, checker) {
 /** The owner is named as the language names an external type: `unit:Type`. */
 function libraryMemberReference(typeName, unit, member) {
   return { kind: "type", external: true, displayName: `${unit}:${typeName}`, externalUnit: unit, member,
-    memberKind: "call" };
+    memberKind: "call", resolution: "exact" };
 }
 
 function buildValueReference(identifier, checker, owner) {
