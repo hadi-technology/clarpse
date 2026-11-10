@@ -195,4 +195,39 @@ public class CSharpCrossLanguageParityTest {
         assertEquals(ResolutionKind.UNRESOLVED, kindOf(model, "Web.Use.Ext()", "Vendor.Pkg.Tool"));
         assertFalse(mentions(model, "Web.Use.Call()", "App.Lib"));
     }
+
+    // ---- an extension class depends on the type it extends ----
+
+    /**
+     * {@code E} references {@code T} through the {@code this} parameter. {@code T} does not reference
+     * {@code E}: that would close a cycle between the two in every dependency graph.
+     */
+    @Test
+    public void anExtendedTypeDoesNotReferenceItsExtensionClass() throws Exception {
+        final OOPSourceCodeModel model = model(new ProjectFile("/E.cs", """
+                namespace App {
+                  public class T { }
+                  public static class E { public static void M(this T t) { } }
+                }
+                """));
+        assertTrue(references(model, "App.E", "App.T"));
+        assertTrue(references(model, "App.E.M(T)", "App.T"));
+        assertFalse(references(model, "App.T").stream()
+                .anyMatch(r -> r.invokedComponent().startsWith("App.E")));
+    }
+
+    /** A caller of the extension method still depends on the class that declares it. */
+    @Test
+    public void aCallerOfAnExtensionMethodStillReferencesItsClass() throws Exception {
+        final OOPSourceCodeModel model = model(new ProjectFile("/E.cs", """
+                namespace App {
+                  public class T { }
+                  public static class E { public static void M(this T t) { } }
+                  public class Caller { public void Go(T t) { t.M(); } }
+                }
+                """));
+        assertTrue(references(model, "App.Caller.Go(T)", "App.E"));
+        assertFalse(references(model, "App.T").stream()
+                .anyMatch(r -> r.invokedComponent().startsWith("App.E")));
+    }
 }

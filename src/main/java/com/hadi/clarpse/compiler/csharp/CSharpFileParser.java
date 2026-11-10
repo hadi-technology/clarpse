@@ -820,7 +820,6 @@ final class CSharpFileParser {
                     receiver.implementationHash = implementationHash(receiverNode.text);
                     member.parameters.add(0, receiver);
                 } else {
-                    member.extendedType = receiverType;
                     member.simpleTypeUsages.add(receiverType);
                 }
                 members.add(member);

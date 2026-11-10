@@ -79,12 +79,17 @@ public class CSharpExtensionBlockTest {
         assertTrue(references("App.ShapeExt.Empty", "App.IShape"));
     }
 
+    /**
+     * The extension class depends on the type it extends, not the other way round: a type that
+     * references its own extension methods closes a cycle with the class that references it.
+     */
     @Test
-    public void receiverTypeIsLinkedToEveryMemberItExtends() {
-        assertTrue(references("App.IShape", "App.ShapeExt.Describe(IShape)"));
-        assertTrue(references("App.IShape", "App.ShapeExt.TryGet(IShape, Marker)"));
-        assertTrue(references("App.IShape", "App.ShapeExt.Colors"));
-        assertTrue(references("App.IShape", "App.ShapeExt.Empty"));
+    public void receiverTypeDoesNotReferenceTheMembersThatExtendIt() {
+        assertFalse(references("App.IShape", "App.ShapeExt.Describe(IShape)"));
+        assertFalse(references("App.IShape", "App.ShapeExt.TryGet(IShape, Marker)"));
+        assertFalse(references("App.IShape", "App.ShapeExt.Colors"));
+        assertFalse(references("App.IShape", "App.ShapeExt.Empty"));
+        assertFalse(references("App.IShape", "App.ShapeExt"));
     }
 
     @Test

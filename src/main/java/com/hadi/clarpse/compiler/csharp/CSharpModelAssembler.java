@@ -25,7 +25,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.NavigableMap;
-import java.util.Optional;
 import java.util.Set;
 import java.util.Stack;
 import java.util.TreeMap;
@@ -98,68 +97,7 @@ final class CSharpModelAssembler {
                 insertType(typeModel, typeIndex, model, stack);
             }
         }
-        linkExtensionMethods(mergedTypes, typeIndex, model);
         return model;
-    }
-
-    /**
-     * Links an extension method to the type it extends.
-     *
-     * <p>`public static void Reset(this Widget w)` is declared on a static class, which is where it
-     * was recorded and where it stayed. Callers write `widget.Reset()`, so asking a type what it can
-     * do had to answer without it. The method keeps its place on the declaring class, and the
-     * extended type gains a reference to it, so it is reachable from both.
-     *
-     * <p>Only a type in this repository is linked: an extension on `string` or on a framework type
-     * resolves to nothing the model holds, and is left alone.
-     */
-    private static void linkExtensionMethods(final List<CSharpModel.CSharpTypeModel> types,
-                                             final TypeIndex typeIndex,
-                                             final OOPSourceCodeModel model) {
-        for (final CSharpModel.CSharpTypeModel typeModel : types) {
-            if (typeModel.modifiers == null || !typeModel.modifiers.contains("static")) {
-                continue;
-            }
-            for (final CSharpModel.CSharpMemberModel member : typeModel.members) {
-                final String receiverType = extendedTypeOf(member);
-                if (receiverType == null) {
-                    continue;
-                }
-                final Resolution extendedType = typeIndex.resolveType(receiverType, typeModel, member);
-                if (extendedType == null) {
-                    continue;
-                }
-                final Optional<Component> extended = model.copyOfComponent(extendedType.name());
-                if (extended.isEmpty()) {
-                    continue;
-                }
-                final String methodUniqueName =
-                        typeModel.uniqueName + "." + memberComponentIdentifier(member, typeModel);
-                if (methodUniqueName.equals(extendedType.name())) {
-                    continue;
-                }
-                final Component component = extended.get();
-                final SimpleTypeReference reference = new SimpleTypeReference(methodUniqueName);
-                reference.setResolutionKind(ResolutionKind.EXACT);
-                component.insertCmpRef(reference);
-                model.insertComponent(component);
-            }
-        }
-    }
-
-    /**
-     * The type a member extends: the type of the receiver parameter of an extension method, or the type
-     * of the {@code extension} block a member was declared in. Null for a member that extends nothing.
-     */
-    private static String extendedTypeOf(final CSharpModel.CSharpMemberModel member) {
-        if (member.extendedType != null) {
-            return member.extendedType;
-        }
-        if ("method".equals(member.kind) && !member.parameters.isEmpty()
-                && member.parameters.get(0).extensionReceiver) {
-            return member.parameters.get(0).declaredType;
-        }
-        return null;
     }
 
     /**

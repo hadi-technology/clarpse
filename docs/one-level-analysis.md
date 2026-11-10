@@ -353,8 +353,10 @@ These rules hold of the implementation. A change that breaks one changes what th
   since naming the variable's type needs the resolution the boundary pass skips, and neither is any
   edge found only by resolving a chain of calls. The variable's own declaration still references its
   type.
-- **C# extension methods.** An extension method's link onto the type it extends is made by the file
-  declaring the extension. An extension declared in a file that is not modelled links nothing.
+- **C# extension methods.** The static class declaring an extension method references the type it
+  extends, through the `this` parameter; the extended type holds no reference back to the class or
+  its methods. A call is attributed to the declaring class by the file making the call, so an
+  extension declared in a file that is not modelled is attributed to nothing.
 - **Across languages.** Level one stays within the compile's language. A Kotlin file's reference to
   a Java type, and a Java file's reference to a Kotlin type, is left not loaded rather than followed
   into the other language's files, and becomes internal only when the other language's compile
