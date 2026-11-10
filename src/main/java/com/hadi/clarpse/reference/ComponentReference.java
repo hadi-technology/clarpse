@@ -108,17 +108,31 @@ public abstract class ComponentReference implements Serializable, Cloneable {
         return invokedComponent;
     }
 
+    /**
+     * Whether this reference names something that is not a component of the model.
+     *
+     * <p>That is the whole meaning. It holds for library and platform names, and also for a name
+     * kept as written because nothing in scope declared it, or because several things did; such a
+     * name may be a repository type that was not visible from the file. It does not hold for a
+     * declaration the model lacks only because a one-level analysis did not load it: that is
+     * {@link #isNotLoaded()}. To tell a library name from a name that merely did not resolve, read
+     * {@link #resolutionKind()}: {@code UNRESOLVED} and {@code AMBIGUOUS} names may be repository
+     * types.
+     *
+     * @return {@code true} when the model holds no component of this name and the target is not
+     *         known to be declared in the repository.
+     */
     public boolean isExternal() {
         return external;
     }
 
     /**
-     * Marks this reference as naming a type outside the codebase, or clears that mark.
+     * Marks this reference as naming something that is not a component of the model, or clears that mark.
      *
      * <p>Marking a reference external clears {@link #isNotLoaded()}: a reference is in at most one
      * of the two states.
      *
-     * @param external Whether the referenced type lies outside the codebase.
+     * @param external Whether the model holds no component of the referenced name.
      */
     public void setExternal(final boolean external) {
         this.external = external;

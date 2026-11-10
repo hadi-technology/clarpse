@@ -54,31 +54,54 @@ Every component has:
 `OOPSourceModelConstants.ComponentType`. Three flags classify each type: *base* (a type that
 declares members), *method* (a callable) and *variable* (holds a value).
 
-| type | base | method | variable | what it is | languages |
-|---|:-:|:-:|:-:|---|---|
-| `CLASS` | ✓ | | | a class; also a Kotlin `object`/companion, a Java `record`, a Python class | all |
-| `STRUCT` | ✓ | | | a value type | C# |
-| `INTERFACE` | ✓ | | | an interface or protocol-like declaration | Java, Kotlin, C#, TS |
-| `ENUM` | ✓ | | | an enumeration (a Python `Enum` subclass included) | all |
-| `ANNOTATION` | ✓ | | | an annotation or attribute type declaration | Java, Kotlin, C# |
-| `METHOD` | | ✓ | | a member function | all |
-| `CONSTRUCTOR` | | ✓ | | a constructor | all |
-| `FUNCTION` | | ✓ | | a module-level function | TS, Python |
-| `FIELD` | | | ✓ | a field or property of a type | all |
-| `MODULE_FIELD` | | | ✓ | a module-level binding (`const`, module variable) | TS, Python |
-| `ENUM_CONSTANT` | | | ✓ | an enum member | all with enums |
-| `INTERFACE_CONSTANT` | | | ✓ | a constant declared on an interface | Java |
-| `TYPE_ALIAS` | | | | a name for a type expression (`type X = …`); declares no members | TS |
-| `NAMESPACE` | | | | a named scope declared in code (`namespace N { }`, `module N { }`) that holds declarations as children | TS |
-| `METHOD_PARAMETER_COMPONENT` | | | ✓ | a parameter of a callable | all |
-| `CONSTRUCTOR_PARAMETER_COMPONENT` | | | ✓ | a parameter of a constructor | all |
-| `LOCAL` | | | ✓ | a local variable | all |
+| type | base | method | variable | what it is |
+|---|:-:|:-:|:-:|---|
+| `CLASS` | ✓ | | | a class; also a Kotlin `object`/companion, a Java or C# `record`, a Python class |
+| `STRUCT` | ✓ | | | a value type (a C# `struct` or `record struct`) |
+| `INTERFACE` | ✓ | | | an interface |
+| `ENUM` | ✓ | | | an enumeration (a Python `Enum` subclass included) |
+| `ANNOTATION` | ✓ | | | an annotation type declaration |
+| `METHOD` | | ✓ | | a member function |
+| `CONSTRUCTOR` | | ✓ | | a constructor |
+| `FUNCTION` | | ✓ | | a module-level function; a C# delegate declaration |
+| `FIELD` | | | ✓ | a field or property of a type (a C# event included) |
+| `MODULE_FIELD` | | | ✓ | a module-level binding (`const`, module variable) |
+| `ENUM_CONSTANT` | | | ✓ | an enum member |
+| `INTERFACE_CONSTANT` | | | ✓ | a constant declared on an interface |
+| `TYPE_ALIAS` | | | | a name for a type expression (`type X = …`); declares no members |
+| `NAMESPACE` | | | | a named scope declared in code (`namespace N { }`, `module N { }`) that holds declarations as children |
+| `METHOD_PARAMETER_COMPONENT` | | | ✓ | a parameter of a callable |
+| `CONSTRUCTOR_PARAMETER_COMPONENT` | | | ✓ | a parameter of a constructor |
+| `LOCAL` | | | ✓ | a local variable |
+
+Which language produces which type. A blank cell means the front end never produces that type; it
+is read from the front ends' code and checked against the tests.
+
+| type | Java | Kotlin | C# | TypeScript | Python |
+|---|:-:|:-:|:-:|:-:|:-:|
+| `CLASS` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `STRUCT` | | | ✓ | | |
+| `INTERFACE` | ✓ | ✓ | ✓ | ✓ | |
+| `ENUM` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `ANNOTATION` | ✓ | ✓ | | | |
+| `METHOD` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `CONSTRUCTOR` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `FUNCTION` | | | ✓ | ✓ | ✓ |
+| `FIELD` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `MODULE_FIELD` | | | | ✓ | ✓ |
+| `ENUM_CONSTANT` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `INTERFACE_CONSTANT` | ✓ | | | | |
+| `TYPE_ALIAS` | | | | ✓ | ✓ |
+| `NAMESPACE` | | | | ✓ | |
+| `METHOD_PARAMETER_COMPONENT` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `CONSTRUCTOR_PARAMETER_COMPONENT` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `LOCAL` | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+C# attribute classes are `CLASS`, and Python protocols are `CLASS`. A Kotlin interface property is a
+`FIELD`.
 
 New values may be added in minor versions. Code that switches over `ComponentType` must have a
 default branch.
-
-**TODO: decide** the exact per-language coverage of each row. The table above states what the
-current front ends emit as far as this document's authors know. It should be generated from tests.
 
 ### 1.3 Packaging units are not components
 
@@ -109,11 +132,17 @@ One logical declaration written in several places is one component:
 
 A TypeScript namespace declared in several files is one component per file, named by the file.
 
-**TODO: decide** how a reference to such a declaration binds when several are candidates. Today
-TS binds a reference to a namespace made only of blocks to the block in the file whose path
-sorts first, and Kotlin binds a call to an `expect` function to the first declaring file in path
-order. Both are deterministic, but they are choices the source does not make. Under §8 the
-reference should either carry `ResolutionKind.AMBIGUOUS` or be withheld.
+How a reference binds to such a declaration, when several files hold it:
+- **TypeScript namespace.** A reference to the namespace itself binds to a block only when exactly
+  one file declares it (any number of blocks in that file). When several files declare it, nothing in
+  the source says which block is meant, so the reference keeps the name as written, is external, and
+  carries `ResolutionKind.AMBIGUOUS`. A member read from the namespace (`Geometry.b`) still binds to
+  the block that declares the member.
+- **Kotlin `expect`/`actual`.** A call to a top-level function that several files declare binds to
+  the file class of the `expect` declaration, the one common code resolves to. When the declarations
+  are all `actual` and no `expect` is in the project, no declaration is the one meant and the call
+  records nothing. A name declared in several files without `expect`/`actual` (overloads) is not
+  affected by this rule.
 
 ---
 
@@ -152,9 +181,8 @@ Rules that hold for every kind:
 - an external name (§4);
 - the name as written, when nothing in scope declares it (§3).
 
-**TODO: decide** the class name. `SimpleTypeReference` says "type", but TS targets module
-functions and values, and C# targets extension methods. Renaming it is a 12.0 change. Until then
-read "type" as "named thing".
+**Planned for 12.0:** renaming `SimpleTypeReference`. It says "type", but TS targets module
+functions and values, and C# targets extension methods. Until then read "type" as "named thing".
 
 ### 2.3 Member references
 
@@ -187,16 +215,19 @@ equality. Every language reports it.
 "Visible" is the language's own scope: a type that exists somewhere in the repository but cannot
 be named from this file is not visible, so it makes a reference neither `EXACT` nor `AMBIGUOUS`.
 
-The Java and Python front ends are being brought to this contract in the same release as the
-others; a front end that has not yet been is a deviation from the contract, not a second meaning.
+What each language reports:
 
-**TODO: decide:**
-- C# reports `AMBIGUOUS` when the *repository* holds two or more types of the short name, even
-  when none is visible. Two `using` directives that both supply the name resolve to the first,
-  as `EXACT`. The contract above is the opposite on both counts.
-- In TypeScript, `UNRESOLVED` is also used in a one-level analysis for a type lost to `any`, and
-  such references are classified not loaded. The contract gives `UNRESOLVED` one meaning (nothing
-  visible declares it), with "lost" carried by `isNotLoaded()` alone, or by a separate value.
+| language | `EXACT` | `AMBIGUOUS` | `UNRESOLVED` |
+|---|---|---|---|
+| Java | the member type, import, same-package type, solver type, `java.lang` or on-demand type that is the one visible; a fully qualified name | a name two on-demand imports (java.lang counting as one) both supply | a bare name nothing in scope supplies |
+| Kotlin | enclosing scope, explicit import, same package, star import, default import | a name several star imports supply (repository or JDK) | a name in a type position nothing supplies |
+| C# | keyword, alias, enclosing type, namespace, one `using` | a name several `using`s supply | a name no scope supplies |
+| TypeScript | a repository declaration, an imported package's symbol, a library global the checker resolves | a namespace several files declare | a decorator or heritage name nothing declares |
+| Python | a repository class, a name an import binds | (not produced: a name binds to one declaration by flow) | a name that is only written, bare or dotted |
+
+A type that a one-level analysis lost to `any` because a file was not loaded is not `UNRESOLVED`.
+It is `UNSPECIFIED` and is reported by `isNotLoaded()` (§3.2). `UNSPECIFIED` is otherwise produced
+only for a reference whose kind the language cannot say, such as a TypeScript type with no symbol.
 
 ### 3.2 Internal, external, not loaded
 
@@ -220,9 +251,12 @@ outside the repository. A user who wants "library dependencies" should take `ext
 and drop those whose `resolutionKind()` is `UNRESOLVED` or `AMBIGUOUS`. Where the language reports
 `UNSPECIFIED`, the user cannot make this distinction (§3.1).
 
-**TODO: decide** whether the javadoc of `isExternal()` ("a type outside the codebase") is
-corrected to this meaning, or the classification is changed so that `UNRESOLVED`/`AMBIGUOUS`
-names get a state of their own. The latter is a 12.0 change.
+`isExternal()` therefore means "not a component of this model". It does not say the target is
+outside the repository: an `UNRESOLVED` or `AMBIGUOUS` name may be a repository type. To tell them
+apart read `ResolutionKind` and `isNotLoaded()`.
+
+**Planned for 12.0:** a separate state for unresolved and ambiguous names, so that `isExternal()`
+holds only for names known to lie outside the repository.
 
 ### 3.3 Merging models
 
@@ -255,18 +289,18 @@ depends on the language.
 
 | language | external type | example | notes |
 |---|---|---|---|
-| Java | fully qualified, nested types with `.` | `java.util.Map.Entry`, `org.lib.Client` | Implicitly imported: `java.lang` top-level types only. A name two on-demand imports both supply (java.lang counts as one) is not recorded. |
+| Java | fully qualified, nested types with `.` | `java.util.Map.Entry`, `org.lib.Client` | Implicitly imported: `java.lang` top-level types only. A name two on-demand imports both supply (java.lang counts as one) is kept as written with `AMBIGUOUS`. |
 | Kotlin | fully qualified | `kotlin.collections.List`, `io.ktor.server.Application` | Default imports (`kotlin.*`, `kotlin.collections.*`, …) apply last. Type aliases resolve to what they alias. |
 | C# | qualified only where an alias or a keyword says so; otherwise the name as written | `System.Int32` (from `int`), `List` | A framework type named through a namespace `using` stays as written, with `UNRESOLVED`. |
 | TypeScript | `<package>:<exported name>` | `react:Component`, `@scope/pkg:Thing`, `node:fs:readFile` | The package is the import specifier's package (`@scope/pkg/sub` → `@scope/pkg`). Compiler-library globals (`Error`, `Map`) are written bare. |
 | Python | `<module path>.<name>` | `requests.Session` | Labels from imports. The library is not inspected. |
 
-**TODO: decide:**
-- **One shape across languages.** TS uses `package:name`; the other four use dotted names. A
-  general form would keep the dotted name in `invokedComponent()` and expose the origin
-  separately (for example `externalOrigin()`: the package, module or assembly when known).
-- **The `node:` prefix** gives `node:fs:readFile` beside `fs:readFile` for the same module.
-  Intended: normalise to one package name.
+**Planned for 12.0:** one external-name shape across languages. TS uses `package:name` and the
+other four use dotted names. The planned form keeps the dotted name in `invokedComponent()` and
+exposes the origin (package, module or assembly) separately. It includes normalising the `node:`
+prefix, which gives `node:fs:readFile` beside `fs:readFile` for the same module.
+
+**Open:**
 - **Member targets.** Until the member reference kind (§2.3) is the only form, a call on an
   external receiver may be recorded as a string of the form `<package>:<Type>.<member>`. That
   string cannot be told apart from a TS nested name, and its split is ambiguous for nested types.
@@ -316,8 +350,13 @@ A library, framework, JDK or unresolved target, a file outside the project, and 
 file's own path never contribute. A component of a boundary file (§7) reports what the resolution
 of its file gives, exactly as for an analysed file.
 
-**TODO: decide** how a user tells an incomplete set from an empty one. Today an empty set may mean
-any of these:
+An empty set is not always "no imports". For a file listed in a `CompileFailure`, or among
+`ProjectFiles.unreadSourceFiles()`, an empty set means "unknown": the file was not read, or not
+read in full, so its imports were not resolved. Check those two before reading an empty set as a
+file with nothing to import.
+
+**TODO: decide** how a user tells an incomplete set from an empty one in a file that was read.
+Today an empty set may mean any of these:
 - the file imports nothing;
 - everything it imports is external;
 - it uses only wildcard or namespace imports;
@@ -360,7 +399,8 @@ The path is used by:
 `ProjectFile` accepts relative or absolute input, normalises it to forward slashes and rejects
 `..` traversal. `new ProjectFile(File)` stores the file's absolute path.
 
-**TODO: decide** (for 12.0.0, with the in-tree form):
+**Planned for 12.0:** a single path form, the file's path inside the project, for all three
+loads. With it:
 - **On-disk paths as input.** Analysed-file paths accept an on-disk path under the loaded
   directory. `PreparedAnalysis.extendFocus` and the level-one path options do not, and silently
   ignore one. Intended: every path-taking API accepts both forms.
@@ -440,16 +480,18 @@ tell. The signals below separate them: `ResolutionKind.UNRESOLVED` and `AMBIGUOU
 | an annotation's arguments were not read | `AnnotationReference.arguments() == null` |
 | **a use was seen but its target withheld** (untyped receiver, ambiguity, unknown ancestry) | **none** |
 
-**TODO: decide** the last row, and until it is decided do not read a missing edge as proof of
-absence. Intended: a per-component count of withheld attributions, by
-reason. A user can then distinguish "this method calls nothing in X" from "this method made calls
-that could not be attributed", and the model still invents no edge.
+**Planned for 12.0:** withheld-attribution counts. Until then do not read a missing edge as proof
+of absence. The plan is a per-component count of withheld attributions, by reason. A user can then
+distinguish "this method calls nothing in X" from "this method made calls that could not be
+attributed", and the model still invents no edge.
+
+The guesses that used to break §8.1 are gone: a TypeScript namespace several files declare is
+`AMBIGUOUS` (§1.4); a Kotlin call to an `expect` function binds to the `expect` declaration (§1.4);
+a Python callee is a constructed class only when Pyright resolves it to one (§9); and a TypeScript
+heritage name is a library global only when the checker resolves it to a declaration in a default
+library or `@types` file, and otherwise is kept as written with `UNRESOLVED`.
 
 **TODO: decide** the remaining heuristics that do not follow §8.1 as written:
-- TS namespace-only and Kotlin `expect` binding by path order (§1.4);
-- Python reading a capitalised imported callee as a class constructor;
-- TS reading a fixed list of library global names as heritage bases when the program has no
-  library;
 - Java taking a `java.lang` name when a wildcard-imported library package cannot be inspected
   (Kotlin does the opposite for non-JDK star imports);
 - Java splitting an unseen qualified name into package and type at the first segment that does
@@ -473,8 +515,8 @@ Behaviour that legitimately differs, because the languages differ.
 - JDK types are resolved against the JDK clarpse runs on (§3.4).
 - A bare name binds to the current package only when the project declares a type of that name
   there, whatever directory the file sits in.
-- `var x = …` depends on the type its initializer resolves to. An array is recorded through its
-  element type.
+- `var x = …` depends on the type its initializer resolves to, as the type written out would:
+  the type and every type in its type arguments. An array is recorded through its element type.
 - The types of annotations nested in annotation arguments are references.
 - Java and Kotlin can be compiled separately and merged (§3.3). Each compile reads the other's
   declarations to name types exactly.
@@ -486,7 +528,8 @@ Behaviour that legitimately differs, because the languages differ.
 - A call `x.f()` that reaches an extension function references the file class declaring it,
   under the conditions of §8.1.
 - A local without a written type depends on the type its initializer's declaration writes,
-  library types included.
+  library types included, and on the type of a string, character, boolean or plain number literal.
+  It records what the same written type would (§9, inferred locals).
 - Names in a `java.*`/`javax.*` star import are looked up in the JDK clarpse runs on (§3.4).
 
 ### C#
@@ -505,15 +548,18 @@ Behaviour that legitimately differs, because the languages differ.
 ### TypeScript
 - Module-level functions, bindings, type aliases and namespaces are components of their module.
 - `declare module "x" { … }` blocks: their declarations are declarations of the file that holds
-  them, named like the file's own and exported. **TODO: decide** whether an augmentation of a
-  package (`declare module "express"`) should also reference the augmented external type. Today
-  nothing links the two.
+  them, named like the file's own and exported. Nothing links an augmentation of a package
+  (`declare module "express"`) to the augmented external type. **Planned for 12.0:** a reference
+  from the augmentation to the type it augments.
 - `declare global` is not read.
 - Decorators are `ANNOTATION` references to the resolved declaration. Their arguments' names
   are references of the decorated component.
 - `typeof x` in any type position references the declaration of `x`.
-- Files no `tsconfig.json` names are read with default options. A program without a library
-  still records `extends Error` and similar as a base.
+- Files no `tsconfig.json` names are read with default options and no library. In such a program
+  `extends Error` finds no declaration of `Error`, so it is recorded as written with `UNRESOLVED`.
+  A heritage name is a library global (`EXACT`) only when the checker resolves it to a declaration
+  in a default library or `@types` file.
+- A reference to a namespace several files declare is `AMBIGUOUS` (§1.4).
 
 ### Python
 - Module-level functions and variables are `FUNCTION`/`MODULE_FIELD`. Nested classes are
@@ -522,8 +568,11 @@ Behaviour that legitimately differs, because the languages differ.
 - These all record references: the value of a class or module attribute, read like a function
   body in the scope of the class body; `metaclass=`, as `SIMPLE` and not an extension; `TypeVar`
   bounds and constraints; and PEP 695 parameter bounds.
-- Constructing an imported external class records it like an annotation would. **TODO: decide**
-  the capitalisation rule (§8.2).
+- Constructing an imported external class records it like an annotation would, but only when
+  Pyright resolves the callee to a class. A function, whatever its name, and a name Pyright cannot
+  resolve construct nothing.
+- A local without an annotation records what the annotation of the class Pyright infers would,
+  including the language's own classes: `x = 1` records what `x: int` records.
 - Imports are resolved from the repository root, `src/`, configured `extraPaths`, and every
   directory holding the top of a package.
 
@@ -551,6 +600,20 @@ User-visible changes in this release.
   `switch` over `ComponentType` with no default branch no longer compiles, and a reader built
   against an older version fails on the new value in serialised JSON.
 - **Deprecated: `ResolutionKind.UNIQUE_SIMPLE_NAME`** (§3.1). It is no longer produced.
+- **`ResolutionKind` means the same in every language** (§3.1). Java and Python now report
+  `EXACT`, `AMBIGUOUS` or `UNRESOLVED` for type references. Java records a name two on-demand
+  imports both supply as written, with `AMBIGUOUS`, where it used to record nothing. Kotlin reports
+  `AMBIGUOUS` for a name several star imports supply, where it used to bind the first. TypeScript
+  reports a type lost to `any` in a one-level analysis through `isNotLoaded()` alone, and no longer
+  marks it `UNRESOLVED`.
+- **Guesses removed** (§8.2). A TypeScript namespace several files declare is `AMBIGUOUS`; a Kotlin
+  call binds to the `expect` declaration; a Python callee is a constructed class only when Pyright
+  says it is one; a TypeScript heritage name is a library global only when the checker resolves it.
+- **An inferred local records what its written type would** (§9) in Java, Kotlin, C#, TypeScript and
+  Python. Python records the language's own classes (`x = 1` is `x: int`); Java records the type
+  arguments of a `var`; Kotlin and C# type a literal initializer.
+- **Documentation:** the per-language table of component types (§1.2), the meaning of
+  `isExternal()` (§3.2) and of an empty `importedFiles()` (§5.2).
 - **New: the member reference kind** (§2.3). Documented with the MemberReference type.
 - **Reference fixes** (§8). Each narrows or adds only references the source determines:
   - Java: only `java.lang` is imported implicitly, after every import the file names, and the

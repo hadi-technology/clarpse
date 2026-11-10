@@ -201,7 +201,10 @@ public final class Component implements Serializable {
     }
 
     /**
-     * The references this component makes to types outside the codebase.
+     * The references this component makes to names that are not components of the model: library
+     * and platform names, and names kept as written because nothing in scope declared them or
+     * several things did, which may be repository types (see
+     * {@link ComponentReference#isExternal()} and {@link ComponentReference#resolutionKind()}).
      *
      * <p>An unmodifiable view rather than a copy. Relationship extraction reads both dependency sets
      * three times per component and was paying for six set copies each time.
@@ -271,6 +274,11 @@ public final class Component implements Serializable {
      * {@code using A.B;}, a namespace alias) names no file and contributes nothing; a wildcard
      * over a type contributes that type's file. A library, framework, JDK or unresolved target,
      * a file outside the project, and the component's own file contribute nothing.
+     *
+     * <p>An empty set is not always "no imports". For a file listed in a
+     * {@link com.hadi.clarpse.compiler.CompileFailure}, or among
+     * {@link com.hadi.clarpse.compiler.ProjectFiles#unreadSourceFiles()}, an empty set means
+     * "unknown": the file was not read, or not read in full, so its imports were not resolved.
      *
      * <p>Each entry is a path in the form of {@link #sourceFile()}, so it can be compared with the
      * source file of another component directly. The order is the source order of first appearance,
