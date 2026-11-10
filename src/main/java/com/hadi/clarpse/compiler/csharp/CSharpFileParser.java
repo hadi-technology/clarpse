@@ -132,7 +132,7 @@ final class CSharpFileParser {
                     CompilerSupport.moduleNameForFile(file.path())
             );
             for (final String implicitNamespace : implicitNamespaces) {
-                fileModel.usings.add(new CSharpModel.CSharpUsingModel(null, implicitNamespace, false, false, false));
+                fileModel.usings.add(CSharpModel.CSharpUsingModel.implicitNamespace(implicitNamespace));
             }
             final SyntaxTree tree = parseSyntaxTree(withoutTypeParameterAttributes(sourceText), braceMatches);
             for (final SyntaxNode child : tree.root().children) {
@@ -318,7 +318,7 @@ final class CSharpFileParser {
                                 nestedInsideFileScoped);
                     }
                 } else if ("cs:namespace-header-node-statement".equals(child.type)) {
-                    addUsingEndingHeader(child, fileModel);
+                    addUsingEndingHeader(child, fileModel, currentNamespace);
                 } else if (!"cs:id-role".equals(child.type)) {
                     parseTopLevelNode(child, fileModel, namespaceName, laterAlternatives,
                             nestedInsideFileScoped);
@@ -336,14 +336,14 @@ final class CSharpFileParser {
         if ("cs:using-list-role".equals(type)) {
             for (final SyntaxNode child : node.children) {
                 if ("cs:using-directive-statement".equals(child.type)) {
-                    fileModel.usings.add(parseUsing(child.text));
+                    fileModel.usings.add(parseUsing(child.text).inNamespace(currentNamespace));
                 }
             }
             return;
         }
         if (MISPLACED_USING_STATEMENTS.contains(type)
                 && USING_DIRECTIVE_PATTERN.matcher(normalizeWhitespace(node.text)).matches()) {
-            fileModel.usings.add(parseUsing(node.text));
+            fileModel.usings.add(parseUsing(node.text).inNamespace(currentNamespace));
             return;
         }
         if (TYPE_DECLARATIONS.contains(type)) {
@@ -594,7 +594,8 @@ final class CSharpFileParser {
      * otherwise. Directives are not evaluated, so the using is recorded whichever alternative it is in.
      */
     private static void addUsingEndingHeader(final SyntaxNode header,
-                                             final CSharpModel.CSharpFileModel fileModel) {
+                                             final CSharpModel.CSharpFileModel fileModel,
+                                             final String currentNamespace) {
         if (!DIRECTIVE_LINE_PATTERN.matcher(header.text).find()) {
             return;
         }
@@ -602,7 +603,7 @@ final class CSharpFileParser {
                 COMMENT_PATTERN.matcher(header.text).replaceAll(" ")).replaceAll(" ");
         final Matcher using = HEADER_TRAILING_USING_PATTERN.matcher(code);
         if (using.find()) {
-            fileModel.usings.add(parseUsing(using.group(1)));
+            fileModel.usings.add(parseUsing(using.group(1)).inNamespace(currentNamespace));
         }
     }
 

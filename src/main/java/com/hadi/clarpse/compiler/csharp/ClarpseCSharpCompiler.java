@@ -50,12 +50,14 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
         }
         final List<CSharpModel.ParseOutcome> parseOutcomes = parseFiles(csharpFiles,
                 CSharpImplicitUsings.forFiles(projectFiles.configFiles(), csharpFiles));
+        final CSharpDeclarationIndex importIndex = new CSharpDeclarationIndex(projectFiles.files(Lang.CSHARP));
         final List<CSharpModel.CSharpFileModel> successfulFiles = new ArrayList<>();
         final Set<CompileFailure> failures = new HashSet<>();
         for (final CSharpModel.ParseOutcome outcome : parseOutcomes) {
             if (outcome.failure() != null) {
                 failures.add(outcome.failure());
             } else if (outcome.fileModel() != null) {
+                importIndex.resolveImportedFiles(outcome.fileModel());
                 successfulFiles.add(outcome.fileModel());
             }
         }
@@ -152,6 +154,7 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
                 if (outcome.failure() != null) {
                     failures.put(outcome.failure().file().path(), outcome.failure());
                 } else if (outcome.fileModel() != null) {
+                    index.resolveImportedFiles(outcome.fileModel());
                     parsed.put(outcome.fileModel().sourceFile.path(), outcome.fileModel());
                 }
             }

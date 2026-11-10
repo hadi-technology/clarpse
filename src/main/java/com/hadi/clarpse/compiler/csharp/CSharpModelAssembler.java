@@ -199,6 +199,7 @@ final class CSharpModelAssembler {
             existing.nestedTypes.addAll(typeModel.nestedTypes);
             existing.modifiers = mergeStrings(existing.modifiers, typeModel.modifiers);
             existing.imports.addAll(typeModel.imports);
+            existing.importedFiles.addAll(typeModel.importedFiles);
             typeModel.usingAliases.forEach(existing.usingAliases::putIfAbsent);
             if ((existing.comment == null || existing.comment.isEmpty()) && typeModel.comment != null) {
                 existing.comment = typeModel.comment;
@@ -364,6 +365,7 @@ final class CSharpModelAssembler {
             component.setComment(typeModel.comment);
         }
         component.setImports(typeModel.imports);
+        component.setImportedFiles(typeModel.importedFiles);
         component.setAccessModifiers(typeModel.modifiers);
         if (typeModel.codeFragment != null && !typeModel.codeFragment.isEmpty()) {
             component.setCodeFragment(typeModel.codeFragment);

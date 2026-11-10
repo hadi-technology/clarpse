@@ -82,17 +82,47 @@ final class CSharpModel {
         final boolean aliasImport;
         final boolean globalImport;
         final boolean staticImport;
+        /** True for a namespace the project imports into the file without a directive. */
+        final boolean implicitImport;
+        /** The namespace the directive is written in, empty at the top of the file. */
+        final String scopeNamespace;
 
         CSharpUsingModel(final String alias,
                          final String target,
                          final boolean aliasImport,
                          final boolean globalImport,
                          final boolean staticImport) {
+            this(alias, target, aliasImport, globalImport, staticImport, false, "");
+        }
+
+        private CSharpUsingModel(final String alias,
+                                 final String target,
+                                 final boolean aliasImport,
+                                 final boolean globalImport,
+                                 final boolean staticImport,
+                                 final boolean implicitImport,
+                                 final String scopeNamespace) {
             this.alias = alias;
             this.target = target;
             this.aliasImport = aliasImport;
             this.globalImport = globalImport;
             this.staticImport = staticImport;
+            this.implicitImport = implicitImport;
+            this.scopeNamespace = scopeNamespace;
+        }
+
+        /** The using a project's implicit usings add for a namespace, which no directive in the file writes. */
+        static CSharpUsingModel implicitNamespace(final String namespace) {
+            return new CSharpUsingModel(null, namespace, false, false, false, true, "");
+        }
+
+        /** This directive, written inside the given namespace. */
+        CSharpUsingModel inNamespace(final String namespace) {
+            if (namespace == null || namespace.isEmpty()) {
+                return this;
+            }
+            return new CSharpUsingModel(alias, target, aliasImport, globalImport, staticImport,
+                    implicitImport, namespace);
         }
     }
 
@@ -129,6 +159,8 @@ final class CSharpModel {
         List<CSharpTypeModel> nestedTypes = new ArrayList<>();
         Set<String> imports = new LinkedHashSet<>();
         Map<String, String> usingAliases = new LinkedHashMap<>();
+        /** The repository files the using directives of the file declaring this type resolve to. */
+        Set<String> importedFiles = new LinkedHashSet<>();
 
         /** A copy with its own collections and its own copies of its nested types. */
         CSharpTypeModel assemblyCopy() {
@@ -161,6 +193,7 @@ final class CSharpModel {
             }
             copy.imports = new LinkedHashSet<>(imports);
             copy.usingAliases = new LinkedHashMap<>(usingAliases);
+            copy.importedFiles = new LinkedHashSet<>(importedFiles);
             return copy;
         }
     }
