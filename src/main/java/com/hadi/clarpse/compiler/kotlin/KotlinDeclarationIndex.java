@@ -258,7 +258,8 @@ final class KotlinDeclarationIndex {
      * ({@code Obj.member}, {@code Color.RED}, a nested type) and gives the files declaring the
      * nearest enclosing type. A star import of a package names no file and gives nothing; one
      * whose name is a type gives the files declaring it. An alias changes the name the file sees, never the
-     * target. A name no Kotlin file declares, as a library or a Java type, gives nothing.
+     * target. A name no Kotlin file declares is looked up among the
+     * project's Java files, in the same way; a library or unresolved name gives nothing.
      *
      * @param directive The import directive.
      * @return The files' paths, each directive's files sorted by path; never null.
@@ -271,6 +272,9 @@ final class KotlinDeclarationIndex {
         }
         addDeclaringFiles(target, found);
         if (directive.star()) {
+            if (found.isEmpty() && javaIndex != null) {
+                found.addAll(javaIndex.filesDeclaring(target));
+            }
             return found;
         }
         found.addAll(filesByCallable.getOrDefault(target, Set.of()));
@@ -283,6 +287,9 @@ final class KotlinDeclarationIndex {
             if (dot > 0) {
                 found.addAll(kotlinFilesDeclaring(target.substring(0, dot)));
             }
+        }
+        if (found.isEmpty() && javaIndex != null) {
+            found.addAll(javaIndex.filesDeclaring(target));
         }
         return found;
     }

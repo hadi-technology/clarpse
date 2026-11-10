@@ -172,12 +172,36 @@ public class KotlinImportedFilesTest {
     }
 
     @Test
-    public void aJavaTypeIsNotAKotlinFile() throws Exception {
-        final ProjectFiles files = KotlinTestUtil.projectOf(repository("import legacy.Widget", "class User"));
-        files.insertFile(new ProjectFile("/src/legacy/Widget.java", "package legacy;\npublic class Widget { }\n"));
+    public void aJavaTypeImportedByKotlinGivesTheJavaFile() throws Exception {
+        final ProjectFiles files = KotlinTestUtil.projectOf(repository(String.join("\n",
+                "import legacy.Widget",
+                "import legacy.Widget.Part",
+                "import legacy.Widget.make",
+                "import legacy.Ghost",
+                "import shop.Customer"), "class User"));
+        files.insertFile(new ProjectFile("/src/legacy/Widget.java",
+                "package legacy;\npublic class Widget { public static class Part { } public static int make() { return 1; } }\n"));
         final CompileResult result = new ClarpseProject(files, Lang.KOTLIN).result();
 
-        assertTrue(importedBy(result.model(), "app.User").isEmpty());
+        assertEquals(List.of("/src/legacy/Widget.java", CUSTOMER), importedBy(result.model(), "app.User"));
+    }
+
+    @Test
+    public void aStarImportOverANestedTypeGivesTheFileOfTheTopLevelType() throws Exception {
+        assertEquals(List.of(ORDER), importedBy(compile("import shop.Order.Line.*"), "app.User"));
+        final ProjectFiles files = KotlinTestUtil.projectOf(repository("import legacy.Widget.Part.*", "class User"));
+        files.insertFile(new ProjectFile("/src/legacy/Widget.java",
+                "package legacy;\npublic class Widget { public static class Part { } }\n"));
+        assertEquals(List.of("/src/legacy/Widget.java"),
+                importedBy(new ClarpseProject(files, Lang.KOTLIN).result().model(), "app.User"));
+    }
+
+    @Test
+    public void aStarImportOverAJavaPackageAddsNothing() throws Exception {
+        final ProjectFiles files = KotlinTestUtil.projectOf(repository("import legacy.*", "class User"));
+        files.insertFile(new ProjectFile("/src/legacy/Widget.java", "package legacy;\npublic class Widget { }\n"));
+
+        assertTrue(importedBy(new ClarpseProject(files, Lang.KOTLIN).result().model(), "app.User").isEmpty());
     }
 
     @Test
