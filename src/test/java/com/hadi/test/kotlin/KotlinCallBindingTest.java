@@ -11,10 +11,10 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
- * A class whose supertype the parse cannot read may inherit any member, so a call that would be
- * credited to an import records nothing, with one exception: {@code Foo(x)} where {@code Foo} is
- * imported, by name or through a star import, and resolves exactly to a class the repository
- * declares, in Kotlin or Java, and nothing the class declares by that name is readable.
+ * A class whose supertype the parse cannot read is no reason to doubt a call the file's own scope
+ * binds exactly: an explicit import, a star import or the same package, of a repository or a library
+ * symbol, a class or a top-level function. Only a member or local the class declares by that name
+ * binds the call closer and records nothing.
  */
 public class KotlinCallBindingTest {
 
@@ -35,10 +35,13 @@ public class KotlinCallBindingTest {
                         "import klib.Bar",
                         "import klib.foo",
                         "import ext.Baz",
+                        "import com.intellij.ui.components.JBLabel",
                         "class Star : Library() { fun f(x: String) { Foo(x) } }",
                         "class Named : Library() { val b = Bar(\"x\") }",
                         "class Own : Library() { fun Foo(x: String) {}; fun f(x: String) { Foo(x) } }",
                         "class Function : Library() { fun f(x: String) { foo(x) } }",
+                        "class OwnFunction : Library() { fun foo() {}; fun f(x: String) { foo(x) } }",
+                        "class Lib : Library() { val l = JBLabel(\"x\") }",
                         "class Unknown : Library() { fun f(x: String) { Qux(x) } }",
                         "class External : Library() { fun f(x: String) { Baz(x) } }",
                         "class Field : Library() { val star = Foo(\"x\") }")))
@@ -66,14 +69,19 @@ public class KotlinCallBindingTest {
     }
 
     @Test
-    public void anImportedTopLevelFunctionIsStillNotCredited() {
-        assertFalse(references("app.Function.f(String)", "klib.BarKt"));
-        assertFalse(references("app.Function.f(String)", "klib.Bar"));
+    public void anImportedTopLevelFunctionIsCreditedDespiteAnUnreadableBase() {
+        assertTrue(references("app.Function.f(String)", "klib.BarKt"));
+        assertFalse(references("app.OwnFunction.f(String)", "klib.BarKt"));
     }
 
     @Test
-    public void anUnknownNameAndAnExternalImportAreNotRecorded() {
+    public void anExplicitlyImportedLibraryClassIsConstructedDespiteAnUnreadableBase() {
+        assertTrue(references("app.Lib.l", "com.intellij.ui.components.JBLabel"));
+        assertTrue(references("app.External.f(String)", "ext.Baz"));
+    }
+
+    @Test
+    public void anUnknownNameIsNotRecorded() {
         assertFalse(targets(component(model, "app.Unknown.f(String)")).stream().anyMatch(t -> t.endsWith("Qux")));
-        assertFalse(targets(component(model, "app.External.f(String)")).stream().anyMatch(t -> t.endsWith("Baz")));
     }
 }
