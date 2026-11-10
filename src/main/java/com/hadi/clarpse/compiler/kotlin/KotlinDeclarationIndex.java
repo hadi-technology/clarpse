@@ -49,6 +49,11 @@ final class KotlinDeclarationIndex {
     record AliasDeclaration(KotlinTypeAlias alias, KotlinFileModel file) {
     }
 
+    /** A top-level function, the file class that holds it, and the file that declares it. */
+    record TopLevelFunction(String fileClass, KotlinMemberModel function, KotlinFileModel file) {
+    }
+
+    private final Map<String, List<TopLevelFunction>> topLevelFunctions = new HashMap<>();
     private final Map<String, List<KotlinDeclaration>> kotlinTypes = new HashMap<>();
     private final Map<String, String> fileClassByCallable = new HashMap<>();
     private final Map<String, AliasDeclaration> aliases = new HashMap<>();
@@ -83,6 +88,10 @@ final class KotlinDeclarationIndex {
                 for (final KotlinMemberModel member : file.topLevelMembers) {
                     if (member.name != null && !member.name.isEmpty()) {
                         fileClassByCallable.putIfAbsent(qualify(file.packageName, member.name), fileClass);
+                        if (member.kind == KotlinModel.MemberKind.FUNCTION) {
+                            topLevelFunctions.computeIfAbsent(qualify(file.packageName, member.name),
+                                    key -> new ArrayList<>()).add(new TopLevelFunction(fileClass, member, file));
+                        }
                     }
                 }
             }
@@ -242,6 +251,16 @@ final class KotlinDeclarationIndex {
      */
     String fileClassOf(final String callable) {
         return fileClassByCallable.get(callable);
+    }
+
+    /**
+     * The top-level functions of a name, extensions included.
+     *
+     * @param callable The functions' fully qualified name.
+     * @return Every declaration of it, in path order; empty when no Kotlin file declares one.
+     */
+    List<TopLevelFunction> functionsNamed(final String callable) {
+        return topLevelFunctions.getOrDefault(callable, List.of());
     }
 
     /**

@@ -8,6 +8,8 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationArgument;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationUse;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationValue;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinAnnotationValueKind;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.CallExpr;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinFileModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinImport;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinMemberModel;
@@ -15,7 +17,9 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinParameterModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinSuperType;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinTypeAlias;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinTypeModel;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberKind;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.NameExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeUsage;
 import com.hadi.clarpse.compiler.kotlin.KotlinSyntaxTree.Token;
@@ -470,8 +474,38 @@ final class KotlinFileParser {
                     if (name != null) {
                         member.declarations.merge(name, 1, Integer::sum);
                     }
+                } else {
+                    member.narrowed.addAll(narrowedBy(node));
                 }
             }
+        }
+
+        /** The names a node may give another type than the declared one: a type test, a cast, a match, an assignment. */
+        private Set<String> narrowedBy(final KotlinSyntaxNode node) {
+            final Set<String> names = new HashSet<>();
+            if (node.is("IS_EXPRESSION") || node.is("BINARY_WITH_TYPE")) {
+                if (!node.children.isEmpty() && node.children.get(0).is(REFERENCE_EXPRESSION)) {
+                    names.add(referenceName(node.children.get(0)));
+                }
+            } else if (node.is("WHEN")) {
+                boolean testsTypes = false;
+                for (final KotlinSyntaxNode descendant : node.descendants()) {
+                    testsTypes |= descendant.is("WHEN_CONDITION_IS_PATTERN");
+                }
+                if (testsTypes) {
+                    for (final KotlinSyntaxNode child : node.children) {
+                        if (child.is(REFERENCE_EXPRESSION)) {
+                            names.add(referenceName(child));
+                        }
+                    }
+                }
+            } else if (node.is("BINARY_EXPRESSION") && node.children.size() == 3
+                    && node.children.get(0).is(REFERENCE_EXPRESSION)
+                    && node.children.get(1).is("OPERATION_REFERENCE")
+                    && "=".equals(tree.text(node.children.get(1)).trim())) {
+                names.add(referenceName(node.children.get(0)));
+            }
+            return names;
         }
 
         private Set<String> declaredNames(final KotlinSyntaxNode node) {
@@ -560,6 +594,8 @@ final class KotlinFileParser {
             final KotlinSyntaxNode typeReference = node.child(TYPE_REFERENCE);
             if (typeReference != null) {
                 local.declaredType = typeText(typeReference);
+            } else {
+                local.initializer = initializerOf(node);
             }
             local.typeUsages.addAll(typeUsagesIn(node, null));
             if (local.declaredType == null) {
@@ -689,6 +725,73 @@ final class KotlinFileParser {
                     usages.add(new TypeUsage(receiver + "." + referenceName(selector.children.get(0)), true));
                 }
             }
+        }
+
+        /**
+         * The expression a declaration's initializer writes, when it is a name, a call of a bare
+         * name, or members reached from those; null for any other expression or no initializer.
+         */
+        private KotlinExpr initializerOf(final KotlinSyntaxNode declaration) {
+            Token equals = null;
+            for (final Token token : tree.directTokens(declaration)) {
+                if ("EQ".equals(token.type())) {
+                    equals = token;
+                }
+            }
+            if (equals == null) {
+                return null;
+            }
+            for (final KotlinSyntaxNode child : declaration.children) {
+                if (child.startOffset >= equals.end()) {
+                    return expressionOf(child);
+                }
+            }
+            return null;
+        }
+
+        private KotlinExpr expressionOf(final KotlinSyntaxNode node) {
+            if (node.is(REFERENCE_EXPRESSION)) {
+                final String name = referenceName(node);
+                if (name.isEmpty()) {
+                    return null;
+                }
+                return new NameExpr(name);
+            }
+            if (node.is(CALL_EXPRESSION)) {
+                final String name = calleeName(node);
+                if (name == null) {
+                    return null;
+                }
+                return new CallExpr(name);
+            }
+            if (QUALIFIED_EXPRESSIONS.contains(node.type) && node.children.size() == 2) {
+                final KotlinExpr receiver = expressionOf(node.children.get(0));
+                final KotlinSyntaxNode selector = node.children.get(1);
+                if (receiver == null) {
+                    return null;
+                }
+                if (selector.is(REFERENCE_EXPRESSION)) {
+                    return new MemberExpr(receiver, referenceName(selector), false);
+                }
+                final String name = calleeName(selector);
+                if (name != null) {
+                    return new MemberExpr(receiver, name, true);
+                }
+            }
+            return null;
+        }
+
+        /** The name a call writes as its callee, or null for a call with type arguments or another callee. */
+        private String calleeName(final KotlinSyntaxNode node) {
+            if (!node.is(CALL_EXPRESSION) || node.children.isEmpty() || !node.children.get(0).is(REFERENCE_EXPRESSION)
+                    || node.child("TYPE_ARGUMENT_LIST") != null) {
+                return null;
+            }
+            final String name = referenceName(node.children.get(0));
+            if (name.isEmpty()) {
+                return null;
+            }
+            return name;
         }
 
         private void addCallUsage(final KotlinSyntaxNode call, final List<TypeUsage> usages,

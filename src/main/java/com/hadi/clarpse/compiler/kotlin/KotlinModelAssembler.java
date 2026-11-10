@@ -240,12 +240,13 @@ final class KotlinModelAssembler {
         stack.push(component);
         addAnnotationReferences(component, member.annotations, scope);
         final Shadow closer = new Shadow(closerNames(member, context), context.ancestryUnknown);
+        final KotlinReceiverTyping typing = new KotlinReceiverTyping(member, scope, closer, resolver, typeMembers);
         if (componentType.isMethodComponent()) {
             for (final KotlinParameterModel parameter : member.parameters) {
                 addParameter(file, parameter, member, component, scope, closer);
             }
             for (final KotlinMemberModel local : member.locals) {
-                addLocal(file, local, component, scope, closer);
+                addLocal(file, local, component, scope, closer, typing);
             }
             component.setCyclo(member.cyclo);
         }
@@ -283,7 +284,7 @@ final class KotlinModelAssembler {
     }
 
     private void addLocal(final KotlinFileModel file, final KotlinMemberModel local, final Component owner,
-                          final Scope scope, final Shadow closer) {
+                          final Scope scope, final Shadow closer, final KotlinReceiverTyping typing) {
         if (local.name == null || local.name.isEmpty()) {
             return;
         }
@@ -299,9 +300,28 @@ final class KotlinModelAssembler {
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
         addTypeReferences(component, local.typeUsages, scope, closer);
+        addInferredType(component, local, typing);
         model.insertComponent(component);
         stack.pop();
         ParseUtil.copyRefsToParents(component, stack);
+    }
+
+    /**
+     * The repository type a local declared without a type depends on: the type of its initializer,
+     * when that is a member or top-level function the repository declares with a written type.
+     */
+    private void addInferredType(final Component component, final KotlinMemberModel local,
+                                 final KotlinReceiverTyping typing) {
+        if (local.declaredType != null || local.initializer == null) {
+            return;
+        }
+        final String inferred = typing.typeOf(local.initializer);
+        if (inferred == null || !resolver.index().isType(inferred)) {
+            return;
+        }
+        final SimpleTypeReference reference = new SimpleTypeReference(inferred);
+        reference.setResolutionKind(ResolutionKind.EXACT);
+        ParseUtil.insertCmpRef(component, reference, stack);
     }
 
     /** The fields a primary constructor declares through its {@code val} and {@code var} parameters. */
@@ -461,7 +481,7 @@ final class KotlinModelAssembler {
             if (carriedByAValue(usage, scope, closer)) {
                 continue;
             }
-            if (usage.call() && callBoundElsewhere(usage.name(), scope, closer)) {
+            if (usage.call() && KotlinReceiverTyping.callBoundElsewhere(resolver, usage.name(), scope, closer)) {
                 continue;
             }
             if (usage.value() && (closer.names().contains(usage.name())
@@ -474,24 +494,6 @@ final class KotlinModelAssembler {
                 addTypeReference(component, usage, scope);
             }
         }
-    }
-
-    /**
-     * Whether a call name binds to something closer in scope than the type or import it would
-     * otherwise be read as: a function or property the class, its readable supertypes or the member
-     * declares by that name, or, when a supertype the parse cannot read may pass the name down, any
-     * name an import supplies. Nothing is recorded then, because the call may not construct that type.
-     */
-    private boolean callBoundElsewhere(final String name, final Scope scope, final Shadow closer) {
-        final KotlinNameResolver.Origin origin = resolver.originOf(name, scope);
-        if (origin == KotlinNameResolver.Origin.ENCLOSING) {
-            return false;
-        }
-        if (closer.names().contains(name)) {
-            return true;
-        }
-        return closer.ancestryUnknown() && (origin == KotlinNameResolver.Origin.IMPORT
-                || origin == KotlinNameResolver.Origin.STAR);
     }
 
     /**
@@ -679,7 +681,7 @@ final class KotlinModelAssembler {
      * What may stand closer in scope than a type: the names declared there, and whether a supertype
      * the parse cannot see may declare more.
      */
-    private record Shadow(Set<String> names, boolean ancestryUnknown) {
+    record Shadow(Set<String> names, boolean ancestryUnknown) {
     }
 
     /** What a member's calls are resolved in: its scope, and what in closer scope may shadow a call. */

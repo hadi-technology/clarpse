@@ -150,6 +150,31 @@ final class KotlinModel {
     record KotlinAnnotationValue(KotlinAnnotationValueKind kind, String text, List<KotlinAnnotationValue> elements) {
     }
 
+    /**
+     * An expression whose type a declaration can tell: a name, a call of a bare name, or a member of
+     * another such expression reached by {@code .} or {@code ?.}. Any other expression is not read.
+     */
+    sealed interface KotlinExpr {
+    }
+
+    /** A simple name: a parameter, a local, a property or an object. */
+    record NameExpr(String name) implements KotlinExpr {
+    }
+
+    /** A call of a bare name, {@code name(...)}: a constructor or a top-level function. */
+    record CallExpr(String name) implements KotlinExpr {
+    }
+
+    /**
+     * A property read or a call of a member on a receiver.
+     *
+     * @param receiver The expression the member is reached on.
+     * @param name     The member's name.
+     * @param call     Whether it is called, {@code receiver.name(...)}, rather than read.
+     */
+    record MemberExpr(KotlinExpr receiver, String name, boolean call) implements KotlinExpr {
+    }
+
     /** A class, interface, object, enum class or annotation class. */
     static final class KotlinTypeModel {
         TypeKind kind;
@@ -212,6 +237,13 @@ final class KotlinModel {
          * destructuring declarations anywhere inside it.
          */
         final Map<String, Integer> declarations = new HashMap<>();
+        /**
+         * Names whose type at some point may differ from the declared one: tested or cast with
+         * {@code is} or {@code as}, matched by a {@code when} with {@code is} entries, or assigned.
+         */
+        final Set<String> narrowed = new LinkedHashSet<>();
+        /** For a local declared without a type, the expression that initializes it, when readable. */
+        KotlinExpr initializer;
     }
 
     /** A parameter of a function or constructor. */

@@ -1,11 +1,13 @@
 package com.hadi.clarpse.compiler.kotlin;
 
 import com.hadi.clarpse.compiler.kotlin.KotlinDeclarationIndex.AliasDeclaration;
+import com.hadi.clarpse.compiler.kotlin.KotlinDeclarationIndex.TopLevelFunction;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinFileModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinImport;
 import com.hadi.clarpse.reference.ResolutionKind;
 
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -298,6 +300,38 @@ final class KotlinNameResolver {
             }
         }
         return false;
+    }
+
+    /**
+     * The top-level functions a bare name can call from this file, by the order Kotlin looks a
+     * function up: the ones an import by that name brings in, which decide alone when there is one;
+     * otherwise the ones of the file's own package and of every star-imported package.
+     *
+     * @param name  The name as the file writes it.
+     * @param scope Where it is written.
+     * @return The declarations, extensions included; empty when no repository function is visible.
+     */
+    List<TopLevelFunction> visibleFunctions(final String name, final Scope scope) {
+        final KotlinFileModel file = scope.file();
+        final List<TopLevelFunction> imported = new ArrayList<>();
+        boolean importedByName = false;
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (!kotlinImport.star() && name.equals(kotlinImport.visibleName())) {
+                importedByName = true;
+                imported.addAll(index.functionsNamed(kotlinImport.target()));
+            }
+        }
+        if (importedByName) {
+            return imported;
+        }
+        final List<TopLevelFunction> visible = new ArrayList<>(
+                index.functionsNamed(KotlinDeclarationIndex.qualify(file.packageName, name)));
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (kotlinImport.star()) {
+                visible.addAll(index.functionsNamed(kotlinImport.target() + "." + name));
+            }
+        }
+        return visible;
     }
 
     /** Whether a name starts the package of the file, a package it imports from, or a published root. */

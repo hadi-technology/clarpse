@@ -127,6 +127,169 @@ final class KotlinTypeMembers {
     }
 
     /**
+     * The declared type of a member of a repository type, reached on a receiver of that type: the
+     * return type a function writes, or the type a property writes. Only a type whose whole ancestry
+     * the parse can read answers, and only a member every declaration of that name in it types the
+     * same way; an overload with another return type, a member without a written type, an array,
+     * and a type a type parameter stands for all answer nothing.
+     *
+     * @param owner The receiver's type, fully qualified.
+     * @param name  The member's name.
+     * @param call  Whether the member is called rather than read.
+     * @return The member's type, fully qualified, or null.
+     */
+    String memberType(final String owner, final String name, final boolean call) {
+        final KotlinDeclaration root = resolver.index().declaration(owner);
+        if (root == null) {
+            return null;
+        }
+        final List<KotlinDeclaration> chain = new ArrayList<>();
+        final Set<String> platform = new HashSet<>();
+        if (!readChain(root, chain, platform, new HashSet<>()) || platform.contains(name)) {
+            return null;
+        }
+        String found = null;
+        for (final KotlinDeclaration declaration : chain) {
+            for (final KotlinMemberModel member : declaration.type().members) {
+                if (member.receiverType != null) {
+                    continue;
+                }
+                final Optional<String> written = writtenBy(member, name, call);
+                if (written == null) {
+                    continue;
+                }
+                final String resolved = written.map(text -> resolveWritten(text, declaration, member)).orElse(null);
+                if (resolved == null || (found != null && !found.equals(resolved))) {
+                    return null;
+                }
+                found = resolved;
+            }
+        }
+        return found;
+    }
+
+    /**
+     * What a member writes as the type of the name asked for: null when it is not that member, empty
+     * when it is but writes no type (or is something the name cannot be read as), else the written type.
+     */
+    private static Optional<String> writtenBy(final KotlinMemberModel member, final String name,
+                                              final boolean call) {
+        if (member.kind == KotlinModel.MemberKind.CONSTRUCTOR) {
+            for (final KotlinParameterModel parameter : member.parameters) {
+                if (!call && parameter.property && name.equals(parameter.name)) {
+                    return Optional.ofNullable(parameter.declaredType);
+                }
+            }
+            return null;
+        }
+        if (!name.equals(member.name)) {
+            return null;
+        }
+        if (call && member.kind == KotlinModel.MemberKind.FUNCTION) {
+            return Optional.ofNullable(member.declaredType);
+        }
+        if (!call && member.kind == KotlinModel.MemberKind.PROPERTY) {
+            return Optional.ofNullable(member.declaredType);
+        }
+        if (member.kind == KotlinModel.MemberKind.FUNCTION) {
+            return null;
+        }
+        // A property that may be invoked, or an enum entry, read the other way: not a typed member.
+        return Optional.empty();
+    }
+
+    private String resolveWritten(final String text, final KotlinDeclaration declaration,
+                                  final KotlinMemberModel member) {
+        final Set<String> typeParameters = new HashSet<>(member.typeParameters);
+        for (final String enclosing : declaration.enclosing()) {
+            final KotlinDeclaration outer = resolver.index().declaration(enclosing);
+            if (outer != null) {
+                typeParameters.addAll(outer.type().typeParameters);
+            }
+        }
+        return resolveWritten(text, new Scope(declaration.file(), declaration.enclosing(), typeParameters));
+    }
+
+    /**
+     * The type a written type names, when it is one plain name: not a generic, a function type, an
+     * array, a type parameter or a name nothing declares. A trailing {@code ?} is dropped.
+     *
+     * @param text  The type as written.
+     * @param scope Where it is written.
+     * @return The fully qualified name, or null.
+     */
+    String resolveWritten(final String text, final Scope scope) {
+        final String written = writtenName(text);
+        if (written == null) {
+            return null;
+        }
+        final Resolution resolved = resolver.resolve(written, scope, false);
+        if (resolved == null || resolved.kind() == ResolutionKind.UNRESOLVED || isArray(resolved.name())) {
+            return null;
+        }
+        return resolved.name();
+    }
+
+    /** The plain name a written type is, or null for anything but a possibly nullable dotted name. */
+    static String writtenName(final String text) {
+        if (text == null) {
+            return null;
+        }
+        String written = text.trim();
+        if (written.endsWith("?")) {
+            written = written.substring(0, written.length() - 1);
+        }
+        if (written.isEmpty()) {
+            return null;
+        }
+        for (int i = 0; i < written.length(); i += 1) {
+            final char ch = written.charAt(i);
+            if (!Character.isJavaIdentifierPart(ch) && ch != '.' && ch != '`') {
+                return null;
+            }
+        }
+        return written;
+    }
+
+    /** Whether a fully qualified name is a Kotlin array type, which has no members of its element type. */
+    static boolean isArray(final String qualifiedName) {
+        return qualifiedName.startsWith("kotlin.") && qualifiedName.endsWith("Array");
+    }
+
+    /**
+     * Collects a declaration and the repository declarations of its ancestors, and the member names
+     * of the JDK ancestors; returns whether every supertype, at every level, was one of the two.
+     */
+    private boolean readChain(final KotlinDeclaration declaration, final List<KotlinDeclaration> chain,
+                              final Set<String> platform, final Set<String> visited) {
+        if (!visited.add(declaration.uniqueName())) {
+            return true;
+        }
+        chain.add(declaration);
+        boolean complete = true;
+        final Scope scope = scopeOf(declaration);
+        for (final KotlinSuperType superType : declaration.type().superTypes) {
+            final Resolution resolved = resolver.resolve(superType.name, scope, false);
+            if (resolved == null || resolved.kind() == ResolutionKind.UNRESOLVED) {
+                complete = false;
+                continue;
+            }
+            final KotlinDeclaration parent = resolver.index().declaration(resolved.name());
+            if (parent != null) {
+                complete &= readChain(parent, chain, platform, visited);
+                continue;
+            }
+            final Set<String> names = platformMembers(resolved.name());
+            if (names == null) {
+                complete = false;
+            } else {
+                platform.addAll(names);
+            }
+        }
+        return complete;
+    }
+
+    /**
      * The member names of a type the JDK declares, read from the running platform the way the Java
      * side's type solver reads it: a {@code java} or {@code javax} type, or a {@code kotlin} type
      * that is the JDK type of the same simple name. The repository's own types are not asked.
