@@ -1532,8 +1532,10 @@ function modelledName(declaration, name, allowAmbientModule) {
 
 /**
  * The declaration of a symbol the model names. A symbol merged from several declarations is named
- * by its first non-namespace one; one made of namespace blocks alone, by the block in the file that
- * sorts first, so that the choice never depends on the order the program was read in.
+ * by its first non-namespace one; one made of namespace blocks alone, by its first block when one
+ * file holds them all. A namespace declared in several files is one component per file, so
+ * nothing in the source says which block a reference to the namespace itself means: it has no
+ * primary declaration (see `isAmbiguousNamespace`).
  */
 function primaryDeclaration(declarations) {
   const ts = state.ts;
@@ -1544,11 +1546,20 @@ function primaryDeclaration(declarations) {
   if (others.length) {
     return others[0];
   }
-  return declarations.slice().sort((a, b) => {
-    const left = a.getSourceFile().fileName;
-    const right = b.getSourceFile().fileName;
-    return left < right ? -1 : left > right ? 1 : a.pos - b.pos;
-  })[0];
+  if (isAmbiguousNamespace(declarations)) {
+    return null;
+  }
+  return declarations.slice().sort((a, b) => a.pos - b.pos)[0];
+}
+
+/** Whether declarations are namespace blocks alone, held by more than one file, one of them the repository's. */
+function isAmbiguousNamespace(declarations) {
+  const ts = state.ts;
+  if (!declarations || declarations.length < 2 || !declarations.every((declaration) => ts.isModuleDeclaration(declaration))) {
+    return false;
+  }
+  const files = new Set(declarations.map((declaration) => declaration.getSourceFile().fileName));
+  return files.size > 1 && Array.from(files).some((file) => isInternalFile(file));
 }
 
 function resolveSymbolName(symbol, checker) {
@@ -2674,7 +2685,12 @@ function buildValueReference(identifier, checker, owner) {
   if (!declarations.length) {
     return null;
   }
-  const declaration = primaryDeclaration(declarations.filter(isModelledValueDeclaration));
+  const modelled = declarations.filter(isModelledValueDeclaration);
+  if (isAmbiguousNamespace(modelled)) {
+    // Several files declare the namespace and none is the one meant: the name is kept as written.
+    return { kind: "type", external: true, displayName: modelled[0].name.getText(), resolution: "ambiguous" };
+  }
+  const declaration = primaryDeclaration(modelled);
   if (!declaration || declaration === owner) {
     return null;
   }

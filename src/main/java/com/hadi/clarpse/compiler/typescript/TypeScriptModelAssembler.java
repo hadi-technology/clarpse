@@ -350,6 +350,9 @@ final class TypeScriptModelAssembler {
         if ("unresolved".equals(reference.resolution)) {
             return ResolutionKind.UNRESOLVED;
         }
+        if ("ambiguous".equals(reference.resolution)) {
+            return ResolutionKind.AMBIGUOUS;
+        }
         return ResolutionKind.UNSPECIFIED;
     }
 
