@@ -79,4 +79,12 @@ public class TypeScriptCrossLanguageParityTest {
         assertFalse(targets.toString(), targets.contains("src.holder.Inner"));
         assertTrue(targets.toString(), targets.contains("src.holder.Holder"));
     }
+
+    @Test
+    public void anInferredTypesTextIsNotAReference() throws Exception {
+        final Set<String> targets = targets("src.a.A.l",
+                "/src/a.ts", "import { Bar } from './types';\nexport class A { l = [Bar]; }\n");
+        assertTrue(targets.toString(), targets.contains("src.types.Bar"));
+        assertFalse(targets.toString(), targets.contains("(typeof Bar)[]"));
+    }
 }

@@ -1624,6 +1624,15 @@ function isInternalSymbolName(name) {
   return !!name && TS_INTERNAL_SYMBOL_NAMES.has(name);
 }
 
+/**
+ * Whether a type's text is the checker's description of an inferred type (`(typeof Bar)[]`) rather
+ * than the name of a symbol. The symbols it is made of are recorded on their own. The text of a
+ * module (`typeof import("x")`) names that module and is not inferred.
+ */
+function isInferredTypeText(displayName) {
+  return /(^|[^A-Za-z0-9_$.])typeof\s+(?!import\()/.test(displayName);
+}
+
 function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments) {
   const references = [];
   const seen = new Set();
@@ -1682,7 +1691,7 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
       }
     } else {
       const displayName = checker.typeToString(entry.type || type);
-      if (!displayName || displayName === "void") {
+      if (!displayName || displayName === "void" || isInferredTypeText(displayName)) {
         continue;
       }
       const key = `${kind}|external|${displayName}`;
@@ -1693,7 +1702,7 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
     }
   }
   for (const displayName of displayNames) {
-    if (!displayName || displayName === "void") {
+    if (!displayName || displayName === "void" || isInferredTypeText(displayName)) {
       continue;
     }
     const key = `${kind}|external|${displayName}`;
