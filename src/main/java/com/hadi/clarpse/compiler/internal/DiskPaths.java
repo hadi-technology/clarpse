@@ -1,4 +1,7 @@
-package com.hadi.clarpse.compiler;
+package com.hadi.clarpse.compiler.internal;
+
+import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.ProjectFile;
 
 import java.io.File;
 import java.io.IOException;
@@ -16,6 +19,9 @@ import java.util.Map;
  *
  * <p>Only the files given at construction have a project path: {@link #toProjectPaths(List)} leaves
  * out any on-disk path that is not one of them, rather than guessing a project path for it.
+ *
+ * <p><b>Internal: not part of the public API.</b> It is public only so the language compilers in
+ * sibling packages can share it. It may change or move in any release.
  */
 public final class DiskPaths {
 

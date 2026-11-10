@@ -7,7 +7,7 @@ import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.CompilerSupport;
-import com.hadi.clarpse.compiler.DiskPaths;
+import com.hadi.clarpse.compiler.internal.DiskPaths;
 import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.Lang;
