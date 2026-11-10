@@ -533,17 +533,31 @@ A TypeScript file is read in a program, and a program is built from a config.
   the repository wrote first. `InitResult.unownedFileCount()` says how many such files there are.
   Set `clarpse.typescript.unownedFiles=report` to have them reported as failure `2001` and not
   modelled, which is also what a project with no config then gets as failure `1002`.
-- **Files a component's imports resolve to.** `Component.imports()` lists what a TypeScript
-  file imports as names (a resolved import becomes the dotted name of the type it brings in), and
-  a name cannot be split back into a path. `Component.importedFiles()` is the exact answer: the
-  project files, in the form of `Component.sourceFile()`, that the file's static imports,
-  `export ... from`, and literal `import()` and `require()` calls resolve to, by relative path,
-  `paths` alias or workspace link, whether or not the target declares a type. Packages resolved
-  into `node_modules` and specifiers that do not resolve add nothing. The set keeps the order the
-  imports appear in the file, is unmodifiable, and is empty for every other language.
 - **Options that make the compiler report.** `traceResolution`, `listFiles`, `explainFiles`,
   `extendedDiagnostics` and the like are dropped from a config's options. They change nothing a
   program holds.
+
+## Files a component's imports resolve to
+`Component.imports()` lists what a file imports as names, and a name cannot always be split back
+into a path: a folder called `fit.core` looks like two folders. `Component.importedFiles()` is the
+exact answer for TypeScript and Python: the project files, in the form of `Component.sourceFile()`,
+that the file's imports resolve to, whether or not the target declares a type. The set keeps the
+order the imports first appear in the file, is unmodifiable, never `null`, is attached to the
+components that carry `imports()`, and is empty for every other language.
+
+- **TypeScript.** Static imports, `export ... from`, and literal `import()` and `require()` calls,
+  resolved by relative path, `paths` alias or workspace link. Packages resolved into
+  `node_modules` and specifiers that do not resolve add nothing.
+- **Python.** Each import is resolved from the importing file by Pyright's import resolution.
+  `import a.b.c` is the file of `a.b.c` (`a/b/c.py`, or `a/b/c/__init__.py` for a package); the
+  `__init__.py` of the parent packages are not listed. `from a.b import c` is `a/b/c.py` when `c`
+  is a submodule, and otherwise the file of `a.b`, where a name it defines is found. `from a.b
+  import *` is the file of `a.b`. Relative imports resolve against the importing file's package,
+  and `importlib.import_module("pkg.mod")`, `import_module("pkg.mod")` and `__import__("pkg.mod")`
+  with a literal argument count as imports. Imports in functions, classes and
+  `if TYPE_CHECKING:` blocks count. The standard library, bundled stubs, installed packages,
+  unresolved imports and non-literal dynamic imports add nothing, and neither does a file that is
+  not a project file.
 
 ## Failure Contract
 - Java/C#/TypeScript/Python/Kotlin all report recoverable issues in `CompileResult.failures()` using

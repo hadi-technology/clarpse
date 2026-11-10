@@ -140,23 +140,31 @@ final class PythonModelAssembler {
     }
 
     /**
-     * Attaches the file's imports to the types it declares; a file declaring no type gives them to
-     * its module-level functions and variables instead, and a file declaring one gives nothing to
-     * those.
+     * Attaches the file's imports, and the repository files they resolve to, to the types it
+     * declares; a file declaring no type gives them to its module-level functions and variables
+     * instead, and a file declaring one gives nothing to those.
      *
      * <p>Applied after insertion rather than threaded through {@code insertClass}, which already
      * takes seven parameters — one more trips the parameter-count rule, and bundling arguments to
      * carry a value two frames down is worse than reading it back off the model. Fields, methods
      * and locals never carry imports, matching Java: a field reporting its file's import list as
-     * its own is what made {@code imports()} mean a different thing in each language.
+     * its own is what made {@code imports()} mean a different thing in each language. The two sets
+     * go to the same components.
      */
     private static void applyImports(final String sourcePath,
                                      final PythonFileModel fileModel,
                                      final OOPSourceCodeModel srcModel) {
-        if (fileModel.imports == null || fileModel.imports.isEmpty()) {
+        final java.util.Set<String> imports = new java.util.LinkedHashSet<>();
+        if (fileModel.imports != null) {
+            imports.addAll(fileModel.imports);
+        }
+        final java.util.Set<String> importedFiles = new java.util.LinkedHashSet<>();
+        if (fileModel.importedFiles != null) {
+            fileModel.importedFiles.stream().filter(f -> f != null && !f.isEmpty()).forEach(importedFiles::add);
+        }
+        if (imports.isEmpty() && importedFiles.isEmpty()) {
             return;
         }
-        final java.util.Set<String> imports = new java.util.LinkedHashSet<>(fileModel.imports);
         final java.util.List<Component> declared = srcModel.components()
                 .filter(component -> sourcePath.equals(component.sourceFile()))
                 .collect(java.util.stream.Collectors.toList());
@@ -166,9 +174,11 @@ final class PythonModelAssembler {
             if (declaresAType) {
                 if (component.componentType().isBaseComponent()) {
                     component.setImports(imports);
+                    component.setImportedFiles(importedFiles);
                 }
             } else if (isModuleLevelDeclaration(component)) {
                 component.setImports(imports);
+                component.setImportedFiles(importedFiles);
             }
         }
     }

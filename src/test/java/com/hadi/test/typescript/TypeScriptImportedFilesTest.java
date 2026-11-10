@@ -303,16 +303,4 @@ public class TypeScriptImportedFilesTest {
         assertFalse(a.imports().isEmpty());
         assertTrue(a.importedFiles().isEmpty());
     }
-
-    @Test
-    public void aPythonComponentHasNone() throws Exception {
-        final ProjectFiles files = new ProjectFiles();
-        files.insertFile(new ProjectFile("/src/a.py", "from src.b import B\n\nclass A:\n    b: B\n"));
-        files.insertFile(new ProjectFile("/src/b.py", "class B:\n    pass\n"));
-        final OOPSourceCodeModel model = new ClarpseProject(files, Lang.PYTHON).result().model();
-        final Component a = model.components()
-                .filter(c -> c.uniqueName().endsWith("a.A")).findFirst().orElseThrow();
-
-        assertTrue(a.importedFiles().isEmpty());
-    }
 }

@@ -635,8 +635,10 @@ const DYNAMIC_MODULE_NAME = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$
  * call has to reach `importlib` through an import the file makes. A relative name -- `".x"` -- is
  * resolved only when the package it is relative to is written plainly beside it, as `package=__package__`,
  * `package=__name__` or a string literal; otherwise it is left out.
+ *
+ * Each is returned as `{ moduleName, start }`, `start` being where the call begins in the file.
  */
-function collectDynamicImports(parseTree, parseNodeType, importCtx, scopes) {
+function findDynamicImports(parseTree, parseNodeType, importCtx, scopes) {
   const types = parseNodeType || {};
   const found = [];
   const bindsImportlib = name => {
@@ -700,7 +702,7 @@ function collectDynamicImports(parseTree, parseNodeType, importCtx, scopes) {
       }
       const written = loads ? stringLiteralValue(positional(node, 0), types) : null;
       const moduleName = written ? resolveName(node, written) : null;
-      if (moduleName) found.push(moduleName);
+      if (moduleName) found.push({ moduleName, start: node.start });
     }
     for (const key of Object.keys(node.d)) {
       const child = node.d[key];
@@ -713,6 +715,145 @@ function collectDynamicImports(parseTree, parseNodeType, importCtx, scopes) {
   }
   visit(parseTree);
   return found;
+}
+
+/**
+ * Pyright's import resolver over the repository, built on first use after `initRepo`: the repository
+ * root and the import roots the daemon already works from are the places an absolute import is looked
+ * for, exactly as they are for the module index. Null when the resolver cannot be built, in which case
+ * no file is reported for any import.
+ */
+function repoImportResolution() {
+  if (state.importResolver !== null) {
+    return state.importResolver || null;
+  }
+  try {
+    const api = getPyrightApi();
+    const nullConsole = new api.console.NullConsole();
+    const tempFiles = new api.fileSystem.RealTempFile();
+    const fileSystem = api.fileSystem.createFromRealFileSystem(tempFiles, nullConsole);
+    const serviceProvider = api.serviceProvider.createServiceProvider(fileSystem, nullConsole, tempFiles);
+    const toUri = filePath => toFileUri(api, filePath, serviceProvider);
+    const configOptions = new api.configOptions.ConfigOptions(toUri(state.repoRoot));
+    // Set outright: the option is not a member of a fresh `ConfigOptions` until it is assigned.
+    configOptions.defaultExtraPaths = (state.extraModuleRoots || []).map(toUri);
+    const resolver = new api.importResolver.ImportResolver(serviceProvider, configOptions,
+      createPythonHost(api, serviceProvider));
+    state.importResolver = { resolver, toUri, execEnv: configOptions.getDefaultExecEnvironment() };
+  } catch (err) {
+    state.importResolver = false;
+  }
+  return state.importResolver || null;
+}
+
+/**
+ * The on-disk path of a resolved module file when it is a file of the repository that is read, else
+ * null: an empty entry (a namespace package directory has no file), a file outside the repository
+ * (the standard library and typeshed stubs live there), a file under an excluded directory (an
+ * installed package), and anything that is not a `.py` or `.pyi` file.
+ */
+function repoFileOf(uri, selfPath) {
+  if (!uri || (typeof uri.isEmpty === 'function' && uri.isEmpty())) return null;
+  const resolved = typeof uri.getFilePath === 'function' ? uri.getFilePath() : null;
+  if (!resolved || !/\.pyi?$/i.test(resolved)) return null;
+  const filePath = normalizePath(resolved);
+  if (!filePath.startsWith(state.repoRoot + path.sep) || shouldSkipPath(filePath) || filePath === selfPath) {
+    return null;
+  }
+  return filePath;
+}
+
+/**
+ * The repository files the imports of one file resolve to, in the order the imports appear and
+ * without repeats, by Pyright's own resolution of each import from the file's position.
+ *
+ * `import a.b.c` names the file of `a.b.c` alone: the `__init__.py` of the parent packages run too,
+ * but are not what the import names. `from a.b import c` names the file of the submodule `c` when
+ * there is one, and otherwise the file of `a.b` -- its `__init__.py` for a package -- which is where a
+ * name `c` it defines is found. A star import names the file of its module. A relative import is
+ * resolved from the file's own package. The literal-argument `importlib.import_module`,
+ * `import_module` and `__import__` loads found by `findDynamicImports` count as `import a.b.c`.
+ *
+ * Imports are read wherever they are written, function and class bodies and `if TYPE_CHECKING:`
+ * included. Unresolved imports, the standard library, stubs bundled with the checker and installed
+ * packages name no repository file and add nothing, and neither does an import of the file itself.
+ */
+function collectImportedFiles(parseTree, parseNodeType, filePath, dynamicImports) {
+  const types = parseNodeType || {};
+  const resolution = repoImportResolution();
+  if (!resolution) return [];
+  const found = [];
+  const add = (start, fileOf) => found.push({ start, fileOf });
+  const resolve = (leadingDots, nameParts, importedSymbols) => {
+    try {
+      const result = resolution.resolver.resolveImport(resolution.toUri(filePath), resolution.execEnv,
+        { leadingDots, nameParts, importedSymbols });
+      return result && result.isImportFound ? result : null;
+    } catch (err) {
+      return null;
+    }
+  };
+  const moduleFile = result => {
+    const uris = result.resolvedUris || [];
+    return repoFileOf(uris[uris.length - 1], filePath);
+  };
+  const modulePartsOf = moduleNode => ({
+    leadingDots: moduleNode.d.leadingDots || 0,
+    nameParts: (moduleNode.d.nameParts || []).map(part => nameFromNode(part))
+  });
+
+  function visit(node) {
+    if (!node || typeof node !== 'object' || !node.d) return;
+    if (node.nodeType === types.ImportAs && node.d.module) {
+      const { leadingDots, nameParts } = modulePartsOf(node.d.module);
+      add(node.start, () => {
+        const result = resolve(leadingDots, nameParts, undefined);
+        return result ? [moduleFile(result)] : [];
+      });
+    } else if (node.nodeType === types.ImportFrom && node.d.module) {
+      const { leadingDots, nameParts } = modulePartsOf(node.d.module);
+      const names = (node.d.imports || []).map(imported => nameFromNode(imported.d.name));
+      add(node.start, () => {
+        const result = resolve(leadingDots, nameParts, node.d.isWildcardImport ? undefined : new Set(names));
+        if (!result) return [];
+        if (node.d.isWildcardImport) return [moduleFile(result)];
+        const submodules = result.filteredImplicitImports || new Map();
+        return names.map(name => {
+          const submodule = submodules.get(name);
+          return submodule ? repoFileOf(submodule.uri, filePath) : moduleFile(result);
+        });
+      });
+    }
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      if (Array.isArray(child)) {
+        child.forEach(visit);
+      } else if (child && typeof child === 'object' && child.d) {
+        visit(child);
+      }
+    }
+  }
+  visit(parseTree);
+  for (const dynamic of dynamicImports || []) {
+    const nameParts = dynamic.moduleName.split('.');
+    add(dynamic.start, () => {
+      const result = resolve(0, nameParts, undefined);
+      return result ? [moduleFile(result)] : [];
+    });
+  }
+  // Source order: statements and calls are collected in separate passes.
+  found.sort((a, b) => a.start - b.start);
+  const files = [];
+  const seen = new Set();
+  for (const entry of found) {
+    for (const file of entry.fileOf()) {
+      if (file && !seen.has(file)) {
+        seen.add(file);
+        files.push(file);
+      }
+    }
+  }
+  return files;
 }
 
 function collectImports(fileText, ctx) {
@@ -4056,6 +4197,15 @@ async function handleInitRepo(params) {
   };
 }
 
+/** The repository files the file's imports resolve to; none when resolution fails, never an error. */
+function importedFilesOf(parseTree, parseNodeType, filePath, dynamicImports) {
+  try {
+    return collectImportedFiles(parseTree, parseNodeType, filePath, dynamicImports);
+  } catch (err) {
+    return [];
+  }
+}
+
 async function handleGetFileModel(params) {
   const filePath = params && params.filePath ? params.filePath : null;
   if (!filePath) {
@@ -4169,8 +4319,9 @@ async function handleGetFileModel(params) {
     }
   }
   // A module loaded by name from a string literal is imported as much as one a statement names.
-  importList.push(...collectDynamicImports(parseTree, parseNodeType, importCtx,
-    [imported, nestedImported]));
+  const dynamicImports = findDynamicImports(parseTree, parseNodeType, importCtx,
+    [imported, nestedImported]);
+  importList.push(...dynamicImports.map(dynamic => dynamic.moduleName));
   return {
     result: {
       filePath: normalized,
@@ -4180,6 +4331,7 @@ async function handleGetFileModel(params) {
       functions,
       moduleFields,
       imports: Array.from(new Set(importList)),
+      importedFiles: importedFilesOf(parseTree, parseNodeType, normalized, dynamicImports),
       warnings: []
     }
   };

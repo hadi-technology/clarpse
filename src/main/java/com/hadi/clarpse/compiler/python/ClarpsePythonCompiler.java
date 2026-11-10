@@ -7,6 +7,7 @@ import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.DiskPaths;
 import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.LevelOneReport;
@@ -71,7 +72,8 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
 
         final String persistDir = projectFiles.projectDir();
         final String pythonVersionOverride = System.getProperty("clarpse.python.version");
-        final ParseResults parseResults = parsePythonFiles(pyFiles, persistDir, pythonVersionOverride);
+        final DiskPaths diskPaths = new DiskPaths(persistDir, projectFiles.files(Lang.PYTHON));
+        final ParseResults parseResults = parsePythonFiles(pyFiles, persistDir, diskPaths, pythonVersionOverride);
         srcModel.merge(parseResults.model);
         compileFailures.addAll(parseResults.failures);
         PythonModelAssembler.resolveFunctionReferences(srcModel);
@@ -121,7 +123,8 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
                     new FocusModel(new OOPSourceCodeModel(), failures));
         }
         final String persistDir = projectFiles.projectDir();
-        final OOPSourceCodeModel focusModel = modelInSession(focusFiles, persistDir, failures);
+        final OOPSourceCodeModel focusModel = modelInSession(focusFiles, persistDir,
+                new DiskPaths(persistDir, allFiles), failures);
         return new PythonPreparedAnalysis(options, focusFiles, allFiles,
                 discoverLevelOne(focusModel, focusFiles, index), index, persistDir,
                 new FocusModel(focusModel, failures));
@@ -129,12 +132,13 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
 
     /** Models the given files in a daemon session that ends with this call. */
     private OOPSourceCodeModel modelInSession(final List<ProjectFile> files, final String persistDir,
+                                              final DiskPaths diskPaths,
                                               final Set<CompileFailure> failures) throws CompileException {
         try (PythonDaemon daemon = new PythonDaemon()) {
             daemon.start();
             try (InterruptWatchdog watchdog = new InterruptWatchdog(Thread.currentThread(), daemon::forceStop)) {
                 daemon.initRepo(persistDir, System.getProperty("clarpse.python.version"));
-                return modelFiles(files, persistDir, daemon, failures);
+                return modelFiles(files, persistDir, diskPaths, daemon, failures);
             }
         } catch (final PythonDaemonException e) {
             throw new CompileException("Python resolver failed: " + e.getMessage(), e);
@@ -176,7 +180,8 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             }
             srcModel.merge(focusModel);
             if (!selection.modelled().isEmpty()) {
-                srcModel.merge(modelInSession(selection.modelled(), persistDir, compileFailures));
+                srcModel.merge(modelInSession(selection.modelled(), persistDir, diskPaths(persistDir),
+                        compileFailures));
             }
             PythonModelAssembler.resolveFunctionReferences(srcModel);
             PythonModelAssembler.settleDecoratorEnums(srcModel);
@@ -206,7 +211,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             final OOPSourceCodeModel model = new OOPSourceCodeModel();
             model.merge(focusModel);
             if (nodeAvailable) {
-                model.merge(modelInSession(added, directory, failures));
+                model.merge(modelInSession(added, directory, diskPaths(directory), failures));
             } else {
                 for (final ProjectFile file : added) {
                     failures.add(new CompileFailure(file,
@@ -219,6 +224,10 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             this.focusModel = model;
             this.focusFailures = failures;
             return new Extension(focus, discovered);
+        }
+
+        private DiskPaths diskPaths(final String directory) {
+            return new DiskPaths(directory, projectFiles().files(Lang.PYTHON));
         }
 
         /** Holds no process; the analysed files' model is released with this analysis. */
@@ -247,14 +256,15 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
     }
 
     private OOPSourceCodeModel modelFiles(final List<ProjectFile> files, final String persistDir,
-                                          final PythonDaemon daemon, final Set<CompileFailure> failures)
+                                          final DiskPaths diskPaths, final PythonDaemon daemon,
+                                          final Set<CompileFailure> failures)
             throws PythonDaemonException, CompileException {
         final OOPSourceCodeModel model = new OOPSourceCodeModel();
         for (int i = 0; i < files.size(); i += 1) {
             if (Thread.currentThread().isInterrupted()) {
                 throw new CompileException("Interrupted while parsing Python files.", new InterruptedException());
             }
-            final ParseOutcome outcome = parseSingleFile(files.get(i), i, persistDir, daemon);
+            final ParseOutcome outcome = parseSingleFile(files.get(i), i, persistDir, diskPaths, daemon);
             model.merge(outcome.model);
             if (outcome.failure != null) {
                 failures.add(outcome.failure);
@@ -265,17 +275,19 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
 
     private ParseResults parsePythonFiles(final List<ProjectFile> files,
                                           final String persistDir,
+                                          final DiskPaths diskPaths,
                                           final String pythonVersionOverride) throws CompileException {
         final int parallelism = resolveParallelism(files.size());
         if (parallelism > 1) {
             LOGGER.info("Parsing Python files in parallel using {} workers.", parallelism);
-            return parsePythonFilesParallel(files, persistDir, pythonVersionOverride, parallelism);
+            return parsePythonFilesParallel(files, persistDir, diskPaths, pythonVersionOverride, parallelism);
         }
-        return parsePythonFilesSerial(files, persistDir, pythonVersionOverride);
+        return parsePythonFilesSerial(files, persistDir, diskPaths, pythonVersionOverride);
     }
 
     private ParseResults parsePythonFilesSerial(final List<ProjectFile> files,
                                                 final String persistDir,
+                                                final DiskPaths diskPaths,
                                                 final String pythonVersionOverride) throws CompileException {
         final OOPSourceCodeModel model = new OOPSourceCodeModel();
         final Set<CompileFailure> failures = new HashSet<>();
@@ -283,7 +295,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             daemon.start();
             daemon.initRepo(persistDir, pythonVersionOverride);
             for (int i = 0; i < files.size(); i += 1) {
-                final ParseOutcome outcome = parseSingleFile(files.get(i), i, persistDir, daemon);
+                final ParseOutcome outcome = parseSingleFile(files.get(i), i, persistDir, diskPaths, daemon);
                 model.merge(outcome.model);
                 if (outcome.failure != null) {
                     failures.add(outcome.failure);
@@ -297,6 +309,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
 
     private ParseResults parsePythonFilesParallel(final List<ProjectFile> files,
                                                   final String persistDir,
+                                                  final DiskPaths diskPaths,
                                                   final String pythonVersionOverride,
                                                   final int parallelism) throws CompileException {
         final List<List<IndexedProjectFile>> partitions = new ArrayList<>();
@@ -313,6 +326,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
                 if (!partition.isEmpty()) {
                     futures.add(closeableExecutor.submit(new PartitionTask(partition,
                             persistDir,
+                            diskPaths,
                             pythonVersionOverride)));
                 }
             }
@@ -348,6 +362,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
     private ParseOutcome parseSingleFile(final ProjectFile file,
                                          final int index,
                                          final String persistDir,
+                                         final DiskPaths diskPaths,
                                          final PythonDaemon daemon) throws PythonDaemonException {
         final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
         CompileFailure failure = null;
@@ -380,6 +395,8 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
         } else {
             moduleName = fileModel.moduleName;
         }
+        // A resolved file that is not a file of the project is left out rather than guessed.
+        fileModel.importedFiles = diskPaths.toProjectPaths(fileModel.importedFiles);
         PythonModelAssembler.insertFileModel(pkg, moduleName, file.path(), fileModel, localModel);
         return new ParseOutcome(index, localModel, failure);
     }
@@ -502,13 +519,16 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
     private final class PartitionTask implements Callable<List<ParseOutcome>> {
         private final List<IndexedProjectFile> files;
         private final String persistDir;
+        private final DiskPaths diskPaths;
         private final String pythonVersionOverride;
 
         private PartitionTask(final List<IndexedProjectFile> files,
                               final String persistDir,
+                              final DiskPaths diskPaths,
                               final String pythonVersionOverride) {
             this.files = files;
             this.persistDir = persistDir;
+            this.diskPaths = diskPaths;
             this.pythonVersionOverride = pythonVersionOverride;
         }
 
@@ -527,7 +547,7 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
                         if (Thread.currentThread().isInterrupted()) {
                             throw new CancellationException("Interrupted while parsing Python files.");
                         }
-                        outcomes.add(parseSingleFile(indexedFile.file, indexedFile.index, persistDir, daemon));
+                        outcomes.add(parseSingleFile(indexedFile.file, indexedFile.index, persistDir, diskPaths, daemon));
                     }
                     return outcomes;
                 }

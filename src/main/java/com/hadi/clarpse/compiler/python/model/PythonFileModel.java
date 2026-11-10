@@ -23,5 +23,12 @@ public class PythonFileModel {
      */
     public List<String> imports = new ArrayList<>();
 
+    /**
+     * The repository source files this file's imports resolve to, in source order. The daemon
+     * reports on-disk paths; the compiler replaces them with project file paths and drops any that
+     * are not a file of the project.
+     */
+    public List<String> importedFiles = new ArrayList<>();
+
     public List<String> warnings = new ArrayList<>();
 }

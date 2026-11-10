@@ -265,19 +265,47 @@ public final class Component implements Serializable {
     /**
      * The repository files that the imports of this component's file resolve to.
      *
-     * <p>Included: the target of every relative import, and of every workspace-package or
-     * path-alias import that resolves to a source file inside the project, whether written as a
-     * static import, {@code export ... from}, {@code import()} or {@code require} with a literal
-     * argument. A target is recorded whether or not it declares a type.
+     * <p>TypeScript and Python components are populated; the set is empty for every other
+     * language.
      *
-     * <p>Not included: a package resolved into {@code node_modules}, a specifier that does not
+     * <p><b>TypeScript.</b> Included: the target of every relative import, and of every
+     * workspace-package or path-alias import that resolves to a source file inside the project,
+     * whether written as a static import, {@code export ... from}, {@code import()} or
+     * {@code require} with a literal argument. A target is recorded whether or not it declares a
+     * type. Not included: a package resolved into {@code node_modules}, a specifier that does not
      * resolve, a target outside the project, and any target that is not a file of the project.
-     * Only TypeScript components are populated; the set is empty for every other language.
+     *
+     * <p><b>Python.</b> Each import is resolved from the importing file's position by the type
+     * checker's own import resolution, and what it resolves to is a file of the project. Included:
+     * <ul>
+     *   <li>{@code import a.b.c} and {@code import a.b.c as m}: the file of the module
+     *       {@code a.b.c}, which is {@code a/b/c.py}, or {@code a/b/c/__init__.py} when it is a
+     *       package. The {@code __init__.py} files of the parent packages {@code a} and
+     *       {@code a.b} are run by the import too, but are not what it names, and are not
+     *       listed.</li>
+     *   <li>{@code from a.b import c}, {@code from a.b import c as d}: for each imported name, the
+     *       file of the submodule {@code a.b.c} when {@code a.b} has one, and otherwise the file of
+     *       {@code a.b} itself, which is where a name it defines is found. The name is not
+     *       checked against what that file defines.</li>
+     *   <li>{@code from a.b import *}: the file of {@code a.b}.</li>
+     *   <li>Relative imports ({@code from . import x}, {@code from .mod import y},
+     *       {@code from ..pkg.mod import z}), resolved against the importing file's package by the
+     *       same rules.</li>
+     *   <li>{@code importlib.import_module("pkg.mod")}, {@code import_module("pkg.mod")} after
+     *       {@code from importlib import import_module}, and {@code __import__("pkg.mod")}, with a
+     *       literal first argument, as {@code import pkg.mod}.</li>
+     * </ul>
+     * Imports written inside functions and classes, and under {@code if TYPE_CHECKING:}, count.
+     * Not included: the standard library, stubs bundled with the type checker, installed packages
+     * and anything under a dependency directory, imports that do not resolve, a dynamic import
+     * whose argument is not a string literal, a resolved file that is not a file of the project
+     * (a {@code .pyi} stub among them, since stubs are not project files), a namespace package
+     * directory, which has no file, and the importing file itself.
      *
      * <p>Each entry is a path in the form of {@link #sourceFile()}, so an entry can be compared
      * with the source file of another component directly. A component of a boundary file reports
-     * what the module resolution of its file's import specifiers gives, exactly as for an analysed
-     * file; no path is ever derived from the text of a specifier.
+     * what the import resolution of its file gives, exactly as for an analysed file; no path is
+     * ever derived from the text of an import.
      *
      * @return Unmodifiable set of paths, in the order the imports first appear in the file; never
      *         {@code null}.

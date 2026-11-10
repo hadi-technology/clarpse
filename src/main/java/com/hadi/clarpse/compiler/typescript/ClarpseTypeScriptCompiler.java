@@ -7,6 +7,7 @@ import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.DiskPaths;
 import com.hadi.clarpse.compiler.InterruptWatchdog;
 import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.Lang;
@@ -351,55 +352,6 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             return TypeScriptDaemonException.CODE_DAEMON_ERROR;
         }
         return e.code();
-    }
-
-    /**
-     * Translates between project file paths and the canonical on-disk paths the daemon reports,
-     * which may differ from a naive join where the temporary directory is reached through a
-     * symbolic link.
-     */
-    private static final class DiskPaths {
-
-        private final String persistDir;
-        private final Map<String, String> projectPathByDisk = new HashMap<>();
-
-        DiskPaths(final String persistDir, final List<ProjectFile> files) {
-            this.persistDir = persistDir;
-            for (final ProjectFile file : files) {
-                projectPathByDisk.put(canonical(CompilerSupport.resolveFileOnDisk(persistDir, file.path())),
-                        file.path());
-            }
-        }
-
-        List<String> toDisk(final List<ProjectFile> files) {
-            final List<String> disk = new ArrayList<>();
-            for (final ProjectFile file : files) {
-                disk.add(CompilerSupport.resolveFileOnDisk(persistDir, file.path()));
-            }
-            return disk;
-        }
-
-        List<String> toProjectPaths(final List<String> diskPaths) {
-            final List<String> paths = new ArrayList<>();
-            if (diskPaths == null) {
-                return paths;
-            }
-            for (final String diskPath : diskPaths) {
-                final String path = projectPathByDisk.get(canonical(diskPath));
-                if (path != null) {
-                    paths.add(path);
-                }
-            }
-            return paths;
-        }
-
-        private static String canonical(final String path) {
-            try {
-                return new java.io.File(path).getCanonicalPath();
-            } catch (final java.io.IOException e) {
-                return Paths.get(path).toAbsolutePath().normalize().toString();
-            }
-        }
     }
 
     /**
