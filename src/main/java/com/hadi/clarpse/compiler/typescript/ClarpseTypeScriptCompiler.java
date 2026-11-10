@@ -144,9 +144,47 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             final String moduleName = CompilerSupport.moduleNameForFile(diskPath);
             // A resolved file that is not a file of the project is left out rather than guessed.
             fileModel.importedFiles = diskPaths.toProjectPaths(fileModel.importedFiles);
-            TypeScriptModelAssembler.insertFileModel(pkg, moduleName, file.path(), persistDir, fileModel,
-                    sink.model(), sink.inRepositoryNames());
+            // The file is modelled apart and put into the model only once it is whole, so a failure
+            // while reading it leaves nothing of it behind.
+            final OOPSourceCodeModel fileComponents = new OOPSourceCodeModel();
+            Set<String> fileNames = null;
+            if (sink.inRepositoryNames() != null) {
+                fileNames = new HashSet<>();
+            }
+            final Set<String> collectedNames = fileNames;
+            if (!assembleIsolated(file, sink.failures(), () -> TypeScriptModelAssembler.insertFileModel(pkg,
+                    moduleName, file.path(), persistDir, fileModel, fileComponents, collectedNames))) {
+                continue;
+            }
+            fileComponents.components().forEach(sink.model()::insertComponent);
+            if (fileNames != null) {
+                sink.inRepositoryNames().addAll(fileNames);
+            }
             addUnresolvedBaseFailures(file, fileModel, sink.failures());
+        }
+    }
+
+    /**
+     * Runs the building of one file's model; a failure of it is recorded as that file's failure, so
+     * that one file's model that cannot be built does not take the other files down with it.
+     *
+     * @param file     The file.
+     * @param failures Where its failure is recorded.
+     * @param build    Builds the file's model.
+     * @return Whether the model was built.
+     */
+    static boolean assembleIsolated(final ProjectFile file, final Set<CompileFailure> failures,
+                                    final Runnable build) {
+        try {
+            build.run();
+            return true;
+        } catch (final RuntimeException | StackOverflowError e) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw e;
+            }
+            LOGGER.warn("TypeScript model of file {} could not be built.", file.path(), e);
+            failures.add(new CompileFailure(file, String.valueOf(e.getMessage()), FailureCode.PARSE_FAILED));
+            return false;
         }
     }
 
