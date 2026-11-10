@@ -426,4 +426,51 @@ public class CSharpCrossLanguageParityTest {
         assertTrue("a cast cannot be a property read, so it still names the type",
                 references(model, "App.UsersController.Cast(object)", "App.User"));
     }
+
+    // ---- [Mark] means MarkAttribute ----
+
+    private static OOPSourceCodeModel attributed(final String types, final String use) throws Exception {
+        return model(new ProjectFile("/Attrs.cs", "namespace App { " + types + " }"),
+                new ProjectFile("/Use.cs", "namespace App { " + use + " }"));
+    }
+
+    /** {@code [Mark]} binds to {@code MarkAttribute} when no type called {@code Mark} is visible. */
+    @Test
+    public void anAttributeNameResolvesToItsAttributeSuffixedType() throws Exception {
+        final OOPSourceCodeModel model = attributed("public class MarkAttribute : System.Attribute { }",
+                "[Mark] public class A { [Mark] public void M() { } }");
+        assertEquals(ResolutionKind.EXACT, kindOf(model, "App.A", "App.MarkAttribute"));
+        assertEquals(ResolutionKind.EXACT, kindOf(model, "App.A.M()", "App.MarkAttribute"));
+        assertFalse(mentions(model, "App.A", "Mark"));
+    }
+
+    /** The name with the suffix written, and a type with the plain name, are read as before. */
+    @Test
+    public void anAttributeWrittenWithItsSuffixOrOnlyWithThePlainNameIsUnchanged() throws Exception {
+        final OOPSourceCodeModel model = attributed(
+                "public class TagAttribute : System.Attribute { } public class Plain : System.Attribute { }",
+                "[TagAttribute] public class A { } [Plain] public class B { }");
+        assertEquals(ResolutionKind.EXACT, kindOf(model, "App.A", "App.TagAttribute"));
+        assertEquals(ResolutionKind.EXACT, kindOf(model, "App.B", "App.Plain"));
+    }
+
+    /** With both {@code Mark} and {@code MarkAttribute} visible the name is ambiguous, and binds to neither. */
+    @Test
+    public void anAttributeNameBothTypesCarryBindsToNeither() throws Exception {
+        final OOPSourceCodeModel model = attributed(
+                "public class MarkAttribute : System.Attribute { } public class Mark : System.Attribute { }",
+                "[Mark] public class A { }");
+        assertFalse(mentions(model, "App.A", "App.MarkAttribute"));
+        assertFalse(mentions(model, "App.A", "App.Mark"));
+    }
+
+    /** A suffixed type in a namespace the file cannot see is not a candidate. */
+    @Test
+    public void anAttributeSuffixedTypeOutOfScopeIsNotBound() throws Exception {
+        final OOPSourceCodeModel model = model(
+                new ProjectFile("/Attrs.cs", "namespace Elsewhere { public class MarkAttribute : System.Attribute { } }"),
+                new ProjectFile("/Use.cs", "namespace App { [Mark] public class A { } }"));
+        assertFalse(mentions(model, "App.A", "Elsewhere.MarkAttribute"));
+        assertEquals(ResolutionKind.UNRESOLVED, kindOf(model, "App.A", "Mark"));
+    }
 }

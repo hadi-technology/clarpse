@@ -488,13 +488,13 @@ final class CSharpModelAssembler {
                 continue;
             }
             final String token = annotationName.trim();
-            final Resolution resolved = typeIndex.resolveType(token, ownerType, null);
-            String invoked = token;
-            ResolutionKind kind = ResolutionKind.UNRESOLVED;
-            if (resolved != null) {
-                invoked = resolved.name();
-                kind = resolved.kind();
+            final Resolution resolved = resolveAttribute(token, typeIndex, ownerType);
+            if (resolved == null) {
+                // `[Mark]` could be `Mark` or `MarkAttribute`, both visible: C# rejects it.
+                continue;
             }
+            final String invoked = resolved.name();
+            final ResolutionKind kind = resolved.kind();
             if (invoked.isEmpty() || invoked.equals(component.uniqueName()) || !seen.add(invoked)) {
                 continue;
             }
@@ -503,6 +503,27 @@ final class CSharpModelAssembler {
             reference.setArguments(attributeArguments(attribute, typeIndex, ownerType));
             component.insertCmpRef(reference);
         }
+    }
+
+    /**
+     * The type an attribute name denotes. {@code [Mark]} names {@code Mark} or {@code MarkAttribute}:
+     * the one a visible type carries. Both visible is an error in C#, so it names neither (null);
+     * neither visible keeps the name as written.
+     */
+    private static Resolution resolveAttribute(final String written, final TypeIndex typeIndex,
+                                               final CSharpModel.CSharpTypeModel ownerType) {
+        final Resolution plain = typeIndex.resolveType(written, ownerType, null);
+        if (written.endsWith("Attribute") || written.indexOf('<') >= 0 || written.startsWith("@")) {
+            return plain;
+        }
+        final Resolution suffixed = typeIndex.resolveType(written + "Attribute", ownerType, null);
+        if (suffixed == null || suffixed.kind() != ResolutionKind.EXACT) {
+            return plain;
+        }
+        if (plain != null && plain.kind() != ResolutionKind.UNRESOLVED) {
+            return null;
+        }
+        return suffixed;
     }
 
     private static Map<String, AnnotationArgument> attributeArguments(final CSharpModel.CSharpAttribute attribute,
