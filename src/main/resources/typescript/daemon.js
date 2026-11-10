@@ -1642,6 +1642,10 @@ function buildReferenceModelsFromType(type, checker, kind, withoutTypeArguments)
         continue;
       }
     }
+    if (actual.flags & state.ts.SymbolFlags.TypeParameter) {
+      // A type parameter (`T` in `Box<T>`) is a placeholder, not a type any file declares.
+      continue;
+    }
     const name = resolveSymbolName(entry.symbol, checker);
     if (isInternalSymbolName(name)) {
       continue;
