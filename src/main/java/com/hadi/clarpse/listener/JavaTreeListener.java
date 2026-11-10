@@ -833,7 +833,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             } catch (final Exception ignored) {
             }
             if (scope.isNameExpr()) {
-                return resolveType(scope.asNameExpr().getNameAsString());
+                return typeNamedByReceiver(scope.asNameExpr(), true);
             }
             if (scope.isFieldAccessExpr()) {
                 final String qualifiedType = typeNamedByQualifiedName(scope.asFieldAccessExpr());
@@ -851,6 +851,34 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     }
 
     /**
+     * The type a call's receiver names when the receiver is a bare name the call could not be
+     * resolved through: {@code Files} in {@code Files.copy(a, b)}, as opposed to {@code LOGGER} in
+     * {@code LOGGER.info()}.
+     *
+     * <p>A bare receiver is a variable or a type, and an upper-case one is as often a constant. It is
+     * read as a type only when the name is a type that is in scope -- imported, a member type, a type
+     * of the current package that exists, or in {@code java.lang} -- so a name that is none of
+     * those is never made a type of the current package. A value in scope of the same name takes
+     * precedence over the type. A name written like a constant is not read as a type either when a
+     * supertype this parse cannot see could have given the class a field of that name.
+     *
+     * @param receiver The receiver.
+     * @param solving Whether the symbol solver can be asked what values are in scope.
+     * @return The qualified type name, or null when the receiver names no type known to be one.
+     */
+    private String typeNamedByReceiver(final NameExpr receiver, final boolean solving) {
+        final String resolved = resolveType(receiver.getNameAsString(), false);
+        if (resolved == null) {
+            return null;
+        }
+        if (solving && (namesAValue(receiver)
+                || isConstantName(receiver.getNameAsString()) && !everyVisibleValueIsKnown(receiver))) {
+            return null;
+        }
+        return resolved;
+    }
+
+    /**
      * The type a method call is attributed to, read from the receiver as written: a named variable
      * or type, or a qualified name. An unqualified call is attributed by its own name, as the
      * resolving path does when resolution fails.
@@ -859,7 +887,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         if (ctx.getScope().isPresent()) {
             final Expression scope = ctx.getScope().get();
             if (scope.isNameExpr()) {
-                return resolveType(scope.asNameExpr().getNameAsString());
+                return typeNamedByReceiver(scope.asNameExpr(), false);
             }
             if (scope.isFieldAccessExpr()) {
                 final String qualifiedType = typeNamedByQualifiedName(scope.asFieldAccessExpr());
@@ -1639,7 +1667,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      * type the access sits in has supertypes the type solver can list in full, so no field can be
      * inherited from a type this parse cannot see.
      */
-    private boolean everyVisibleValueIsKnown(final FieldAccessExpr access) {
+    private boolean everyVisibleValueIsKnown(final Expression access) {
         if (hasStaticImport) {
             return false;
         }

@@ -119,4 +119,62 @@ public class JavaCrossLanguageParityTest {
         }
         assertTrue(paths.toString(), paths.contains("/src/main/java/app/A.java"));
     }
+
+    private static OOPSourceCodeModel modelOf(final String... pathAndSource) throws Exception {
+        final ProjectFiles files = new ProjectFiles();
+        for (int i = 0; i < pathAndSource.length; i += 2) {
+            files.insertFile(new ProjectFile(pathAndSource[i], pathAndSource[i + 1]));
+        }
+        return model(files);
+    }
+
+    private static Set<String> referencedBy(final OOPSourceCodeModel model, final String component) {
+        final Component found = model.copyOfComponent(component).orElseThrow(
+                () -> new AssertionError("no component " + component));
+        final Set<String> names = new TreeSet<>();
+        for (final ComponentReference ref : found.references()) {
+            names.add(ref.invokedComponent());
+        }
+        return names;
+    }
+
+    // A call receiver that is not a type in scope names no type.
+
+    @Test
+    public void anUnknownUpperCaseReceiverIsNotMadeATypeOfThePackage() throws Exception {
+        final OOPSourceCodeModel model = modelOf("/src/app/A.java", String.join("\n",
+                "package app;",
+                "public class A {",
+                "  void f() { LOGGER.info(\"x\"); }",
+                "}"));
+        final Set<String> refs = referencedBy(model, "app.A.f()");
+        assertFalse(refs.toString(), refs.stream().anyMatch(r -> r.endsWith("LOGGER")));
+    }
+
+    @Test
+    public void anUpperCaseReceiverThatMayBeInheritedFromAnUnseenBaseNamesNoType() throws Exception {
+        final OOPSourceCodeModel model = modelOf("/src/app/A.java", String.join("\n",
+                "package app;",
+                "import lib.Base;",
+                "public class A extends Base {",
+                "  void f() { LOG.warn(\"x\"); }",
+                "}"));
+        final Set<String> refs = referencedBy(model, "app.A.f()");
+        assertFalse(refs.toString(), refs.stream().anyMatch(r -> r.endsWith("LOG")));
+    }
+
+    @Test
+    public void aReceiverThatIsATypeInScopeStillNamesIt() throws Exception {
+        final OOPSourceCodeModel model = modelOf(
+                "/src/app/Util.java", "package app;\npublic class Util { public static int make() { return 1; } }\n",
+                "/src/app/A.java", String.join("\n",
+                        "package app;",
+                        "import ext.Tool;",
+                        "public class A {",
+                        "  int f() { return Util.make(); }",
+                        "  void g() { Tool.run(); }",
+                        "}"));
+        assertTrue(referencedBy(model, "app.A.f()").contains("app.Util"));
+        assertTrue(referencedBy(model, "app.A.g()").contains("ext.Tool"));
+    }
 }
