@@ -59,7 +59,7 @@ public final class FileParser {
             final int index,
             final boolean shallow) {
         return walk(file, index, () -> parser.parse(ParseStart.COMPILATION_UNIT,
-                new StringProvider(file.content())).getResult(), typeSolver, shallow, name -> false);
+                new StringProvider(file.content())).getResult(), typeSolver, shallow, name -> false, null);
     }
 
     /**
@@ -76,13 +76,14 @@ public final class FileParser {
         final JavaParser parser = context.parser();
         return walk(file, index, () -> parser.parse(ParseStart.COMPILATION_UNIT,
                 new StringProvider(file.content())).getResult(), context.typeSolver(), shallow,
-                context.otherLanguageTypes());
+                context.otherLanguageTypes(), context.importIndex());
     }
 
     private static ParseOutcome walk(final ProjectFile file, final int index,
                                      final java.util.function.Supplier<java.util.Optional<CompilationUnit>> unit,
                                      final CombinedTypeSolver typeSolver, final boolean shallow,
-                                     final java.util.function.Predicate<String> otherLanguageTypes) {
+                                     final java.util.function.Predicate<String> otherLanguageTypes,
+                                     final JavaDeclarationIndex importIndex) {
         final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
         CompileFailure failure = null;
         try {
@@ -96,7 +97,8 @@ public final class FileParser {
                     LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
                     failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
                 } else {
-                    new JavaTreeListener(localModel, file, typeSolver, shallow, otherLanguageTypes).visit(cu, null);
+                    new JavaTreeListener(localModel, file, typeSolver, shallow, otherLanguageTypes, importIndex)
+                            .visit(cu, null);
                 }
             }
         } catch (final Throwable e) {

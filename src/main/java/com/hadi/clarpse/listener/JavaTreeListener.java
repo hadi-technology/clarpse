@@ -56,6 +56,7 @@ import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclar
 import com.github.javaparser.resolution.model.SymbolReference;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.hadi.clarpse.compiler.ProjectFile;
+import com.hadi.clarpse.compiler.java.JavaDeclarationIndex;
 import com.hadi.clarpse.TypeNames;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
@@ -74,6 +75,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
@@ -92,6 +94,10 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     private static final Logger LOGGER = LogManager.getLogger(JavaTreeListener.class);
     private final Stack<Component> componentStack = new Stack<>();
     private final Set<String> currentImports = new HashSet<>();
+    /** The declarations imports are resolved against, or null when imported files are not recorded. */
+    private final JavaDeclarationIndex importIndex;
+    /** The repository files the import directives read so far resolve to, in source order. */
+    private final Set<String> currentImportedFiles = new LinkedHashSet<>();
     /** The type variables the declaration being visited may legally mention; they name no type. */
     private Set<String> typeVariables = new HashSet<>();
     private final TypeSolver typeSolver;
@@ -154,6 +160,25 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      */
     public JavaTreeListener(final OOPSourceCodeModel srcModel, final ProjectFile file,
             final TypeSolver typeSolver, final boolean shallow, final Predicate<String> otherLanguageTypes) {
+        this(srcModel, file, typeSolver, shallow, otherLanguageTypes, null);
+    }
+
+    /**
+     * A listener that also records the repository files the file's imports resolve to.
+     *
+     * @param srcModel           Source model to populate.
+     * @param file               The source file being parsed.
+     * @param typeSolver         Resolves type names.
+     * @param shallow            Whether to attribute method calls from written names only.
+     * @param otherLanguageTypes Whether a fully qualified name is a type another JVM language of the
+     *                           project declares; null for none.
+     * @param importIndex        The declarations of every Java file of the project, which an import
+     *                           directive is resolved against; null to record no imported files.
+     */
+    public JavaTreeListener(final OOPSourceCodeModel srcModel, final ProjectFile file,
+            final TypeSolver typeSolver, final boolean shallow, final Predicate<String> otherLanguageTypes,
+            final JavaDeclarationIndex importIndex) {
+        this.importIndex = importIndex;
         this.srcModel = srcModel;
         this.file = file;
         this.typeSolver = typeSolver;
@@ -246,6 +271,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         final String fullImportName = ctx.getNameAsString().trim().replaceAll(";", "");
         final String shortImportName = ctx.getName().getId().trim().replaceAll(";", "");
         currentImports.add(fullImportName);
+        recordImportedFiles(fullImportName, ctx.isStatic(), ctx.isAsterisk());
         hasStaticImport |= ctx.isStatic();
         // An on-demand import names a package, not a type, so it cannot go in the short-name map:
         // JavaParser reports `import a.*;` as name "a", which would record the useless entry
@@ -265,6 +291,21 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             currentImportsMap.put(shortImportName, fullImportName);
         }
         super.visit(ctx, arg);
+    }
+
+    /**
+     * Adds the repository files an import directive resolves to. The file's own path is left out: a
+     * file does not import itself.
+     */
+    private void recordImportedFiles(final String name, final boolean isStatic, final boolean onDemand) {
+        if (importIndex == null) {
+            return;
+        }
+        for (final String path : importIndex.filesImportedBy(name, isStatic, onDemand)) {
+            if (!path.equals(file.path())) {
+                currentImportedFiles.add(path);
+            }
+        }
     }
 
     /** Whether a name is written the way a constant is: upper case, digits and underscores. */
@@ -315,6 +356,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             declareMemberTypes(ctx, cmp);
             cmp.setName(ctx.getNameAsString());
             cmp.setImports(currentImports);
+            cmp.setImportedFiles(currentImportedFiles);
             if (ctx.getComment().isPresent()) {
                 cmp.setComment(ctx.getComment().get().toString());
             }
@@ -420,6 +462,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             declareMemberTypes(ctx, cmp);
             cmp.setName(ctx.getNameAsString());
             cmp.setImports(currentImports);
+            cmp.setImportedFiles(currentImportedFiles);
             if (ctx.getComment().isPresent()) {
                 cmp.setComment(ctx.getComment().get().toString());
             }
@@ -639,6 +682,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             declareMemberTypes(ctx, cmp);
             cmp.setName(ctx.getNameAsString());
             cmp.setImports(currentImports);
+            cmp.setImportedFiles(currentImportedFiles);
             cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
             recordAnnotations(ctx.getAnnotations(), cmp);
             if (ctx.getComment().isPresent()) {
@@ -689,6 +733,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                     componentStack));
             declareMemberTypes(ctx, enumCmp);
             enumCmp.setImports(currentImports);
+            enumCmp.setImportedFiles(currentImportedFiles);
             enumCmp.setName(ctx.getNameAsString());
             enumCmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
             recordAnnotations(ctx.getAnnotations(), enumCmp);

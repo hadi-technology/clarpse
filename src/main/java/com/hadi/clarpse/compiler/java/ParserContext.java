@@ -12,6 +12,7 @@ public class ParserContext {
     private final CombinedTypeSolver typeSolver;
     private final JavaParser parser;
     private Predicate<String> otherLanguageTypes = name -> false;
+    private JavaDeclarationIndex importIndex;
 
     public ParserContext(final String persistDir) {
         this(persistDir, java.util.List.of());
@@ -64,6 +65,26 @@ public class ParserContext {
         } else {
             this.otherLanguageTypes = types;
         }
+        return this;
+    }
+
+    /**
+     * The repository's declarations, which the files an import directive resolves to are read from.
+     *
+     * @return The index, or null when the files imported are not recorded.
+     */
+    public JavaDeclarationIndex importIndex() {
+        return importIndex;
+    }
+
+    /**
+     * This context, recording the repository files each parsed file's imports resolve to.
+     *
+     * @param index The declarations of every Java file of the project; null to record none.
+     * @return This context.
+     */
+    public ParserContext withImportIndex(final JavaDeclarationIndex index) {
+        this.importIndex = index;
         return this;
     }
 }

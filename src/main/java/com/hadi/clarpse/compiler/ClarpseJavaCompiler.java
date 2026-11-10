@@ -56,9 +56,10 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                 final String projectDir = persistDir;
                 final Set<String> sourceRoots = sourceRoots(javaFiles, projectDir);
                 final KotlinDeclarations kotlin = kotlinDeclarations(projectFiles);
+                final JavaDeclarationIndex importIndex = JavaDeclarationIndex.of(projectFiles.files(Lang.JAVA));
                 final ParseResults parseResults = parseJavaFiles(javaFiles,
                         () -> new ParserContext(projectDir, sourceRoots).withOtherLanguageTypes(
-                                kotlinTypes(kotlin)), false);
+                                kotlinTypes(kotlin)).withImportIndex(importIndex), false);
                 requireKotlinRead(kotlin);
                 srcModel.merge(parseResults.model());
                 compileFailures.addAll(parseResults.failures());
@@ -311,7 +312,8 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
 
         ParserContext newContext() {
             return new ParserContext(JavaParserFactory.setupIndexedTypeSolver(
-                    new IndexedTypeSolver(index, units))).withOtherLanguageTypes(kotlinTypes(kotlin));
+                    new IndexedTypeSolver(index, units))).withOtherLanguageTypes(kotlinTypes(kotlin))
+                    .withImportIndex(index);
         }
 
         /** Whether the repository declares the named type, in a Java file or a Kotlin one. */

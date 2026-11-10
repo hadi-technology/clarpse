@@ -291,16 +291,4 @@ public class TypeScriptImportedFilesTest {
         assertEquals(List.of("/b.ts", "/a.ts"), List.copyOf(new Component(copy).importedFiles()));
         assertFalse(source.importedFiles().contains("/b.ts"));
     }
-
-    @Test
-    public void aJavaComponentHasNone() throws Exception {
-        final ProjectFiles files = new ProjectFiles();
-        files.insertFile(new ProjectFile("/src/a/A.java", "package a; import b.B; public class A { B b; }"));
-        files.insertFile(new ProjectFile("/src/b/B.java", "package b; public class B {}"));
-        final OOPSourceCodeModel model = new ClarpseProject(files, Lang.JAVA).result().model();
-        final Component a = model.component("a.A").orElseThrow();
-
-        assertFalse(a.imports().isEmpty());
-        assertTrue(a.importedFiles().isEmpty());
-    }
 }
