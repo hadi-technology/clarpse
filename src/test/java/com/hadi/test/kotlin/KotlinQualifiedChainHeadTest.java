@@ -46,9 +46,12 @@ public class KotlinQualifiedChainHeadTest {
                         "  fun field() { member.f.Name.run() }",
                         "  fun imported() { settings.i.Name.run() }",
                         "}",
-                        "class Inheriting : Base() {",
+                        "class Inheriting : Missing() {",
                         "  fun unknown() { vendor.u.Name.run() }",
                         "  fun rooted() { org.known.Name.run() }",
+                        "}",
+                        "class Reading : Base() {",
+                        "  fun known() { vendor.k.Name.run() }",
                         "}")))
                 .model();
     }
@@ -87,5 +90,10 @@ public class KotlinQualifiedChainHeadTest {
         final java.util.Set<String> unknown = targets(component(model, "web.Inheriting.unknown()"));
         assertFalse(unknown.toString(), unknown.contains("vendor.u.Name"));
         assertTrue(targets(component(model, "web.Inheriting.rooted()")).contains("org.known.Name"));
+    }
+
+    @Test
+    public void aSupertypeTheRepositoryDeclaresPassesDownOnlyWhatItDeclares() {
+        assertTrue(targets(component(model, "web.Reading.known()")).contains("vendor.k.Name"));
     }
 }

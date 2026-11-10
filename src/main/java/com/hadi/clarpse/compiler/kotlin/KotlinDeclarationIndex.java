@@ -31,8 +31,18 @@ import java.util.TreeSet;
  */
 final class KotlinDeclarationIndex {
 
-    /** A Kotlin type declaration, where it is, and what kind it is. */
-    record KotlinDeclaration(String uniqueName, String path, TypeKind kind) {
+    /**
+     * A Kotlin type declaration, where it is, and what kind it is.
+     *
+     * @param uniqueName The fully qualified name.
+     * @param path       The declaring file's path.
+     * @param kind       The kind of declaration.
+     * @param type       The declaration, or null for the file class of top-level members.
+     * @param file       The declaring file, or null for a file class.
+     * @param enclosing  The unique names of the type and the types it is nested in, innermost first.
+     */
+    record KotlinDeclaration(String uniqueName, String path, TypeKind kind, KotlinTypeModel type,
+                             KotlinFileModel file, List<String> enclosing) {
     }
 
     /** A {@code typealias} and the file it is declared in, whose scope its target is written in. */
@@ -65,11 +75,11 @@ final class KotlinDeclarationIndex {
                 }
             }
             for (final KotlinTypeModel type : file.types) {
-                addType(type, qualify(file.packageName, type.name), file.path());
+                addType(type, qualify(file.packageName, type.name), file, List.of());
             }
             final String fileClass = fileClassName(file);
             if (fileClass != null) {
-                addDeclaration(new KotlinDeclaration(fileClass, file.path(), TypeKind.CLASS));
+                addDeclaration(new KotlinDeclaration(fileClass, file.path(), TypeKind.CLASS, null, null, List.of()));
                 for (final KotlinMemberModel member : file.topLevelMembers) {
                     if (member.name != null && !member.name.isEmpty()) {
                         fileClassByCallable.putIfAbsent(qualify(file.packageName, member.name), fileClass);
@@ -83,13 +93,18 @@ final class KotlinDeclarationIndex {
         kotlinTypes.values().forEach(list -> list.sort((left, right) -> left.path().compareTo(right.path())));
     }
 
-    private void addType(final KotlinTypeModel type, final String uniqueName, final String path) {
+    private void addType(final KotlinTypeModel type, final String uniqueName, final KotlinFileModel file,
+                         final List<String> outer) {
         if (type.name == null || type.name.isEmpty()) {
             return;
         }
-        addDeclaration(new KotlinDeclaration(uniqueName, path, type.kind));
+        final List<String> enclosing = new ArrayList<>();
+        enclosing.add(uniqueName);
+        enclosing.addAll(outer);
+        addDeclaration(new KotlinDeclaration(uniqueName, file.path(), type.kind, type, file,
+                List.copyOf(enclosing)));
         for (final KotlinTypeModel nested : type.nestedTypes) {
-            addType(nested, uniqueName + "." + nested.name, path);
+            addType(nested, uniqueName + "." + nested.name, file, enclosing);
         }
     }
 
@@ -203,6 +218,20 @@ final class KotlinDeclarationIndex {
             return null;
         }
         return declarations.get(0).kind();
+    }
+
+    /**
+     * The one Kotlin declaration of a type.
+     *
+     * @param uniqueName A fully qualified name.
+     * @return The declaration, or null when no Kotlin file declares the name as a type, or several do.
+     */
+    KotlinDeclaration declaration(final String uniqueName) {
+        final List<KotlinDeclaration> declarations = kotlinTypes.get(uniqueName);
+        if (declarations == null || declarations.size() != 1 || declarations.get(0).type() == null) {
+            return null;
+        }
+        return declarations.get(0);
     }
 
     /**

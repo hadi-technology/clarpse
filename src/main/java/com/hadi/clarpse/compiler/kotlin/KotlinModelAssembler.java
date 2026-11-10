@@ -61,12 +61,14 @@ final class KotlinModelAssembler {
     private static final Set<String> VISIBILITIES = Set.of("public", "internal", "protected", "private");
 
     private final KotlinNameResolver resolver;
+    private final KotlinTypeMembers typeMembers;
     private final OOPSourceCodeModel model = new OOPSourceCodeModel();
     private final Stack<Component> stack = new Stack<>();
     private final Map<String, Set<String>> importedFilesByPath = new HashMap<>();
 
     private KotlinModelAssembler(final KotlinDeclarationIndex index) {
         this.resolver = new KotlinNameResolver(index);
+        this.typeMembers = new KotlinTypeMembers(resolver);
     }
 
     /**
@@ -129,13 +131,14 @@ final class KotlinModelAssembler {
         final Set<String> typeParameters = new LinkedHashSet<>(outerTypeParameters);
         typeParameters.addAll(type.typeParameters);
         final Scope scope = new Scope(file, List.copyOf(enclosing), typeParameters);
-        final Set<String> memberNames = enclosingMemberNames(type);
-        boolean inheritsMembers = !type.superTypes.isEmpty();
+        final KotlinTypeMembers.MemberSet declared = typeMembers.of(type, scope);
+        final Set<String> memberNames = new HashSet<>(declared.names());
+        boolean ancestryUnknown = !declared.complete();
         if (outer != null) {
             memberNames.addAll(outer.memberNames);
-            inheritsMembers |= outer.inheritsMembers;
+            ancestryUnknown |= outer.ancestryUnknown;
         }
-        final MemberContext context = new MemberContext(scope, memberNames, inheritsMembers);
+        final MemberContext context = new MemberContext(scope, memberNames, ancestryUnknown);
 
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
@@ -145,7 +148,7 @@ final class KotlinModelAssembler {
         }
         final Set<String> ownNames = new HashSet<>(memberNames);
         ownNames.addAll(type.initializerDeclarations);
-        addTypeReferences(component, type.ownUsages, scope, new Shadow(ownNames, inheritsMembers));
+        addTypeReferences(component, type.ownUsages, scope, new Shadow(ownNames, ancestryUnknown));
 
         final List<Object> declarations = new ArrayList<>(type.members);
         declarations.addAll(type.nestedTypes);
@@ -236,7 +239,7 @@ final class KotlinModelAssembler {
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
         addAnnotationReferences(component, member.annotations, scope);
-        final Shadow closer = new Shadow(closerNames(member, context), context.inheritsMembers);
+        final Shadow closer = new Shadow(closerNames(member, context), context.ancestryUnknown);
         if (componentType.isMethodComponent()) {
             for (final KotlinParameterModel parameter : member.parameters) {
                 addParameter(file, parameter, member, component, scope, closer);
@@ -458,16 +461,37 @@ final class KotlinModelAssembler {
             if (carriedByAValue(usage, scope, closer)) {
                 continue;
             }
+            if (usage.call() && callBoundElsewhere(usage.name(), scope, closer)) {
+                continue;
+            }
             if (usage.value() && (closer.names().contains(usage.name())
                     || !KotlinDeclarationIndex.readsAsTypeName(usage.name())
                     || resolver.index().fileClassOf(KotlinDeclarationIndex.qualify(
                             scope.file().packageName, usage.name())) != null)) {
                 continue;
             }
-            if (seen.add(usage.name() + "|" + usage.expression() + "|" + usage.value())) {
+            if (seen.add(usage.name() + "|" + usage.expression() + "|" + usage.value() + "|" + usage.call())) {
                 addTypeReference(component, usage, scope);
             }
         }
+    }
+
+    /**
+     * Whether a call name binds to something closer in scope than the type or import it would
+     * otherwise be read as: a function or property the class, its readable supertypes or the member
+     * declares by that name, or, when a supertype the parse cannot read may pass the name down, any
+     * name an import supplies. Nothing is recorded then, because the call may not construct that type.
+     */
+    private boolean callBoundElsewhere(final String name, final Scope scope, final Shadow closer) {
+        final KotlinNameResolver.Origin origin = resolver.originOf(name, scope);
+        if (origin == KotlinNameResolver.Origin.ENCLOSING) {
+            return false;
+        }
+        if (closer.names().contains(name)) {
+            return true;
+        }
+        return closer.ancestryUnknown() && (origin == KotlinNameResolver.Origin.IMPORT
+                || origin == KotlinNameResolver.Origin.STAR);
     }
 
     /**
@@ -524,10 +548,11 @@ final class KotlinModelAssembler {
             return;
         }
         final Set<String> closer = closerNames(member, context);
-        final boolean implicitReceiver = member.receiverType != null || context.inheritsMembers;
+        final boolean implicitReceiver = member.receiverType != null || context.ancestryUnknown;
         for (final String called : member.calledNames) {
             final String fileClass = resolver.fileClassOfCall(called, scope,
-                    implicitReceiver || closer.contains(called) || member.calledInLambdas.contains(called));
+                    implicitReceiver || closer.contains(called) || member.calledInLambdas.contains(called),
+                    implicitReceiver || closer.contains(called));
             if (fileClass == null) {
                 continue;
             }
@@ -535,26 +560,6 @@ final class KotlinModelAssembler {
             reference.setResolutionKind(ResolutionKind.EXACT);
             ParseUtil.insertCmpRef(component, reference, stack);
         }
-    }
-
-    /** The names a type, and its companion object, declare members by. */
-    private static Set<String> enclosingMemberNames(final KotlinTypeModel type) {
-        final Set<String> names = new HashSet<>();
-        final List<KotlinMemberModel> members = new ArrayList<>(type.members);
-        for (final KotlinTypeModel nested : type.nestedTypes) {
-            if (nested.companion) {
-                members.addAll(nested.members);
-            }
-        }
-        for (final KotlinMemberModel member : members) {
-            names.add(member.name);
-            for (final KotlinParameterModel parameter : member.parameters) {
-                if (parameter.property) {
-                    names.add(parameter.name);
-                }
-            }
-        }
-        return names;
     }
 
     private static String memberIdentifier(final KotlinMemberModel member) {
@@ -681,12 +686,12 @@ final class KotlinModelAssembler {
     private static final class MemberContext {
         private final Scope scope;
         private final Set<String> memberNames;
-        private final boolean inheritsMembers;
+        private final boolean ancestryUnknown;
 
-        MemberContext(final Scope scope, final Set<String> memberNames, final boolean inheritsMembers) {
+        MemberContext(final Scope scope, final Set<String> memberNames, final boolean ancestryUnknown) {
             this.scope = scope;
             this.memberNames = memberNames;
-            this.inheritsMembers = inheritsMembers;
+            this.ancestryUnknown = ancestryUnknown;
         }
     }
 }

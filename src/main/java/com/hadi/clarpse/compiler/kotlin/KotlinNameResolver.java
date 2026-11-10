@@ -167,6 +167,59 @@ final class KotlinNameResolver {
         return null;
     }
 
+    /** Where in the order of lookup a simple name is found. */
+    enum Origin {
+        /** An enclosing type, or a type nested in one. */
+        ENCLOSING,
+        /** An import of that exact name. */
+        IMPORT,
+        /** The file's own package. */
+        PACKAGE,
+        /** A star import of a package the repository declares the type in. */
+        STAR,
+        /** A package every Kotlin file imports. */
+        DEFAULT,
+        /** Nothing in scope declares a type of that name. */
+        NONE
+    }
+
+    /**
+     * Where a simple name is found, in the order {@link #resolve} looks.
+     *
+     * @param name  The name.
+     * @param scope Where it is written.
+     * @return The level of the lookup that settles it.
+     */
+    Origin originOf(final String name, final Scope scope) {
+        final KotlinFileModel file = scope.file();
+        for (final String enclosing : scope.enclosingTypes()) {
+            if (enclosing.endsWith("." + name) || enclosing.equals(name) || declares(enclosing + "." + name)) {
+                return Origin.ENCLOSING;
+            }
+        }
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (!kotlinImport.star() && name.equals(kotlinImport.visibleName())) {
+                return Origin.IMPORT;
+            }
+        }
+        if (declares(KotlinDeclarationIndex.qualify(file.packageName, name))) {
+            return Origin.PACKAGE;
+        }
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (kotlinImport.star() && declares(kotlinImport.target() + "." + name)) {
+                return Origin.STAR;
+            }
+        }
+        if (DEFAULT_IMPORTS.containsKey(name)) {
+            return Origin.DEFAULT;
+        }
+        return Origin.NONE;
+    }
+
+    private boolean declares(final String uniqueName) {
+        return index.isType(uniqueName) || index.alias(uniqueName) != null;
+    }
+
     /** Whether a simple name is a type, or a type alias, something in scope declares. */
     boolean namesTypeInScope(final String name, final Scope scope) {
         return scope.typeParameters().contains(name) || resolveSimple(name, scope, true, 0) != null;
@@ -244,12 +297,19 @@ final class KotlinNameResolver {
      * @param scope    Where the call is written.
      * @param shadowed Whether something in closer scope -- a parameter, a local, a member, an
      *                 implicit receiver -- may declare a function of that name.
+     * @param importShadowed Whether something in closer scope may declare it ahead of an import
+     *                 by name too: a name a parameter, local or member of the class or its readable
+     *                 supertypes declares, or one a supertype the parse cannot read may pass down.
      * @return The file class's fully qualified name, or null.
      */
-    String fileClassOfCall(final String name, final Scope scope, final boolean shadowed) {
+    String fileClassOfCall(final String name, final Scope scope, final boolean shadowed,
+                           final boolean importShadowed) {
         final KotlinFileModel file = scope.file();
         for (final KotlinImport kotlinImport : file.imports) {
             if (!kotlinImport.star() && name.equals(kotlinImport.visibleName())) {
+                if (importShadowed) {
+                    return null;
+                }
                 return index.fileClassOf(kotlinImport.target());
             }
         }

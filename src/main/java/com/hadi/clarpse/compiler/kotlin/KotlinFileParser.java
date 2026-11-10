@@ -255,6 +255,7 @@ final class KotlinFileParser {
                 type.kind = TypeKind.CLASS;
             }
             type.companion = modifiers.contains("companion");
+            type.data = modifiers.contains("data");
             type.name = identifier(node);
             if (type.name == null && type.companion) {
                 type.name = "Companion";
@@ -703,7 +704,7 @@ final class KotlinFileParser {
             if (name.isEmpty()) {
                 return;
             }
-            usages.add(new TypeUsage(name, true));
+            usages.add(new TypeUsage(name, true, false, true));
             recordCall(call, name, member);
         }
 

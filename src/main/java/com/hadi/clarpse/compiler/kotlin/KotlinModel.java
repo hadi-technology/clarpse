@@ -97,11 +97,17 @@ final class KotlinModel {
      *                   rather than in a type position.
      * @param value      Whether it is a name used as a value on its own, such as an object passed as
      *                   an argument, which counts only when it names a repository type.
+     * @param call       Whether it is the name of a call, {@code Name(...)}, which a function or a
+     *                   property closer in scope may be the target of.
      */
-    record TypeUsage(String name, boolean expression, boolean value) {
+    record TypeUsage(String name, boolean expression, boolean value, boolean call) {
 
         TypeUsage(final String name, final boolean expression) {
-            this(name, expression, false);
+            this(name, expression, false, false);
+        }
+
+        TypeUsage(final String name, final boolean expression, final boolean value) {
+            this(name, expression, value, false);
         }
     }
 
@@ -153,6 +159,8 @@ final class KotlinModel {
         int implementationHash;
         int startOffset;
         boolean companion;
+        /** Whether it is a {@code data} class, which generates {@code copy} and the component functions. */
+        boolean data;
         final List<String> modifiers = new ArrayList<>();
         final List<KotlinAnnotationUse> annotations = new ArrayList<>();
         final List<KotlinSuperType> superTypes = new ArrayList<>();
