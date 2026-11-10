@@ -79,6 +79,38 @@ public final class KotlinDeclarations {
     }
 
     /**
+     * The Kotlin files declaring the type a name falls under, or the file class holding top-level
+     * functions and properties that it names (the {@code @file:JvmName} if one is given, else
+     * {@code <File>Kt}), nested types included.
+     *
+     * @param uniqueName A fully qualified name, possibly of a nested type.
+     * @return The files' paths, sorted; empty when no Kotlin file declares it.
+     * @throws IllegalStateException When reading the Kotlin files is interrupted or fails unexpectedly.
+     */
+    public List<String> filesDeclaring(final String uniqueName) {
+        if (uniqueName == null || uniqueName.isEmpty()) {
+            return List.of();
+        }
+        final Set<String> found = new java.util.TreeSet<>();
+        collect(UNREAD_HEADERS, uniqueName, found);
+        collect("", uniqueName, found);
+        int dot = uniqueName.indexOf('.');
+        while (dot > 0) {
+            collect(uniqueName.substring(0, dot), uniqueName, found);
+            dot = uniqueName.indexOf('.', dot + 1);
+        }
+        return List.copyOf(found);
+    }
+
+    private void collect(final String packageName, final String uniqueName, final Set<String> into) {
+        final List<ProjectFile> files = filesByPackage.get(packageName);
+        if (files != null) {
+            into.addAll(groups.computeIfAbsent(packageName, key -> new Group(files)).index()
+                    .kotlinFilesDeclaring(uniqueName));
+        }
+    }
+
+    /**
      * Why reading some package's files failed, if one did. A question that met the failure threw
      * {@link IllegalStateException}; a caller that cannot see where its questions went asks this
      * once it is done, so the failure is not mistaken for no Kotlin file declaring the name.

@@ -76,14 +76,14 @@ public final class FileParser {
         final JavaParser parser = context.parser();
         return walk(file, index, () -> parser.parse(ParseStart.COMPILATION_UNIT,
                 new StringProvider(file.content())).getResult(), context.typeSolver(), shallow,
-                context.otherLanguageTypes(), context.importIndex());
+                context.otherLanguageTypes(), context.importResolver());
     }
 
     private static ParseOutcome walk(final ProjectFile file, final int index,
                                      final java.util.function.Supplier<java.util.Optional<CompilationUnit>> unit,
                                      final CombinedTypeSolver typeSolver, final boolean shallow,
                                      final java.util.function.Predicate<String> otherLanguageTypes,
-                                     final JavaDeclarationIndex importIndex) {
+                                     final JavaImportResolver importResolver) {
         final OOPSourceCodeModel localModel = new OOPSourceCodeModel();
         CompileFailure failure = null;
         try {
@@ -97,7 +97,7 @@ public final class FileParser {
                     LOGGER.warn("Compilation unit (" + file.path() + ") is unparseable!");
                     failure = new CompileFailure(file, "PARSE_FAILED", FailureCode.PARSE_FAILED);
                 } else {
-                    new JavaTreeListener(localModel, file, typeSolver, shallow, otherLanguageTypes, importIndex)
+                    new JavaTreeListener(localModel, file, typeSolver, shallow, otherLanguageTypes, importResolver)
                             .visit(cu, null);
                 }
             }

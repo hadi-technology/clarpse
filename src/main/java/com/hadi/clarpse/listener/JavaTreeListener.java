@@ -56,7 +56,7 @@ import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclar
 import com.github.javaparser.resolution.model.SymbolReference;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.hadi.clarpse.compiler.ProjectFile;
-import com.hadi.clarpse.compiler.java.JavaDeclarationIndex;
+import com.hadi.clarpse.compiler.java.JavaImportResolver;
 import com.hadi.clarpse.TypeNames;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
@@ -95,7 +95,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     private final Stack<Component> componentStack = new Stack<>();
     private final Set<String> currentImports = new HashSet<>();
     /** The declarations imports are resolved against, or null when imported files are not recorded. */
-    private final JavaDeclarationIndex importIndex;
+    private final JavaImportResolver importResolver;
     /** The repository files the import directives read so far resolve to, in source order. */
     private final Set<String> currentImportedFiles = new LinkedHashSet<>();
     /** The type variables the declaration being visited may legally mention; they name no type. */
@@ -172,13 +172,13 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      * @param shallow            Whether to attribute method calls from written names only.
      * @param otherLanguageTypes Whether a fully qualified name is a type another JVM language of the
      *                           project declares; null for none.
-     * @param importIndex        The declarations of every Java file of the project, which an import
-     *                           directive is resolved against; null to record no imported files.
+     * @param importResolver     Resolves an import directive to the repository files it names; null to
+     *                           record no imported files.
      */
     public JavaTreeListener(final OOPSourceCodeModel srcModel, final ProjectFile file,
             final TypeSolver typeSolver, final boolean shallow, final Predicate<String> otherLanguageTypes,
-            final JavaDeclarationIndex importIndex) {
-        this.importIndex = importIndex;
+            final JavaImportResolver importResolver) {
+        this.importResolver = importResolver;
         this.srcModel = srcModel;
         this.file = file;
         this.typeSolver = typeSolver;
@@ -298,10 +298,10 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      * file does not import itself.
      */
     private void recordImportedFiles(final String name, final boolean isStatic, final boolean onDemand) {
-        if (importIndex == null) {
+        if (importResolver == null) {
             return;
         }
-        for (final String path : importIndex.filesImportedBy(name, isStatic, onDemand)) {
+        for (final String path : importResolver.filesImportedBy(name, isStatic, onDemand)) {
             if (!path.equals(file.path())) {
                 currentImportedFiles.add(path);
             }

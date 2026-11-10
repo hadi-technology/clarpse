@@ -297,12 +297,50 @@ public class JavaImportedFilesTest {
     }
 
     @Test
-    public void aTypeOfAnotherLanguageIsNotAJavaFile() throws Exception {
-        final ProjectFiles files = withModel("import kt.Widget;");
-        files.insertFile(new ProjectFile("/src/kt/Widget.kt", "package kt\nclass Widget\n"));
+    public void aWildcardOverANestedTypeGivesTheFileOfTheTopLevelType() throws Exception {
+        assertEquals(List.of(MODEL + "Order.java"),
+                importedBy(compile(withModel("import model.Order.Line.*;")), "app.User"));
+        assertEquals(List.of(MODEL + "Order.java"),
+                importedBy(compile(withModel("import static model.Order.Line.*;")), "app.User"));
+    }
+
+    @Test
+    public void aKotlinClassImportedByJavaGivesTheKotlinFile() throws Exception {
+        final ProjectFiles files = withModel("import kt.Widget;\nimport kt.Widget.Part;\nimport model.Customer;");
+        files.insertFile(new ProjectFile("/src/kt/Widget.kt", "package kt\nclass Widget { class Part }\n"));
+        final OOPSourceCodeModel model = compile(files);
+
+        assertEquals(List.of("/src/kt/Widget.kt", MODEL + "Customer.java"), importedBy(model, "app.User"));
+    }
+
+    @Test
+    public void aStaticImportOfAKotlinTopLevelFunctionGoesThroughTheFileClass() throws Exception {
+        final ProjectFiles files = withModel("import static kt.UtilKt.shout;\nimport static kt.Named.*;");
+        files.insertFile(new ProjectFile("/src/kt/Util.kt", "package kt\nfun shout() = 1\n"));
+        files.insertFile(new ProjectFile("/src/kt/Other.kt",
+                "@file:JvmName(\"Named\")\npackage kt\nfun whisper() = 1\n"));
+        final OOPSourceCodeModel model = compile(files);
+
+        assertEquals(List.of("/src/kt/Util.kt", "/src/kt/Other.kt"), importedBy(model, "app.User"));
+    }
+
+    @Test
+    public void aKotlinPackageAndAnUnknownKotlinFileClassAddNothing() throws Exception {
+        final ProjectFiles files = withModel("import kt.*;\nimport static kt.OtherKt.shout;\n"
+                + "import static kt.Util.shout;");
+        files.insertFile(new ProjectFile("/src/kt/Util.kt", "package kt\nfun shout() = 1\n"));
+        files.insertFile(new ProjectFile("/src/kt/Named.kt", "package kt\nclass Named\n"));
         final OOPSourceCodeModel model = compile(files);
 
         assertTrue(importedBy(model, "app.User").isEmpty());
+    }
+
+    @Test
+    public void aJavaTypeIsPreferredToAKotlinOneOfTheSameName() throws Exception {
+        final ProjectFiles files = withModel("import model.Customer;");
+        files.insertFile(new ProjectFile("/src/kt/Customer.kt", "package model\nclass Customer\n"));
+
+        assertEquals(List.of(MODEL + "Customer.java"), importedBy(compile(files), "app.User"));
     }
 
     @Test

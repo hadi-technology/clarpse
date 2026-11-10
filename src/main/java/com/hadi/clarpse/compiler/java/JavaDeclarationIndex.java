@@ -25,8 +25,6 @@ import java.util.regex.Pattern;
  *
  * <p>A name declared by several files maps to all of them, sorted by path, so a lookup is
  * deterministic.
- *
- * <p>It also answers which repository files an import directive names exactly.
  */
 public final class JavaDeclarationIndex {
 
@@ -134,42 +132,6 @@ public final class JavaDeclarationIndex {
      */
     public boolean declares(final String qualifiedName) {
         return topLevelName(qualifiedName) != null;
-    }
-
-    /**
-     * The repository files an import directive names exactly.
-     *
-     * <p>A single-type import gives the files declaring the top-level type its name falls under,
-     * so a nested type leads to the file of the type containing it. A static import names a member
-     * of a type, so its last segment is dropped before the lookup; a static on-demand import names
-     * the type itself. An on-demand import of a package names no file and gives nothing; one whose
-     * name is a top-level type gives the files declaring it. A name that matches no repository type
-     * gives nothing.
-     *
-     * @param name     The imported name; for an on-demand import the package or type, without
-     *                 {@code .*}.
-     * @param isStatic Whether the import is {@code import static}.
-     * @param onDemand Whether the import is an on-demand ({@code .*}) import.
-     * @return The files' paths, each sorted by path; never null.
-     */
-    public List<String> filesImportedBy(final String name, final boolean isStatic, final boolean onDemand) {
-        if (name == null || name.isEmpty()) {
-            return List.of();
-        }
-        if (onDemand && !isStatic) {
-            return filesDeclaringExactly(name);
-        }
-        if (onDemand) {
-            return filesDeclaring(name);
-        }
-        if (isStatic) {
-            final int dot = name.lastIndexOf('.');
-            if (dot > 0) {
-                return filesDeclaring(name.substring(0, dot));
-            }
-            return List.of();
-        }
-        return filesDeclaring(name);
     }
 
     /**
