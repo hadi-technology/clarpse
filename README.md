@@ -76,8 +76,9 @@ Kotlin is modelled the way the JVM sees it, so its components line up with Java'
   is referenced when it is a repository type and no parameter, local, member or top-level function
   or property in scope has that name.
 - In a multiplatform project the `expect` and `actual` declarations of one name are one component,
-  and a call to an `expect` function binds to the declaring file first in path order, so the model
-  does not depend on the order the files are read in.
+  and a call to an `expect` function binds to the `expect` declaration, so the model does not depend
+  on the order the files are read in. A call to functions that are all `actual`, with no `expect` in the
+  project, binds to none of them.
 - Not modelled yet: the return type of a call on a variable (`order.lines().first()` references
   `Order`, not `List`), which a Java compile gets from its type solver; locals declared by
   destructuring (`val (a, b) = pair`); and a library object named on its own as a value (`Unit`),

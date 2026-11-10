@@ -46,6 +46,10 @@ final class KotlinDeclarationIndex {
                              KotlinFileModel file, List<String> enclosing) {
     }
 
+    /** A top-level function or property, the file class that holds it, and its modifiers. */
+    private record CallableDeclaration(String fileClass, List<String> modifiers) {
+    }
+
     /** A {@code typealias} and the file it is declared in, whose scope its target is written in. */
     record AliasDeclaration(KotlinTypeAlias alias, KotlinFileModel file) {
     }
@@ -58,6 +62,7 @@ final class KotlinDeclarationIndex {
     private final Set<String> packages = new HashSet<>();
     private final Map<String, List<KotlinDeclaration>> kotlinTypes = new HashMap<>();
     private final Map<String, String> fileClassByCallable = new HashMap<>();
+    private final Map<String, List<CallableDeclaration>> declarationsByCallable = new HashMap<>();
     private final Map<String, AliasDeclaration> aliases = new HashMap<>();
     private final Map<String, Set<String>> filesByCallable = new HashMap<>();
     private final JavaDeclarationIndex javaIndex;
@@ -90,7 +95,8 @@ final class KotlinDeclarationIndex {
                 addDeclaration(new KotlinDeclaration(fileClass, file.path(), TypeKind.CLASS, null, null, List.of()));
                 for (final KotlinMemberModel member : file.topLevelMembers) {
                     if (member.name != null && !member.name.isEmpty()) {
-                        fileClassByCallable.putIfAbsent(qualify(file.packageName, member.name), fileClass);
+                        declarationsByCallable.computeIfAbsent(qualify(file.packageName, member.name),
+                                key -> new ArrayList<>()).add(new CallableDeclaration(fileClass, member.modifiers));
                         if (member.kind == KotlinModel.MemberKind.FUNCTION) {
                             topLevelFunctions.computeIfAbsent(qualify(file.packageName, member.name),
                                     key -> new ArrayList<>()).add(new TopLevelFunction(fileClass, member, file));
@@ -103,6 +109,33 @@ final class KotlinDeclarationIndex {
             }
         }
         kotlinTypes.values().forEach(list -> list.sort((left, right) -> left.path().compareTo(right.path())));
+        declarationsByCallable.forEach((callable, declarations) -> {
+            final String fileClass = declaringFileClass(declarations);
+            if (fileClass != null) {
+                fileClassByCallable.put(callable, fileClass);
+            }
+        });
+    }
+
+    /**
+     * The file class a call to a name binds to, given every top-level declaration of the name in path
+     * order. A declaration alone is the one meant. Of several, the {@code expect} declaration is
+     * what common code resolves to; when all of them are {@code actual} and no {@code expect} is in
+     * the project, none is the one meant and the call binds to none. Declarations that are neither
+     * (overloads in several files) keep the first in path order.
+     */
+    private static String declaringFileClass(final List<CallableDeclaration> declarations) {
+        for (final CallableDeclaration declaration : declarations) {
+            if (declaration.modifiers().contains("expect")) {
+                return declaration.fileClass();
+            }
+        }
+        final boolean allActual = declarations.stream().allMatch(
+                declaration -> declaration.modifiers().contains("actual"));
+        if (allActual && declarations.stream().map(CallableDeclaration::fileClass).distinct().count() > 1) {
+            return null;
+        }
+        return declarations.get(0).fileClass();
     }
 
     private void addType(final KotlinTypeModel type, final String uniqueName, final KotlinFileModel file,
