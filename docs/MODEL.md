@@ -539,3 +539,41 @@ Behaviour that legitimately differs, because the languages differ.
   Wrong references are removed, and missed references are added. Pin the version if exact
   reproducibility matters, and run on the same JDK as well (§3.4).
 
+---
+
+## 11. Changes in 11.17.0
+
+User-visible changes in this release.
+
+- **New: `Component.importedFiles()`** (§5.2). The project files an import directive names exactly,
+  for all five languages.
+- **New: `ComponentType.NAMESPACE`** (§1.3). A TypeScript `namespace` block is a component. A
+  `switch` over `ComponentType` with no default branch no longer compiles, and a reader built
+  against an older version fails on the new value in serialised JSON.
+- **Deprecated: `ResolutionKind.UNIQUE_SIMPLE_NAME`** (§3.1). It is no longer produced.
+- **New: the member reference kind** (§2.3). Documented with the MemberReference type.
+- **Reference fixes** (§8). Each narrows or adds only references the source determines:
+  - Java: only `java.lang` is imported implicitly, after every import the file names, and the
+    table lists every public `java.lang` type; a bare name binds to the current package only when
+    the project declares a type of that name there; a call receiver that is not a type in scope
+    names no type; a directory loads to the same model as the archive of the same tree.
+  - Kotlin: a member of the class or its supertypes binds a call before an import does; calls on
+    typed receivers, `?.` calls, properties, `this` and companion members are read; a local without
+    a written type depends on the declared type of its initializer; names a `java.*` or `javax.*`
+    star import brings in resolve against the JDK; class annotation arguments are references.
+  - TypeScript: namespaces are components; `typeof` of a value, type-parameter defaults, the types
+    of explicitly typed lambda parameters, and decorators with their arguments are references;
+    inferred type text and type parameters are not recorded as references.
+  - Python: string annotations, class decorator arguments, declarations inside a module-level `if`
+    or `try`, and locals with an inferred class are read; an import that resolves to a stub names
+    the module file beside it.
+  - C#: a bare type name binds only to a type its namespace makes visible; an extension call
+    references the static class declaring the extension, and an extension edge needs the
+    receiver's own members to be known; `typeof`, explicitly typed lambda parameters and
+    expression-bodied members are read; an array or pointer type is not read as its element type;
+    an inferred `var` local is typed only by a plain `new` initializer; a receiver name the body may
+    declare again is not taken as the outer parameter.
+- **Release size.** The bundled Pyright and TypeScript runtimes now hold only the files their
+  daemons load, and the sources jar leaves the runtime bundles out.
+- **Dependency updates.** `jackson-databind` 2.22.0 to 2.22.3; `log4j-api` and `log4j-core` to
+  2.25.5.
