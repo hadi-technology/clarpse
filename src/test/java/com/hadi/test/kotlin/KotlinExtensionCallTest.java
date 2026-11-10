@@ -48,6 +48,25 @@ public class KotlinExtensionCallTest {
                         "package lib2",
                         "import app.Order",
                         "fun Order.pick(): Int = 2")),
+                new ProjectFile("/app/ext/Send.kt", String.join("\n",
+                        "package app.ext",
+                        "import app.Order",
+                        "fun Order.send(): Int = 1")),
+                new ProjectFile("/app/Mail.kt", String.join("\n",
+                        "package app",
+                        "import app.ext.*",
+                        "import io.lib.*",
+                        "class Opaque { fun f(o: Order) = o.send() }")),
+                new ProjectFile("/app/MailByName.kt", String.join("\n",
+                        "package app",
+                        "import app.ext.send",
+                        "import io.lib.*",
+                        "class Named { fun f(o: Order) = o.send() }")),
+                new ProjectFile("/app/MailProject.kt", String.join("\n",
+                        "package app",
+                        "import app.ext.*",
+                        "import java.util.*",
+                        "class Plain2 { fun f(o: Order) = o.send() }")),
                 new ProjectFile("/app/Use.kt", String.join("\n",
                         "package app",
                         "import lib.total",
@@ -136,5 +155,16 @@ public class KotlinExtensionCallTest {
     @Test
     public void anExtensionTheClassDeclaresItselfBindsFirst() {
         assertFalse(reaches("app.Shadowing.f(Order)", "lib.ExtKt"));
+    }
+
+    @Test
+    public void aStarImportOfAPackageOutsideTheRepositoryMayHoldTheExtensionThatIsCalled() {
+        assertFalse(reaches("app.Opaque.f(Order)", "app.ext.SendKt"));
+    }
+
+    @Test
+    public void anExplicitImportByNameOrOnlyProjectAndJdkStarImportsStillCredit() {
+        assertTrue(reaches("app.Named.f(Order)", "app.ext.SendKt"));
+        assertTrue(reaches("app.Plain2.f(Order)", "app.ext.SendKt"));
     }
 }

@@ -220,7 +220,7 @@ final class KotlinReceiverTyping {
                 extensions.add(visible);
             }
         }
-        if (extensions.isEmpty()) {
+        if (extensions.isEmpty() || (opaqueStarImport() && !importedByName(call.name()))) {
             return null;
         }
         final String fileClass = extensions.get(0).fileClass();
@@ -235,6 +235,30 @@ final class KotlinReceiverTyping {
             }
         }
         return null;
+    }
+
+    /**
+     * Whether the file star-imports a package that is neither the repository's nor the JDK's, which
+     * may bring in an extension of the same name that the call actually reaches.
+     */
+    private boolean opaqueStarImport() {
+        for (final KotlinModel.KotlinImport kotlinImport : scope.file().imports) {
+            if (kotlinImport.star() && !kotlinImport.target().startsWith("java.")
+                    && !kotlinImport.target().startsWith("javax.")
+                    && !resolver.index().declaresPackage(kotlinImport.target())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean importedByName(final String name) {
+        for (final KotlinModel.KotlinImport kotlinImport : scope.file().imports) {
+            if (!kotlinImport.star() && name.equals(kotlinImport.visibleName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean argumentsFit(final KotlinMemberModel function, final int arguments) {

@@ -13,6 +13,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +55,7 @@ final class KotlinDeclarationIndex {
     }
 
     private final Map<String, List<TopLevelFunction>> topLevelFunctions = new HashMap<>();
+    private final Set<String> packages = new HashSet<>();
     private final Map<String, List<KotlinDeclaration>> kotlinTypes = new HashMap<>();
     private final Map<String, String> fileClassByCallable = new HashMap<>();
     private final Map<String, AliasDeclaration> aliases = new HashMap<>();
@@ -79,6 +81,7 @@ final class KotlinDeclarationIndex {
                             key -> new LinkedHashSet<>()).add(file.path());
                 }
             }
+            packages.add(file.packageName);
             for (final KotlinTypeModel type : file.types) {
                 addType(type, qualify(file.packageName, type.name), file, List.of());
             }
@@ -227,6 +230,16 @@ final class KotlinDeclarationIndex {
             return null;
         }
         return declarations.get(0).kind();
+    }
+
+    /**
+     * Whether a Kotlin file of the repository declares this package.
+     *
+     * @param packageName A package name.
+     * @return Whether some Kotlin file's package is exactly that.
+     */
+    boolean declaresPackage(final String packageName) {
+        return packages.contains(packageName);
     }
 
     /**
