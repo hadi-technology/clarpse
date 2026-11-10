@@ -167,4 +167,124 @@ public class PythonCrossLanguageParityTest {
         assertTrue(refs.toString(), refs.contains("pkg.compat.Speedy"));
         assertTrue(refs.toString(), refs.stream().noneMatch(name -> name.endsWith("[ext]")));
     }
+
+    private static final String TYPES = lines(
+            "class Bar:",
+            "    pass",
+            "",
+            "class Item:",
+            "    class Inner:",
+            "        pass",
+            "",
+            "class Foo:",
+            "    def bar(self) -> Bar:",
+            "        return Bar()",
+            "",
+            "    def plain(self):",
+            "        return Bar()",
+            "",
+            "    def inner(self):",
+            "        return Item.Inner()",
+            "",
+            "class Holder:",
+            "    item: Item",
+            "",
+            "def make_qux():",
+            "    return Item()");
+
+    private static final String INFERRING = lines(
+            "from pathlib import Path",
+            "from typing import Optional, TypeVar",
+            "from pkg.types import Bar, Foo, Holder, Item, make_qux",
+            "",
+            "T = TypeVar('T')",
+            "",
+            "def from_method(f: Foo):",
+            "    b = f.bar()",
+            "    return b",
+            "",
+            "def from_unannotated_method(f: Foo):",
+            "    b = f.plain()",
+            "    return b",
+            "",
+            "def from_function():",
+            "    q = make_qux()",
+            "    return q",
+            "",
+            "def from_attribute(h: Holder):",
+            "    i = h.item",
+            "    return i",
+            "",
+            "def from_nested(f: Foo):",
+            "    n = f.inner()",
+            "    return n",
+            "",
+            "def from_library():",
+            "    p = Path('.')",
+            "    return p",
+            "",
+            "def from_optional(o: Optional[Bar]):",
+            "    kept = o",
+            "    return kept",
+            "",
+            "def annotated(f: Foo):",
+            "    a: Item = f.bar()",
+            "    return a",
+            "",
+            "def names_nothing(a: Bar, c: T, flag: bool, nope):",
+            "    number = 1",
+            "    words = []",
+            "    text = 'x'",
+            "    unknown = nope.make()",
+            "    either = a if flag else Item()",
+            "    typevar = c",
+            "    missing = Missing()",
+            "    return number");
+
+    private static PythonInlineProject inferring() throws Exception {
+        return PythonInlineProject.compile("/pkg/types.py", TYPES, "/pkg/use.py", INFERRING);
+    }
+
+    @Test
+    public void aLocalAssignedFromACallDependsOnTheClassPyrightInfersForIt() throws Exception {
+        final PythonInlineProject project = inferring();
+        assertEquals("[pkg.types.Bar]", project.localReferences("pkg.use.from_method", "b").toString());
+        assertEquals("[pkg.types.Bar]", project.localReferences("pkg.use.from_unannotated_method", "b").toString());
+        assertEquals("[pkg.types.Item]", project.localReferences("pkg.use.from_function", "q").toString());
+    }
+
+    @Test
+    public void aLocalAssignedFromAnAttributeDependsOnItsType() throws Exception {
+        assertEquals("[pkg.types.Item]", inferring().localReferences("pkg.use.from_attribute", "i").toString());
+    }
+
+    @Test
+    public void aNestedClassIsNamedByItsPathInItsFile() throws Exception {
+        assertEquals("[pkg.types.Item.Inner]", inferring().localReferences("pkg.use.from_nested", "n").toString());
+    }
+
+    @Test
+    public void aLibraryClassIsRecordedAsTheExternalClass() throws Exception {
+        assertEquals("[pathlib.Path[ext]]", inferring().localReferences("pkg.use.from_library", "p").toString());
+    }
+
+    @Test
+    public void anOptionalIsItsClassAndTheFunctionDependsOnWhatItsLocalsDo() throws Exception {
+        final PythonInlineProject project = inferring();
+        assertEquals("[pkg.types.Bar]", project.localReferences("pkg.use.from_optional", "kept").toString());
+        assertTrue(project.references("pkg.use.from_method").contains("pkg.types.Bar"));
+    }
+
+    @Test
+    public void aLocalWithAnAnnotationKeepsTheAnnotation() throws Exception {
+        assertEquals("[pkg.types.Item]", inferring().localReferences("pkg.use.annotated", "a").toString());
+    }
+
+    @Test
+    public void aTypeThatIsNotExactlyOneClassAddsNothing() throws Exception {
+        final PythonInlineProject project = inferring();
+        for (final String local : new String[] {"number", "words", "text", "unknown", "either", "typevar", "missing"}) {
+            assertEquals(local, "[]", project.localReferences("pkg.use.names_nothing", local).toString());
+        }
+    }
 }

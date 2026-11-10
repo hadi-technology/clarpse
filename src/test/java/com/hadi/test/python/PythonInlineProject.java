@@ -72,6 +72,17 @@ final class PythonInlineProject {
         return names;
     }
 
+    /** What a local variable of the given function references, internal targets by name and external ones by label. */
+    Set<String> localReferences(final String function, final String local) {
+        final Set<String> names = new TreeSet<>();
+        model.components()
+                .filter(cmp -> cmp.componentType() == ComponentType.LOCAL
+                        && cmp.uniqueName().startsWith(function + "(") && local.equals(cmp.name()))
+                .flatMap(cmp -> cmp.references().stream())
+                .forEach(ref -> names.add(ref.isExternal() ? ref.invokedComponent() + "[ext]" : ref.invokedComponent()));
+        return names;
+    }
+
     /** What the component references, internal targets by unique name and external ones by label. */
     Set<String> references(final String uniqueName) {
         final Set<String> names = new TreeSet<>();

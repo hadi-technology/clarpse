@@ -40,6 +40,7 @@ let state = {
   fileSystem: null,
   serviceProvider: null,
   importResolver: null,
+  evaluation: null,
   program: null,
   fileUriMap: new Map(),
   moduleDeclarations: new Map(),
@@ -1002,11 +1003,161 @@ function moduleFileFor(moduleName, ctx) {
  * recorded as a type reference. A module that cannot be read or parsed declares nothing and is
  * marked unparsed, so no name is ever attributed to it on the strength of a parse that did not happen.
  */
+/**
+ * The Pyright program that infers the types of unannotated locals, created on first use: the
+ * repository's import roots, the configured Python version and the bundled typeshed, so that the
+ * builtins and the standard library resolve and a class's own members are known. Null when the
+ * program cannot be built, in which case nothing is inferred.
+ */
+function evaluationProgram() {
+  if (state.evaluation !== null) {
+    return state.evaluation || null;
+  }
+  try {
+    const api = getPyrightApi();
+    const nullConsole = new api.console.NullConsole();
+    const tempFiles = new api.fileSystem.RealTempFile();
+    const fileSystem = api.fileSystem.createFromRealFileSystem(tempFiles, nullConsole);
+    const serviceProvider = api.serviceProvider.createServiceProvider(fileSystem, nullConsole, tempFiles);
+    const toUri = filePath => toFileUri(api, filePath, serviceProvider);
+    const configOptions = new api.configOptions.ConfigOptions(toUri(state.repoRoot));
+    configOptions.defaultExtraPaths = (state.extraModuleRoots || []).map(toUri);
+    applyPythonVersion(configOptions, resolvePythonVersionEnum(state.pythonVersion, api));
+    const typeshed = path.join(__dirname, 'node_modules', 'pyright', 'dist', 'typeshed-fallback');
+    if (!fs.existsSync(typeshed)) {
+      throw new Error('typeshed missing');
+    }
+    configOptions.typeshedPath = toUri(typeshed);
+    const resolver = new api.importResolver.ImportResolver(serviceProvider, configOptions,
+      createPythonHost(api, serviceProvider));
+    state.evaluation = { program: new api.program.Program(resolver, configOptions, serviceProvider), toUri, files: 0 };
+  } catch (err) {
+    state.evaluation = false;
+  }
+  return state.evaluation || null;
+}
+
+/** How many files the program holds before its cache is dropped, so that a large repository stays bounded. */
+const EVALUATION_FILE_BUDGET = 200;
+
+/** The kinds of type Pyright's evaluator reports, and the flag that marks a type as an instance. */
+const PYRIGHT_CATEGORY_CLASS = 6;
+const PYRIGHT_CATEGORY_UNION = 8;
+const PYRIGHT_FLAG_INSTANCE = 2;
+
+/** Modules whose classes are the language's own vocabulary, not a dependency worth recording for a local. */
+const UNATTRIBUTED_MODULES = new Set(['builtins', 'types', 'typing', 'typing_extensions', '_typeshed']);
+
+/** The node of `root` that spans exactly what `target` spans in the file, or null. */
+function sameNodeIn(root, target) {
+  let node = root;
+  while (node && node.d) {
+    if (node.start === target.start && node.length === target.length && node.nodeType === target.nodeType) {
+      return node;
+    }
+    let next = null;
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      for (const item of Array.isArray(child) ? child : [child]) {
+        if (item && typeof item === 'object' && item.d && key !== 'parent' && typeof item.start === 'number'
+          && item.start <= target.start && item.start + item.length >= target.start + target.length) {
+          next = item;
+          break;
+        }
+      }
+      if (next) {
+        break;
+      }
+    }
+    node = next;
+  }
+  return null;
+}
+
+/**
+ * The one class an evaluated type is an instance of, or null when it is not exactly one: an unknown
+ * or `Any` type, a type variable, a module or a class object, a union of several classes, and the
+ * classes of the language's own vocabulary (`int`, `list`, `None`) all name nothing worth recording.
+ * `Optional[X]` is an `X`.
+ */
+function instanceClassOf(type) {
+  let candidate = type;
+  if (candidate && candidate.category === PYRIGHT_CATEGORY_UNION) {
+    const arms = ((candidate.priv && candidate.priv.subtypes) || []).filter(arm => !(arm && arm.shared
+      && arm.shared.name === 'NoneType'));
+    candidate = arms.length === 1 ? arms[0] : null;
+  }
+  if (!candidate || candidate.category !== PYRIGHT_CATEGORY_CLASS || !(candidate.flags & PYRIGHT_FLAG_INSTANCE)) {
+    return null;
+  }
+  const shared = candidate.shared;
+  if (!shared || !shared.name || !shared.moduleName || !shared.fullName || UNATTRIBUTED_MODULES.has(shared.moduleName)) {
+    return null;
+  }
+  const own = shared.fullName.startsWith(shared.moduleName + '.')
+    ? shared.fullName.slice(shared.moduleName.length + 1) : null;
+  return own ? { moduleName: shared.moduleName, classPath: own } : null;
+}
+
+/**
+ * The reference a class found by evaluation stands for: the repository class when the module that
+ * defines it is a repository module that declares it, else the library class `module.Class`. A class
+ * the module index cannot account for is not guessed at.
+ */
+function inferredClassRef(info) {
+  const file = state.moduleIndex ? state.moduleIndex.get(info.moduleName) : null;
+  if (file) {
+    if (!moduleDeclarations(file).classPaths.has(info.classPath)) {
+      return null;
+    }
+    return { targetUniqueName: uniqueNameInFile(file, info.classPath, { repoRoot: state.repoRoot }), externalLabel: null };
+  }
+  return { targetUniqueName: null, externalLabel: info.moduleName + '.' + info.classPath };
+}
+
+/**
+ * A function that gives the class Pyright infers for a node of the file, or null for it. The program
+ * is only built and the file only read when the first node is asked about, and any failure of the
+ * evaluator is "no answer".
+ */
+function typeInferrer(filePath) {
+  let session;
+  const open = () => {
+    const evaluation = evaluationProgram();
+    if (!evaluation) {
+      return null;
+    }
+    evaluation.files += 1;
+    if (evaluation.files % EVALUATION_FILE_BUDGET === 0) {
+      evaluation.program.setTrackedFiles([]);
+      evaluation.program.emptyCache();
+    }
+    const uri = evaluation.toUri(filePath);
+    evaluation.program.addTrackedFile(uri);
+    const parsed = evaluation.program.getParseResults(uri);
+    const tree = parsed && parsed.parserOutput ? parsed.parserOutput.parseTree : null;
+    return tree ? { tree, evaluator: evaluation.program.evaluator } : null;
+  };
+  return (node) => {
+    try {
+      if (session === undefined) {
+        session = open();
+      }
+      const found = session ? sameNodeIn(session.tree, node) : null;
+      const info = found ? instanceClassOf(session.evaluator.getTypeOfExpression(found).type) : null;
+      return info ? inferredClassRef(info) : null;
+    } catch (err) {
+      return null;
+    }
+  };
+}
+
 function moduleDeclarations(filePath) {
   if (state.moduleDeclarations.has(filePath)) {
     return state.moduleDeclarations.get(filePath);
   }
-  let declarations = { parsed: false, classes: new Set(), names: new Set(), functions: new Set(), aliases: new Map() };
+  let declarations = { parsed: false, classes: new Set(), classPaths: new Set(), names: new Set(),
+    functions: new Set(), aliases: new Map() };
   try {
     const api = getPyrightApi();
     const parser = new api.parser.Parser();
@@ -1028,13 +1179,15 @@ function moduleDeclarations(filePath) {
       declarations = {
         parsed: true,
         classes: collectLocalClasses(parseTree, parseNodeType),
+        classPaths: collectClassNames(getModuleStatements(parseTree, parseNodeType), '', parseNodeType, new Set()),
         names: collectTopLevelNames(parseTree, parseNodeType),
         functions: collectLocalFunctions(parseTree, parseNodeType),
         aliases: collectAliasCandidates(parseTree, parseNodeType, declaredText)
       };
     }
   } catch (err) {
-    declarations = { parsed: false, classes: new Set(), names: new Set(), functions: new Set(), aliases: new Map() };
+    declarations = { parsed: false, classes: new Set(), classPaths: new Set(), names: new Set(),
+      functions: new Set(), aliases: new Map() };
   }
   state.moduleDeclarations.set(filePath, declarations);
   return declarations;
@@ -1347,7 +1500,7 @@ function collectClassNames(statements, prefix, parseNodeType, into) {
     if (!name) {
       continue;
     }
-    const unique = prefix + '.' + name;
+    const unique = prefix ? prefix + '.' + name : name;
     into.add(unique);
     collectClassNames(getStatementsFromSuite(statement.d ? statement.d.suite : null), unique, parseNodeType, into);
   }
@@ -3755,7 +3908,7 @@ function collectLocalVariables(functionNode, ctx, parseNodeType) {
       if (parameterNames.has(localName) || found.has(localName)) {
         return;
       }
-      found.set(localName, { name: localName, statement, annotationNode });
+      found.set(localName, { name: localName, statement, annotationNode, node: expr });
       return;
     }
     if (expr.nodeType === types.Tuple || expr.nodeType === types.List) {
@@ -3815,11 +3968,12 @@ function collectLocalVariables(functionNode, ctx, parseNodeType) {
 
   const locals = [];
   for (const entry of found.values()) {
-    // An unannotated binding displays as `Any`, the way an unannotated parameter does, and is not a
-    // dependency on anything.
+    // An unannotated binding displays as `Any`, the way an unannotated parameter does.
     const read = entry.annotationNode ? readAnnotation(entry.annotationNode, ctx, parseNodeType) : null;
     const rawType = read ? read.text : 'Any';
-    const ref = read ? read.ref : null;
+    // An unannotated binding has the class Pyright infers for it, when it infers exactly one.
+    const inferred = !read && ctx.inferType ? ctx.inferType(entry.node) : null;
+    const ref = read ? read.ref : (inferred ? Object.assign({ raw: rawType, alternates: [] }, inferred) : null);
     locals.push({
       name: entry.name,
       rawType: ref ? ref.raw : rawType,
@@ -4406,6 +4560,7 @@ async function handleInitRepo(params) {
   state.aliasStack = new Set();
   state.program = null;
   state.importResolver = null;
+  state.evaluation = null;
   state.serviceProvider = null;
   state.fileSystem = null;
 
@@ -4516,6 +4671,7 @@ async function handleGetFileModel(params) {
       (packageName ? packageName + '.' : '') + moduleName, parseNodeType, new Set()),
     fileText,
     parseNodeType,
+    inferType: typeInferrer(normalized),
     evaluator: null
   };
   let classes = [];
