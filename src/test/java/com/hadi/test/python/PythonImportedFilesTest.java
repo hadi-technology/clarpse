@@ -396,15 +396,37 @@ public class PythonImportedFilesTest {
     }
 
     @Test
-    public void aStubOnDiskThatTheResolutionPicksIsNotAProjectFileSoItIsLeftOut() throws Exception {
+    public void aStubOnDiskThatTheResolutionPicksNamesTheModuleFileBesideIt() throws Exception {
         final Path dir = Files.createTempDirectory("clarpse-py-imported-files");
         try {
             write(dir, "x/__init__.py", "");
             write(dir, "x/s.py", "X = 1\n");
             write(dir, "x/s.pyi", "X: int\n");
             write(dir, "x/t.py", "Y = 1\n");
+            write(dir, "x/pk/__init__.py", "Z = 1\n");
+            write(dir, "x/pk/__init__.pyi", "Z: int\n");
             write(dir, "app/__init__.py", "");
-            write(dir, "app/main.py", source("import x.s", "import x.t"));
+            write(dir, "app/main.py", source("import x.s", "import x.t", "from x import pk"));
+            final OOPSourceCodeModel model = compile(new ProjectFiles(dir.toString()));
+            final Component use = model.components()
+                    .filter(c -> c.uniqueName().endsWith("main.Use")).findFirst().orElseThrow();
+
+            assertEquals(List.of("x/s.py", "x/t.py", "x/pk/__init__.py"), use.importedFiles().stream()
+                    .map(file -> file.substring(file.indexOf("x/"))).collect(Collectors.toList()));
+        } finally {
+            deleteTree(dir);
+        }
+    }
+
+    @Test
+    public void aStubWithNoModuleFileBesideItNamesNoFile() throws Exception {
+        final Path dir = Files.createTempDirectory("clarpse-py-imported-files");
+        try {
+            write(dir, "x/__init__.py", "");
+            write(dir, "x/only.pyi", "X: int\n");
+            write(dir, "x/t.py", "Y = 1\n");
+            write(dir, "app/__init__.py", "");
+            write(dir, "app/main.py", source("import x.only", "import x.t"));
             final OOPSourceCodeModel model = compile(new ProjectFiles(dir.toString()));
             final Component use = model.components()
                     .filter(c -> c.uniqueName().endsWith("main.Use")).findFirst().orElseThrow();
@@ -412,9 +434,13 @@ public class PythonImportedFilesTest {
             assertEquals(1, use.importedFiles().size());
             assertTrue(use.importedFiles().iterator().next().endsWith("x/t.py"));
         } finally {
-            try (Stream<Path> walk = Files.walk(dir)) {
-                walk.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
-            }
+            deleteTree(dir);
+        }
+    }
+
+    private static void deleteTree(final Path dir) throws Exception {
+        try (Stream<Path> walk = Files.walk(dir)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
         }
     }
 

@@ -751,12 +751,24 @@ function repoImportResolution() {
  * null: an empty entry (a namespace package directory has no file), a file outside the repository
  * (the standard library and typeshed stubs live there), a file under an excluded directory (an
  * installed package), and anything that is not a `.py` or `.pyi` file.
+ *
+ * Pyright prefers a stub to the module it describes, but the repository's files are its `.py` files:
+ * when resolution lands on `mod.pyi` (or a package's `__init__.pyi`), the file is the `.py` beside it,
+ * and a stub with no `.py` beside it names no file.
  */
 function repoFileOf(uri, selfPath) {
   if (!uri || (typeof uri.isEmpty === 'function' && uri.isEmpty())) return null;
   const resolved = typeof uri.getFilePath === 'function' ? uri.getFilePath() : null;
   if (!resolved || !/\.pyi?$/i.test(resolved)) return null;
-  const filePath = normalizePath(resolved);
+  let filePath = normalizePath(resolved);
+  if (/\.pyi$/i.test(filePath)) {
+    filePath = filePath.slice(0, -1);
+    try {
+      if (!fs.statSync(filePath).isFile()) return null;
+    } catch (err) {
+      return null;
+    }
+  }
   if (!filePath.startsWith(state.repoRoot + path.sep) || shouldSkipPath(filePath) || filePath === selfPath) {
     return null;
   }
