@@ -510,7 +510,8 @@ final class KotlinModelAssembler {
             if (carriedByAValue(usage, scope, closer)) {
                 continue;
             }
-            if (usage.call() && KotlinReceiverTyping.callBoundElsewhere(resolver, usage.name(), scope, closer)) {
+            if (usage.call() && KotlinReceiverTyping.callBoundElsewhere(resolver, usage.name(), scope, closer)
+                    && !KotlinReceiverTyping.constructsRepositoryClass(resolver, usage.name(), scope, closer)) {
                 continue;
             }
             if (usage.value() && (closer.names().contains(usage.name())

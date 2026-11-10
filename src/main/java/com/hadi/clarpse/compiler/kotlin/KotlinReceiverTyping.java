@@ -78,6 +78,32 @@ final class KotlinReceiverTyping {
     }
 
     /**
+     * Whether a call {@code Name(...)} is certainly a construction of a repository class, although a
+     * supertype the parse cannot read is in the class's ancestry: the name is imported by name or
+     * through a star import of a repository package, resolves exactly to a class the repository
+     * declares, and no readable member of the class, or local, declares that name. An unreadable
+     * supertype could in principle declare a member function of the same name, but an imported
+     * top-level function is never accepted here, since a library base more plausibly declares one.
+     */
+    static boolean constructsRepositoryClass(final KotlinNameResolver resolver, final String name,
+                                             final Scope scope, final Shadow closer) {
+        if (closer.names().contains(name)) {
+            return false;
+        }
+        final Origin origin = resolver.originOf(name, scope);
+        if (origin != Origin.IMPORT && origin != Origin.STAR) {
+            return false;
+        }
+        final Resolution resolved = resolver.resolve(name, scope, true);
+        if (resolved == null || resolved.kind() != ResolutionKind.EXACT
+                || !resolver.index().isType(resolved.name())) {
+            return false;
+        }
+        final TypeKind kind = resolver.index().kotlinKind(resolved.name());
+        return kind == null || kind == TypeKind.CLASS;
+    }
+
+    /**
      * The type of an expression a local is initialized with.
      *
      * @param expression The expression.

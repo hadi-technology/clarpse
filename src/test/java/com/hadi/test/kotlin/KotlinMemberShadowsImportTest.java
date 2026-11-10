@@ -14,8 +14,8 @@ import static org.junit.Assert.assertTrue;
  * Kotlin looks a name up in the closest scope first: the locals, then the members of the class
  * including the ones it inherits, then the imports. A call whose name a member of the class, or of
  * a supertype the repository declares, carries binds there and adds no reference to the import. A
- * supertype the repository does not declare may pass any name down, so an import is not credited
- * for a name the class could inherit.
+ * supertype the repository does not declare may pass any name down, so an imported top-level function
+ * is not credited for a name the class could inherit; an imported class called by name still is.
  */
 public class KotlinMemberShadowsImportTest {
 
@@ -75,7 +75,11 @@ public class KotlinMemberShadowsImportTest {
     @Test
     public void aSupertypeTheRepositoryDoesNotDeclareMayPassTheNameDown() {
         assertFalse(references("app.Unreadable.f()", "lib.UtilKt"));
-        assertFalse(references("app.Hidden.d", "lib.Defaults"));
+    }
+
+    @Test
+    public void anImportedClassIsStillConstructedWhenASupertypeCannotBeRead() {
+        assertTrue(references("app.Hidden.d", "lib.Defaults"));
     }
 
     @Test
