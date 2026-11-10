@@ -2619,6 +2619,19 @@ function buildValueReference(identifier, checker, owner) {
   };
 }
 
+/** The types an arrow function or function expression writes its parameters with. */
+function writtenParameterReferences(node, checker) {
+  const references = [];
+  for (const parameter of node.parameters) {
+    if (!parameter.type) {
+      continue;
+    }
+    references.push(...writtenAliasReferences(parameter.type, checker));
+    references.push(...buildReferenceModelsFromType(checker.getTypeAtLocation(parameter.type), checker, "type"));
+  }
+  return references;
+}
+
 function collectBodyDetails(body, checker, owner) {
   const references = [];
   const locals = [];
@@ -2638,6 +2651,9 @@ function collectBodyDetails(body, checker, owner) {
       if (localModel) {
         locals.push(localModel);
       }
+    }
+    if (state.ts.isArrowFunction(node) || state.ts.isFunctionExpression(node)) {
+      references.push(...writtenParameterReferences(node, checker));
     }
     if (state.ts.isCallExpression(node)) {
       references.push(...buildCallReferences(node, checker));

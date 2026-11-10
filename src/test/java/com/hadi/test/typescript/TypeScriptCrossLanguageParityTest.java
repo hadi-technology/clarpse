@@ -121,4 +121,24 @@ public class TypeScriptCrossLanguageParityTest {
                 .map(ComponentReference::invokedComponent).collect(Collectors.toSet());
         assertTrue(annotations.toString(), annotations.contains("src.deco.Component"));
     }
+
+    @Test
+    public void anExplicitlyTypedLambdaParameterIsReferenced() throws Exception {
+        final Set<String> targets = targets("src.use.body",
+                "/src/use.ts", "import { Foo, Bar } from './types';\n"
+                        + "export function body(items: any[]) {\n"
+                        + "  const f = (a: Foo) => 1;\n"
+                        + "  const h = function (b: Bar) { return 2; };\n"
+                        + "  return items.map((x: Foo) => 1);\n}\n");
+        assertTrue(targets.toString(), targets.contains("src.types.Foo"));
+        assertTrue(targets.toString(), targets.contains("src.types.Bar"));
+    }
+
+    @Test
+    public void aCallbackParameterInAMethodIsReferenced() throws Exception {
+        final Set<String> targets = targets("src.use.K.run(any[])",
+                "/src/use.ts", "import { Bar } from './types';\n"
+                        + "export class K { run(items: any[]) { items.forEach(function (b: Bar) { }); } }\n");
+        assertTrue(targets.toString(), targets.contains("src.types.Bar"));
+    }
 }
