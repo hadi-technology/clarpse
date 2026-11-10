@@ -41,6 +41,17 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
 
     private static final Logger LOGGER = LogManager.getLogger(ClarpseCSharpCompiler.class);
 
+    private final CSharpParseTask.FileParse fileParse;
+
+    /** A compiler that reads each file with the C# file parser. */
+    public ClarpseCSharpCompiler() {
+        this(CSharpFileParser::parseFile);
+    }
+
+    ClarpseCSharpCompiler(final CSharpParseTask.FileParse fileParse) {
+        this.fileParse = fileParse;
+    }
+
     @Override
     public CompileResult compile(final ProjectFiles projectFiles,
                                  final Collection<String> analyzedFilePaths) throws CompileException {
@@ -313,7 +324,7 @@ public final class ClarpseCSharpCompiler implements ClarpseCompiler {
                 }
                 final ProjectFile file = files.get(i);
                 futures.add(executor.submit(new CSharpParseTask(file, i,
-                        implicitUsings.getOrDefault(file.path(), List.of()))));
+                        implicitUsings.getOrDefault(file.path(), List.of()), fileParse)));
             }
             final List<CSharpModel.ParseOutcome> outcomes = new ArrayList<>();
             for (final Future<CSharpModel.ParseOutcome> future : futures) {
