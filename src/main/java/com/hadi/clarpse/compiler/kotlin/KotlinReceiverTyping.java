@@ -8,7 +8,9 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinMemberModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinParameterModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.NameExpr;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinTypeModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.ReceiverCall;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.ThisExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModelAssembler.Shadow;
 import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Origin;
@@ -41,6 +43,7 @@ final class KotlinReceiverTyping {
     private final Set<String> classMembers;
     private final KotlinNameResolver resolver;
     private final KotlinTypeMembers typeMembers;
+    private final Set<String> resolving = new HashSet<>();
 
     KotlinReceiverTyping(final KotlinMemberModel member, final Scope scope, final Shadow shadow,
                          final Set<String> classMembers, final KotlinNameResolver resolver,
@@ -81,6 +84,9 @@ final class KotlinReceiverTyping {
         if (expression instanceof NameExpr name) {
             return typeOfRoot(name.name());
         }
+        if (expression instanceof ThisExpr) {
+            return enclosingType();
+        }
         if (expression instanceof CallExpr call) {
             return typeOfCall(call.name());
         }
@@ -117,10 +123,14 @@ final class KotlinReceiverTyping {
             if (local.declaredType != null) {
                 return typeMembers.resolveWritten(local.declaredType, scope);
             }
-            if (local.initializer instanceof CallExpr call) {
-                return constructedType(call.name());
+            if (local.initializer == null || !resolving.add(name)) {
+                return null;
             }
-            return null;
+            try {
+                return typeOf(local.initializer);
+            } finally {
+                resolving.remove(name);
+            }
         }
         return null;
     }
@@ -129,6 +139,9 @@ final class KotlinReceiverTyping {
         final String declared = typeOfName(name);
         if (declared != null) {
             return declared;
+        }
+        if (!member.declarations.containsKey(name) && classMembers.contains(name)) {
+            return typeOfProperty(name);
         }
         if (member.declarations.containsKey(name) || shadow.names().contains(name)
                 || name.isEmpty() || !Character.isUpperCase(name.charAt(0))
@@ -140,13 +153,79 @@ final class KotlinReceiverTyping {
             return null;
         }
         final KotlinDeclaration declaration = resolver.index().declaration(resolved.name());
-        if (declaration == null || declaration.kind() != TypeKind.OBJECT) {
+        if (declaration == null) {
             return null;
         }
-        return resolved.name();
+        if (declaration.kind() == TypeKind.OBJECT) {
+            return resolved.name();
+        }
+        KotlinTypeModel companion = null;
+        for (final KotlinTypeModel nested : declaration.type().nestedTypes) {
+            if (nested.companion) {
+                if (companion != null) {
+                    return null;
+                }
+                companion = nested;
+            }
+        }
+        if (companion == null) {
+            return null;
+        }
+        return resolved.name() + "." + companion.name;
+    }
+
+    /**
+     * The class whose members a bare name, a call with no receiver or {@code this} reaches: the
+     * enclosing class, unless the member is an extension or its text holds a lambda, either of which
+     * may give those names another receiver.
+     */
+    private String enclosingType() {
+        if (member.receiverType != null || member.hasLambda || scope.enclosingTypes().isEmpty()) {
+            return null;
+        }
+        return scope.enclosingTypes().get(0);
+    }
+
+    /** The written type of a property of the enclosing class that no name of the text hides or retypes. */
+    private String typeOfProperty(final String name) {
+        final String owner = enclosingType();
+        if (owner == null || member.narrowed.contains(name) || member.narrowed.contains("this." + name)) {
+            return null;
+        }
+        return typeMembers.memberType(owner, name, false);
+    }
+
+    /**
+     * The type of the receiver of a call: a parameter or local, a property of the enclosing class
+     * or of a readable supertype, {@code this.property}, or {@code this}.
+     */
+    private String typeOfReceiver(final String receiver) {
+        if ("this".equals(receiver)) {
+            return enclosingType();
+        }
+        if (receiver.startsWith("this.")) {
+            final String name = receiver.substring("this.".length());
+            final String owner = enclosingType();
+            if (owner == null || member.narrowed.contains(name) || member.narrowed.contains(receiver)) {
+                return null;
+            }
+            return typeMembers.memberType(owner, name, false);
+        }
+        final String declared = typeOfName(receiver);
+        if (declared != null || member.declarations.containsKey(receiver) || !classMembers.contains(receiver)) {
+            return declared;
+        }
+        return typeOfProperty(receiver);
     }
 
     private String typeOfCall(final String name) {
+        if (!member.declarations.containsKey(name) && classMembers.contains(name)) {
+            final String owner = enclosingType();
+            if (owner == null) {
+                return null;
+            }
+            return typeMembers.memberType(owner, name, true);
+        }
         final String constructed = constructedType(name);
         if (constructed != null) {
             return constructed;
@@ -210,8 +289,8 @@ final class KotlinReceiverTyping {
         if (classMembers.contains(call.name())) {
             return null;
         }
-        final String receiver = typeOfName(call.receiver());
-        if (receiver == null) {
+        final String receiver = typeOfReceiver(call.receiver());
+        if (receiver == null || member.declarations.containsKey(call.name())) {
             return null;
         }
         final List<TopLevelFunction> extensions = new ArrayList<>();

@@ -48,7 +48,11 @@ public class KotlinInferredLocalTypeTest {
                         "class Odd : Missing() { fun bar(): Bar = Bar() }",
                         "object Registry { val current: Baz = Baz() }",
                         "class Holder { val item: Item = Item() }",
-                        "class Library { fun count(): Int = 1; fun id(): java.util.UUID = java.util.UUID.randomUUID() }",
+                        "class Maker { companion object { fun create(): Bar = Bar(); val DEFAULT: Item = Item();"
+                                + " fun unwritten() = Bar() } }",
+                        "class NoCompanion { fun create(): Bar = Bar() }",
+                        "class Library { fun count(): Int = 1; fun id(): java.util.UUID = java.util.UUID.randomUUID();"
+                                + " fun stamp(): Instant = Instant.now() }",
                         "fun makeQux(): Qux = Qux()",
                         "fun twice(): Bar = Bar()",
                         "fun twice(x: Int): Baz = Baz()")),
@@ -74,8 +78,13 @@ public class KotlinInferredLocalTypeTest {
                         "  fun narrowed(f: Foo) { if (f is Sub) { }; val b = f.bar() }",
                         "  fun assigned(f: Foo) { var g: Foo = f; g = Sub(); val b = g.bar() }",
                         "  fun chained(h: Holder) { val i = h.item.toString() }",
-                        "  fun library(l: Library) { val n = l.count(); val u = l.id() }",
+                        "  fun companion() { val f = Maker.create() }",
+                        "  fun companionProperty() { val d = Maker.DEFAULT }",
+                        "  fun companionUnwritten() { val u = Maker.unwritten() }",
+                        "  fun noCompanion() { val n = NoCompanion.create() }",
+                        "  fun library(l: Library) { val n = l.count(); val u = l.id(); val s = l.stamp() }",
                         "  fun writtenInt(l: Library) { val n: Int = 1 }",
+                        "  fun throughInferred(m: Maker) { val b = Maker.create(); val q = b.toString() }",
                         "}")))
                 .model();
     }
@@ -143,8 +152,16 @@ public class KotlinInferredLocalTypeTest {
     }
 
     @Test
+    public void aCompanionMemberWithAWrittenTypeTypesALocalOnTheClassName() {
+        assertTrue(targetsOf("companion()").contains("app.Bar"));
+        assertTrue(targetsOf("companionProperty()").contains("app.Item"));
+        assertFalse(targetsOf("companionUnwritten()").contains("app.Bar"));
+        assertFalse(targetsOf("noCompanion()").contains("app.Bar"));
+    }
+
+    @Test
     public void aLibraryTypeIsRecordedAsAWrittenTypeIs() {
-        assertTrue(targetsOf("library(Library)").contains("kotlin.Int"));
+        assertTrue(targetsOf("library(Library)").containsAll(Set.of("kotlin.Int")));
         assertTrue(targetsOf("writtenInt(Library)").contains("kotlin.Int"));
         assertTrue(targetsOf("library(Library)").contains("java.util.UUID"));
     }

@@ -21,6 +21,7 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.NameExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.ReceiverCall;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.ThisExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeUsage;
 import com.hadi.clarpse.compiler.kotlin.KotlinSyntaxTree.Token;
@@ -493,11 +494,22 @@ final class KotlinFileParser {
         /** Counts the values a declaration's text declares, by name, nested declarations included. */
         private void countDeclarations(final KotlinSyntaxNode declaration, final KotlinMemberModel member) {
             for (final KotlinSyntaxNode node : declaration.descendants()) {
-                if (node.is("VALUE_PARAMETER") || node.is("DESTRUCTURING_DECLARATION_ENTRY") || node.is(PROPERTY)) {
-                    final String name = identifier(node);
+                if (node.is("VALUE_PARAMETER") || node.is("DESTRUCTURING_DECLARATION_ENTRY") || node.is(PROPERTY)
+                        || node.is(FUN)) {
+                    final Token funName = nameToken(node, "fun");
+                    final String name;
+                    if (node.is(FUN) && funName != null) {
+                        name = stripBackticks(funName.text());
+                    } else if (node.is(FUN)) {
+                        name = null;
+                    } else {
+                        name = identifier(node);
+                    }
                     if (name != null) {
                         member.declarations.merge(name, 1, Integer::sum);
                     }
+                } else if (node.is("LAMBDA_EXPRESSION")) {
+                    member.hasLambda = true;
                 } else {
                     member.narrowed.addAll(narrowedBy(node));
                 }
@@ -508,8 +520,8 @@ final class KotlinFileParser {
         private Set<String> narrowedBy(final KotlinSyntaxNode node) {
             final Set<String> names = new HashSet<>();
             if (node.is("IS_EXPRESSION") || node.is("BINARY_WITH_TYPE")) {
-                if (!node.children.isEmpty() && node.children.get(0).is(REFERENCE_EXPRESSION)) {
-                    names.add(referenceName(node.children.get(0)));
+                if (!node.children.isEmpty() && receiverName(node.children.get(0)) != null) {
+                    names.add(receiverName(node.children.get(0)));
                 }
             } else if (node.is("WHEN")) {
                 boolean testsTypes = false;
@@ -518,16 +530,16 @@ final class KotlinFileParser {
                 }
                 if (testsTypes) {
                     for (final KotlinSyntaxNode child : node.children) {
-                        if (child.is(REFERENCE_EXPRESSION)) {
-                            names.add(referenceName(child));
+                        if (receiverName(child) != null) {
+                            names.add(receiverName(child));
                         }
                     }
                 }
             } else if (node.is("BINARY_EXPRESSION") && node.children.size() == 3
-                    && node.children.get(0).is(REFERENCE_EXPRESSION)
+                    && receiverName(node.children.get(0)) != null
                     && node.children.get(1).is("OPERATION_REFERENCE")
                     && "=".equals(tree.text(node.children.get(1)).trim())) {
-                names.add(referenceName(node.children.get(0)));
+                names.add(receiverName(node.children.get(0)));
             }
             return names;
         }
@@ -761,7 +773,11 @@ final class KotlinFileParser {
 
         /** Records a call {@code name.callee(...)} whose receiver is a single name. */
         private void recordReceiverCall(final KotlinSyntaxNode expression, final KotlinMemberModel member) {
-            if (member == null || expression.children.size() < 2 || !expression.children.get(0).is(REFERENCE_EXPRESSION)) {
+            if (member == null || expression.children.size() < 2) {
+                return;
+            }
+            final String receiver = receiverName(expression.children.get(0));
+            if (receiver == null) {
                 return;
             }
             final KotlinSyntaxNode selector = expression.children.get(expression.children.size() - 1);
@@ -769,8 +785,25 @@ final class KotlinFileParser {
                     || !selector.children.get(0).is(REFERENCE_EXPRESSION)) {
                 return;
             }
-            member.receiverCalls.add(new ReceiverCall(referenceName(expression.children.get(0)),
-                    referenceName(selector.children.get(0)), argumentCount(selector)));
+            member.receiverCalls.add(new ReceiverCall(receiver, referenceName(selector.children.get(0)),
+                    argumentCount(selector)));
+        }
+
+        /** A receiver that is a name, {@code this}, or {@code this.name}: the text it is recorded as. */
+        private String receiverName(final KotlinSyntaxNode node) {
+            if (node.is(REFERENCE_EXPRESSION)) {
+                return referenceName(node);
+            }
+            if (node.is("THIS_EXPRESSION") && tree.text(node).trim().equals("this")) {
+                return "this";
+            }
+            if (node.is("DOT_QUALIFIED_EXPRESSION") && node.children.size() == 2
+                    && node.children.get(0).is("THIS_EXPRESSION")
+                    && tree.text(node.children.get(0)).trim().equals("this")
+                    && node.children.get(1).is(REFERENCE_EXPRESSION)) {
+                return "this." + referenceName(node.children.get(1));
+            }
+            return null;
         }
 
         private int argumentCount(final KotlinSyntaxNode call) {
@@ -805,6 +838,9 @@ final class KotlinFileParser {
         }
 
         private KotlinExpr expressionOf(final KotlinSyntaxNode node) {
+            if (node.is("THIS_EXPRESSION") && tree.text(node).trim().equals("this")) {
+                return new ThisExpr();
+            }
             if (node.is(REFERENCE_EXPRESSION)) {
                 final String name = referenceName(node);
                 if (name.isEmpty()) {
@@ -865,6 +901,9 @@ final class KotlinFileParser {
             }
             usages.add(new TypeUsage(name, true, false, true));
             recordCall(call, name, member);
+            if (member != null) {
+                member.receiverCalls.add(new ReceiverCall("this", name, argumentCount(call)));
+            }
         }
 
         private void addReferenceUsage(final KotlinSyntaxNode expression, final List<TypeUsage> usages,

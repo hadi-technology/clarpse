@@ -161,6 +161,10 @@ final class KotlinModel {
     record NameExpr(String name) implements KotlinExpr {
     }
 
+    /** The enclosing class, {@code this}. */
+    record ThisExpr() implements KotlinExpr {
+    }
+
     /** A call of a bare name, {@code name(...)}: a constructor or a top-level function. */
     record CallExpr(String name) implements KotlinExpr {
     }
@@ -176,9 +180,12 @@ final class KotlinModel {
     }
 
     /**
-     * A call of a member on a receiver that is a single name, {@code receiver.name(arguments)}.
+     * A call of a member on a receiver that is a single name, {@code receiver.name(arguments)}, on
+     * {@code this.property}, on {@code this}, or with no receiver at all, which the enclosing class
+     * receives.
      *
-     * @param receiver  The receiver's name.
+     * @param receiver  The receiver's name, {@code this.name} for a property reached through
+     *                  {@code this}, or {@code this} for the enclosing class itself.
      * @param name      The called name.
      * @param arguments How many arguments the call passes, a trailing lambda included.
      */
@@ -256,6 +263,8 @@ final class KotlinModel {
         final Set<String> narrowed = new LinkedHashSet<>();
         /** For a local declared without a type, the expression that initializes it, when readable. */
         KotlinExpr initializer;
+        /** Whether the text holds a lambda, whose receiver may stand in for {@code this}. */
+        boolean hasLambda;
         /** The calls on a receiver that is a single name. */
         final List<ReceiverCall> receiverCalls = new ArrayList<>();
     }
