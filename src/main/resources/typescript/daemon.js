@@ -1660,13 +1660,14 @@ function referenceKey(reference) {
   if (!reference) {
     return "";
   }
+  const member = reference.member ? `|member|${reference.memberKind}|${reference.member}` : "";
   if (reference.external) {
-    return `${reference.kind}|external|${reference.displayName}`;
+    return `${reference.kind}|external|${reference.displayName}${member}`;
   }
   if (reference.target) {
-    return `${reference.kind}|internal|${reference.target.filePath}|${reference.target.symbolName}`;
+    return `${reference.kind}|internal|${reference.target.filePath}|${reference.target.symbolName}${member}`;
   }
-  return `${reference.kind}|external|${reference.displayName || ""}`;
+  return `${reference.kind}|external|${reference.displayName || ""}${member}`;
 }
 
 function mergeReferences(...lists) {
@@ -2185,6 +2186,7 @@ function buildCallReferences(node, checker) {
     if (libraryMethod) {
       references.push(libraryMethod);
     }
+    references.push(...buildMemberReferences(node, checker));
   }
   return references;
 }
@@ -2579,6 +2581,18 @@ function writtenReferenceName(typeNode) {
  * access, whose declaration carries the annotation, is read.
  */
 function buildUnresolvedLibraryMethodReference(callNode, checker) {
+  const receiver = unresolvedLibraryReceiver(callNode, checker);
+  return receiver
+    ? externalNamedReference(receiver.packageName, `${receiver.exportedName}.${callNode.expression.name.text}`)
+    : null;
+}
+
+/**
+ * The type a call's receiver was declared with, when it is imported from a package the program
+ * cannot read: the package as the old `package:Type.method` form names it, the specifier it was
+ * imported with, and the name the package exports the type by. Null for any other receiver.
+ */
+function unresolvedLibraryReceiver(callNode, checker) {
   const ts = state.ts;
   const callee = callNode.expression;
   if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.name)) {
@@ -2606,12 +2620,13 @@ function buildUnresolvedLibraryMethodReference(callNode, checker) {
     if (target && target.declarations && target.declarations.length) {
       return null;
     }
-    const packageName = packageOfSpecifier(importedFrom(imported));
+    const moduleSpecifier = importedFrom(imported);
+    const packageName = packageOfSpecifier(moduleSpecifier);
     const exportedName = (specifier.propertyName || specifier.name).text;
     if (!packageName || !exportedName || exportedName === "default") {
       return null;
     }
-    return externalNamedReference(packageName, `${exportedName}.${callee.name.text}`);
+    return { packageName, moduleSpecifier, exportedName };
   } catch (err) {
     return null;
   }
@@ -2642,6 +2657,141 @@ function buildResolvedLibraryMethodReference(callNode, checker) {
     return null;
   }
   return externalNamedReference(packageName, `${typeName}.${callee.name.text}`);
+}
+
+const NODE_BUILTIN_MODULES = new Set(require("module").builtinModules.map((name) => name.replace(/^node:/, "")));
+
+/**
+ * The unit a module specifier names for a member reference: the npm package, and a Node built-in
+ * always as `node:name`, so `fs` and `node:fs` are one unit. Null for a relative specifier.
+ */
+function externalUnitOfSpecifier(specifier) {
+  if (!specifier) {
+    return null;
+  }
+  if (specifier.startsWith("node:")) {
+    return specifier;
+  }
+  if (NODE_BUILTIN_MODULES.has(specifier)) {
+    return `node:${specifier}`;
+  }
+  return packageOfSpecifier(specifier);
+}
+
+/**
+ * The unit of a type declared in a file of `node_modules`: the package, and for the declarations of
+ * `@types/node`, the built-in module whose file declares it. Null where the unit is not known.
+ */
+function externalUnitOfFile(fileName, packageName) {
+  if (packageName !== "node") {
+    return packageName;
+  }
+  const marker = `${path.sep}@types${path.sep}node${path.sep}`;
+  const at = fileName.lastIndexOf(marker);
+  if (at < 0) {
+    return packageName;
+  }
+  const inside = fileName.slice(at + marker.length).split(path.sep).join("/").replace(/\.d\.ts$/, "");
+  return NODE_BUILTIN_MODULES.has(inside) ? `node:${inside}` : null;
+}
+
+/** The class or interface symbol a receiver of exactly one such type stands for, or null. */
+function receiverTypeSymbol(type, checker) {
+  const ts = state.ts;
+  if (!type) {
+    return null;
+  }
+  const bare = checker.getNonNullableType(type);
+  const rejected = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never | ts.TypeFlags.TypeParameter
+    | ts.TypeFlags.Union | ts.TypeFlags.Intersection | ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike
+    | ts.TypeFlags.BooleanLike | ts.TypeFlags.BigIntLike | ts.TypeFlags.ESSymbolLike | ts.TypeFlags.EnumLike
+    | ts.TypeFlags.Void | ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Index
+    | ts.TypeFlags.IndexedAccess | ts.TypeFlags.Conditional | ts.TypeFlags.Substitution;
+  if (bare.flags & rejected) {
+    return null;
+  }
+  const symbol = bare.getSymbol();
+  if (!symbol || !(symbol.flags & (ts.SymbolFlags.Class | ts.SymbolFlags.Interface))
+      || isInternalSymbolName(symbol.getName()) || !symbol.declarations || !symbol.declarations.length) {
+    return null;
+  }
+  return symbol;
+}
+
+/**
+ * The member a call on a typed receiver uses: the receiver's type, or the type declaring the member
+ * when a class of the repository does, and the member's name. A receiver that is `this` or `super`,
+ * of an unknown, union, array, primitive or type-parameter type, adds nothing. A type of a package
+ * is named only when it is declared at the top level of a file of that package, or imported from a
+ * package whose declarations are not installed, and the package is known.
+ */
+function buildMemberReferences(callNode, checker) {
+  const ts = state.ts;
+  const callee = callNode.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.name)) {
+    return [];
+  }
+  const receiver = callee.expression;
+  if (receiver.kind === ts.SyntaxKind.ThisKeyword || receiver.kind === ts.SyntaxKind.SuperKeyword) {
+    return [];
+  }
+  const member = callee.name.text;
+  try {
+    const type = checker.getTypeAtLocation(receiver);
+    const symbol = receiverTypeSymbol(type, checker);
+    if (!symbol) {
+      const unread = unresolvedLibraryReceiver(callNode, checker);
+      const unit = unread ? externalUnitOfSpecifier(unread.moduleSpecifier) : null;
+      return unit ? [libraryMemberReference(unread.exportedName, unit, member)] : [];
+    }
+    const declaration = primaryDeclaration(symbol.declarations);
+    if (!declaration || !declaration.getSourceFile) {
+      return [];
+    }
+    const fileName = declaration.getSourceFile().fileName;
+    if (isInternalFile(fileName)) {
+      const owner = declaringTypeOf(checker.getNonNullableType(type), member, checker) || declaration;
+      const ownerName = owner.name && owner.name.text ? owner.name.text : symbol.getName();
+      const modelled = modelledName(owner, ownerName, true);
+      if (modelled === null) {
+        return [];
+      }
+      return [{
+        kind: "type",
+        external: false,
+        target: { filePath: path.resolve(owner.getSourceFile().fileName), symbolName: modelled },
+        member,
+        memberKind: "call"
+      }];
+    }
+    const packageName = packageOfFile(fileName);
+    if (!packageName || isCompilerLibraryFile(fileName) || !ts.isSourceFile(declaration.parent)) {
+      return [];
+    }
+    const unit = externalUnitOfFile(fileName, packageName);
+    return unit ? [libraryMemberReference(symbol.getName(), unit, member)] : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+/** The class or interface of the repository that declares a member of a type, when one does. */
+function declaringTypeOf(type, member, checker) {
+  const ts = state.ts;
+  const property = checker.getPropertyOfType(type, member);
+  const declaration = property && property.declarations && property.declarations[0];
+  const parent = declaration && declaration.parent;
+  if (parent && (ts.isClassLike(parent) || ts.isInterfaceDeclaration(parent)) && parent.name
+      && isInternalFile(parent.getSourceFile().fileName)) {
+    return parent;
+  }
+  return null;
+}
+
+/** The owner is named as the language names an external type: `unit:Type`. */
+function libraryMemberReference(typeName, unit, member) {
+  return { kind: "type", external: true, displayName: `${unit}:${typeName}`, externalUnit: unit, member,
+    memberKind: "call" };
 }
 
 function buildValueReference(identifier, checker, owner) {

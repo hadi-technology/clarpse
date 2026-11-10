@@ -17,6 +17,15 @@ public class TypeScriptReferenceModel {
     public boolean lost;
     public TypeScriptTargetModel target;
 
+    /** The member a call uses, on the type this reference names; {@code null} for a type reference. */
+    public String member;
+
+    /** How the member is used: {@code call}. */
+    public String memberKind;
+
+    /** The npm package or Node built-in module (always {@code node:name}) of an external owner. */
+    public String externalUnit;
+
     /**
      * How the checker settled an external reference: {@code "exact"} when it resolved to one
      * declaration, {@code "unresolved"} when the name is only kept as written. {@code null} where

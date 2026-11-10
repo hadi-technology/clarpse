@@ -12,6 +12,8 @@ import com.hadi.clarpse.reference.AnnotationArgument;
 import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.MemberKind;
+import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
@@ -374,6 +376,9 @@ final class TypeScriptModelAssembler {
                 annotation.setArguments(decoratorArguments(reference.arguments, repoRoot));
             }
             return annotation;
+        }
+        if (reference.member != null) {
+            return new MemberReference(invoked, reference.member, MemberKind.CALL, reference.externalUnit);
         }
         return new SimpleTypeReference(invoked);
     }
