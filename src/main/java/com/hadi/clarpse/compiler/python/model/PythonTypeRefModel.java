@@ -12,6 +12,15 @@ public class PythonTypeRefModel {
     /** Whether {@link #externalLabel} is only the name as written, not one an import or the checker settled. */
     public boolean unresolved;
 
+    /** The member a call uses on the type this names; {@code null} for an ordinary type reference. */
+    public String member;
+
+    /** How the member is used: {@code call}. */
+    public String memberKind;
+
+    /** The module of an external owner of the member. */
+    public String externalUnit;
+
     /** Whether the written name is a type variable, which names no type and so records no reference. */
     public boolean typeVariable;
 

@@ -1078,15 +1078,29 @@ function sameNodeIn(root, target) {
  * other: an inferred local records what the annotation `x: int` records. `Optional[X]` is an `X`.
  */
 function instanceClassOf(type) {
+  const candidate = singleClassOf(type);
+  if (!candidate || !(candidate.flags & PYRIGHT_FLAG_INSTANCE)) {
+    return null;
+  }
+  return classInfoOf(candidate);
+}
+
+/** The one class an evaluated type is, `Optional[X]` being `X`, or null. */
+function singleClassOf(type) {
   let candidate = type;
   if (candidate && candidate.category === PYRIGHT_CATEGORY_UNION) {
     const arms = ((candidate.priv && candidate.priv.subtypes) || []).filter(arm => !(arm && arm.shared
       && arm.shared.name === 'NoneType'));
     candidate = arms.length === 1 ? arms[0] : null;
   }
-  if (!candidate || candidate.category !== PYRIGHT_CATEGORY_CLASS || !(candidate.flags & PYRIGHT_FLAG_INSTANCE)) {
+  if (!candidate || candidate.category !== PYRIGHT_CATEGORY_CLASS) {
     return null;
   }
+  return candidate;
+}
+
+/** The module and the path inside it of a class type, or null for one that names nothing worth recording. */
+function classInfoOf(candidate) {
   const shared = candidate.shared;
   if (!shared || !shared.name || !shared.moduleName || !shared.fullName || shared.name === 'NoneType') {
     return null;
@@ -1094,6 +1108,35 @@ function instanceClassOf(type) {
   const own = shared.fullName.startsWith(shared.moduleName + '.')
     ? shared.fullName.slice(shared.moduleName.length + 1) : null;
   return own ? { moduleName: shared.moduleName, classPath: own } : null;
+}
+
+/**
+ * The class a call's receiver is, and the class that declares the member called on it. The receiver is
+ * an instance of exactly one class, or the class itself (a call through its name). The declaring class
+ * is the first of the class's method resolution order that has the member, when the repository
+ * declares it; otherwise it is the receiver's class.
+ */
+function receiverClassOf(type, member) {
+  const candidate = singleClassOf(type);
+  const info = candidate ? classInfoOf(candidate) : null;
+  if (!info) {
+    return null;
+  }
+  let declaring = info;
+  for (const entry of (candidate.shared.mro || [])) {
+    if (!entry || entry.category !== PYRIGHT_CATEGORY_CLASS || !entry.shared) {
+      break;
+    }
+    if (entry.shared.fields && entry.shared.fields.has && entry.shared.fields.has(member)) {
+      const found = classInfoOf(entry);
+      const file = found && state.moduleIndex ? state.moduleIndex.get(found.moduleName) : null;
+      if (file && moduleDeclarations(file).classPaths.has(found.classPath)) {
+        declaring = found;
+      }
+      break;
+    }
+  }
+  return declaring;
 }
 
 /**
@@ -1159,6 +1202,16 @@ function typeInferrer(filePath) {
   infer.isClassObject = (node) => {
     const type = typeOf(node);
     return !!type && type.category === PYRIGHT_CATEGORY_CLASS && !(type.flags & PYRIGHT_FLAG_INSTANCE);
+  };
+  /** The reference to the owner of `member` called on `node`, with the module of an external owner. */
+  infer.receiver = (node, member) => {
+    try {
+      const info = receiverClassOf(typeOf(node), member);
+      const ref = info ? inferredClassRef(info) : null;
+      return ref ? Object.assign({ externalUnit: ref.externalLabel ? info.moduleName : null }, ref) : null;
+    } catch (err) {
+      return null;
+    }
   };
   return infer;
 }
@@ -3528,6 +3581,7 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
   const isLocal = name => scopes.some(scope => scope.has(name));
   const moduleMemberTargets = new Set();
   const calleeNames = new Set();
+  const memberCalls = new Set();
 
   /**
    * A dotted name whose first segment is a module binding the function does not shadow resolves the
@@ -3607,6 +3661,43 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     }
     pushTarget(name, uniqueNameInFile(declared.filePath, declared.symbolName, ctx));
     return true;
+  }
+
+  /**
+   * A call `receiver.name(...)` on a receiver Pyright types as exactly one class, or on a class by its
+   * name, uses the member `name` of that class (or of the repository base class that declares it).
+   */
+  function addMemberCall(callee) {
+    if (!callee || callee.nodeType !== parseNodeType.MemberAccess || !ctx.inferType || !ctx.inferType.receiver) {
+      return;
+    }
+    const receiver = callee.d.leftExpr;
+    const member = callee.d.member ? nameFromNode(callee.d.member) : null;
+    if (!receiver || !member) {
+      return;
+    }
+    const base = dottedNameOf(receiver, parseNodeType);
+    if (base === 'self' || base === 'cls') {
+      return;
+    }
+    const owner = ctx.inferType.receiver(receiver, member);
+    if (!owner) {
+      return;
+    }
+    const key = (owner.targetUniqueName || owner.externalLabel) + '#' + member;
+    if (memberCalls.has(key)) {
+      return;
+    }
+    memberCalls.add(key);
+    refs.push({
+      raw: textForNode(receiver, ctx.fileText),
+      targetUniqueName: owner.targetUniqueName,
+      externalLabel: owner.externalLabel,
+      member,
+      memberKind: 'call',
+      externalUnit: owner.externalUnit,
+      alternates: []
+    });
   }
 
   function pushTarget(raw, target) {
@@ -3724,6 +3815,7 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
         calleeNames.add(calleeNode);
         addModuleLevelRef(nameFromNode(calleeNode));
       }
+      addMemberCall(calleeNode);
     }
 
     // A class reached through a module, or named directly, is a dependency wherever it is used, not only

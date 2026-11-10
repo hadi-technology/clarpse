@@ -15,6 +15,8 @@ import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
 import com.hadi.clarpse.reference.ResolutionKind;
+import com.hadi.clarpse.reference.MemberKind;
+import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.sourcemodel.Component;
@@ -871,6 +873,9 @@ final class PythonModelAssembler {
         ResolutionKind kind = ResolutionKind.UNRESOLVED;
         if (resolvedInRepo || (ref.externalLabel != null && !ref.externalLabel.isEmpty() && !ref.unresolved)) {
             kind = ResolutionKind.EXACT;
+        }
+        if (ref.member != null) {
+            return new MemberReference(invoked, ref.member, MemberKind.CALL, ref.externalUnit);
         }
         final ComponentReference built;
         if (isExtends) {
