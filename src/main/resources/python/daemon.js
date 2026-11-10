@@ -2937,6 +2937,28 @@ function collectBodyReferences(functionNode, ctx, parseNodeType) {
 }
 
 /**
+ * The names a class body binds directly: its nested classes and methods, its class attributes and
+ * whatever else its statements assign or import. A name bound in a method's body is not among them.
+ */
+function classBodyBoundNames(suiteStatements, parseNodeType) {
+  const names = new Set();
+  for (const node of suiteStatements) {
+    if (!node || !node.d) {
+      continue;
+    }
+    if (isClassNode(node, parseNodeType) || isFunctionNode(node, parseNodeType)) {
+      const name = nameFromNode(node.d.name);
+      if (name) {
+        names.add(name);
+      }
+      continue;
+    }
+    collectLocalNames(node, parseNodeType).forEach(name => names.add(name));
+  }
+  return names;
+}
+
+/**
  * What the value assigned to a class attribute or a module-level name refers to -- `objects = Manager()`,
  * `handlers = [Foo]`, `c = lambda self: Cfg()`, `x = Bar.LIMIT` -- found the way the same expression is
  * found in a function body. `boundNames` are the names the surrounding class body has already bound,
@@ -3073,13 +3095,16 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     const dotIdx = calleeText.indexOf('.');
     if (dotIdx > 0) {
       const base = calleeText.substring(0, dotIdx);
+      if (isLocal(base)) {
+        return;
+      }
       if (isKnownImport(base)) {
         const resolved = resolveTypeFromRaw(base, ctx);
         if (resolved) {
           refs.push({ raw: calleeText, targetUniqueName: null, externalLabel: resolved + calleeText.substring(dotIdx) });
         }
       }
-    } else {
+    } else if (!isLocal(calleeText)) {
       const resolved = resolveTypeFromRaw(calleeText, ctx);
       if (resolved) {
         if (!moduleMemberTargets.has(resolved)) {
@@ -3873,6 +3898,9 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
     const fieldNames = new Set();
     const nestedClasses = [];
     const otherMethodFields = [];
+    // Every name the class body itself binds -- nested classes, methods, other class attributes --
+    // hides the module's name of the same spelling in the value of an attribute of the class.
+    const classBodyNames = classBodyBoundNames(suiteStatements, parseNodeType);
     for (const node of suiteStatements) {
       if (!node) {
         continue;
@@ -3906,7 +3934,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       // annotation left every unannotated one out of the model.
       const field = extractFieldFromStatement(node, classCtx, parseNodeType, {
         requireAnnotation: !isAssignmentStatement(node, parseNodeType),
-        boundNames: fieldNames
+        boundNames: new Set([...fieldNames, ...classBodyNames])
       });
       if (field && field.name && !fieldNames.has(field.name)) {
         // In an enumeration an unannotated class-level assignment names a member of it rather than
