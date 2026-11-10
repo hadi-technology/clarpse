@@ -2,6 +2,7 @@ package com.hadi.clarpse.compiler.kotlin;
 
 import com.hadi.clarpse.compiler.java.JavaDeclarationIndex;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinFileModel;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinImport;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinMemberModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinTypeAlias;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinTypeModel;
@@ -12,8 +13,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeSet;
 
 /**
@@ -23,7 +26,8 @@ import java.util.TreeSet;
  * package it star-imports, exactly as it resolves a Kotlin one.
  *
  * <p>It also maps each top-level Kotlin function and property to the file class that holds it on
- * the JVM, and each {@code typealias} to what it aliases, and answers which files declare a name.
+ * the JVM, and each {@code typealias} to what it aliases, and answers which files declare a name
+ * and which Kotlin files an import directive resolves to.
  */
 final class KotlinDeclarationIndex {
 
@@ -38,6 +42,7 @@ final class KotlinDeclarationIndex {
     private final Map<String, List<KotlinDeclaration>> kotlinTypes = new HashMap<>();
     private final Map<String, String> fileClassByCallable = new HashMap<>();
     private final Map<String, AliasDeclaration> aliases = new HashMap<>();
+    private final Map<String, Set<String>> filesByCallable = new HashMap<>();
     private final JavaDeclarationIndex javaIndex;
 
     /**
@@ -53,6 +58,12 @@ final class KotlinDeclarationIndex {
         final List<KotlinFileModel> ordered = new ArrayList<>(kotlinFiles);
         ordered.sort(Comparator.comparing(KotlinFileModel::path));
         for (final KotlinFileModel file : ordered) {
+            for (final KotlinMemberModel member : file.topLevelMembers) {
+                if (member.name != null && !member.name.isEmpty()) {
+                    filesByCallable.computeIfAbsent(qualify(file.packageName, member.name),
+                            key -> new LinkedHashSet<>()).add(file.path());
+                }
+            }
             for (final KotlinTypeModel type : file.types) {
                 addType(type, qualify(file.packageName, type.name), file.path());
             }
@@ -236,6 +247,51 @@ final class KotlinDeclarationIndex {
             candidate = candidate.substring(0, dot);
         }
         return Collections.emptyList();
+    }
+
+    /**
+     * The Kotlin files an import directive resolves to.
+     *
+     * <p>A name import gives the files declaring a type, a {@code typealias} or a top-level
+     * function or property of that name: every file that does, since overloads and a type and a
+     * factory function can share a name. A name that matches none is read as a member of a type
+     * ({@code Obj.member}, {@code Color.RED}, a nested type) and gives the files declaring the
+     * nearest enclosing type. A star import of a package names no file and gives nothing; one
+     * whose name is a type gives the files declaring it. An alias changes the name the file sees, never the
+     * target. A name no Kotlin file declares, as a library or a Java type, gives nothing.
+     *
+     * @param directive The import directive.
+     * @return The files' paths, each directive's files sorted by path; never null.
+     */
+    Set<String> filesImportedBy(final KotlinImport directive) {
+        final Set<String> found = new LinkedHashSet<>();
+        final String target = directive.target();
+        if (target == null || target.isEmpty()) {
+            return found;
+        }
+        addDeclaringFiles(target, found);
+        if (directive.star()) {
+            return found;
+        }
+        found.addAll(filesByCallable.getOrDefault(target, Set.of()));
+        final AliasDeclaration alias = aliases.get(target);
+        if (alias != null) {
+            found.add(alias.file().path());
+        }
+        if (found.isEmpty()) {
+            final int dot = target.lastIndexOf('.');
+            if (dot > 0) {
+                found.addAll(kotlinFilesDeclaring(target.substring(0, dot)));
+            }
+        }
+        return found;
+    }
+
+    private void addDeclaringFiles(final String uniqueName, final Set<String> into) {
+        final List<KotlinDeclaration> declarations = kotlinTypes.get(uniqueName);
+        if (declarations != null) {
+            declarations.forEach(declaration -> into.add(declaration.path()));
+        }
     }
 
     /**

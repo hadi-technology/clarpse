@@ -31,6 +31,7 @@ import com.hadi.clarpse.sourcemodel.Package;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -62,6 +63,7 @@ final class KotlinModelAssembler {
     private final KotlinNameResolver resolver;
     private final OOPSourceCodeModel model = new OOPSourceCodeModel();
     private final Stack<Component> stack = new Stack<>();
+    private final Map<String, Set<String>> importedFilesByPath = new HashMap<>();
 
     private KotlinModelAssembler(final KotlinDeclarationIndex index) {
         this.resolver = new KotlinNameResolver(index);
@@ -116,6 +118,7 @@ final class KotlinModelAssembler {
         component.setSourceFilePath(file.path());
         component.setComment(nullToEmpty(type.comment));
         component.setImports(importStatements(file));
+        component.setImportedFiles(importedFiles(file));
         component.setAccessModifiers(withVisibility(type.modifiers));
         component.setCodeFragment(type.codeFragment);
         component.setCodeHash(nonZeroHash(type.implementationHash, component.componentName()));
@@ -173,6 +176,7 @@ final class KotlinModelAssembler {
         component.setSourceFilePath(file.path());
         component.setComment("");
         component.setImports(importStatements(file));
+        component.setImportedFiles(importedFiles(file));
         component.setAccessModifiers(List.of("public", "final"));
         component.setCodeFragment("class " + simpleName);
         int hash = 0;
@@ -555,6 +559,21 @@ final class KotlinModelAssembler {
         }
         result.addAll(modifiers);
         return result;
+    }
+
+    /**
+     * The repository files the file's import directives resolve to, in source order. The file's own
+     * path is left out: a file does not import itself.
+     */
+    private Set<String> importedFiles(final KotlinFileModel file) {
+        return importedFilesByPath.computeIfAbsent(file.path(), path -> {
+            final Set<String> files = new LinkedHashSet<>();
+            for (final KotlinImport kotlinImport : file.imports) {
+                files.addAll(resolver.index().filesImportedBy(kotlinImport));
+            }
+            files.remove(path);
+            return files;
+        });
     }
 
     private static Set<String> importStatements(final KotlinFileModel file) {
