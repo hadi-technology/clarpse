@@ -51,10 +51,18 @@ public class JavaCrossLanguageParityTest {
                 "public class B {",
                 "  int f() { return Qux.LIMIT; }",
                 "}"));
+        tree.put("src/main/java/app/Marker.java", "package app;\npublic interface Marker { }\n");
+        tree.put("src/main/java/app/sub/C.java", String.join("\n",
+                "package app.sub;",
+                "import app.*;",
+                "public class C implements Marker {",
+                "  Sib s;",
+                "  int f() { return Qux.LIMIT + new Sib().hashCode(); }",
+                "}"));
         return tree;
     }
 
-    private static ProjectFiles fromDirectory(final Map<String, String> tree) throws Exception {
+    private static Path writeTree(final Map<String, String> tree) throws Exception {
         final Path dir = Files.createTempDirectory(
                 Path.of(System.getProperty("java.io.tmpdir")), "parity");
         for (final Map.Entry<String, String> file : tree.entrySet()) {
@@ -62,7 +70,7 @@ public class JavaCrossLanguageParityTest {
             Files.createDirectories(target.getParent());
             Files.writeString(target, file.getValue());
         }
-        return new ProjectFiles(dir.toString());
+        return dir;
     }
 
     private static ProjectFiles fromZip(final Map<String, String> tree) throws Exception {
@@ -77,10 +85,21 @@ public class JavaCrossLanguageParityTest {
         return new ProjectFiles(new ByteArrayInputStream(bytes.toByteArray()));
     }
 
-    private static Set<String> describe(final OOPSourceCodeModel model) {
+    /** The directory prefix is stripped from a directory load's paths, leaving the path inside the tree. */
+    private static String inTree(final String path, final String directory) {
+        if (!directory.isEmpty() && path.startsWith(directory + "/")) {
+            return path.substring(directory.length());
+        }
+        return path;
+    }
+
+    private static Set<String> describe(final Component[] components, final String directory) {
         final Set<String> lines = new TreeSet<>();
-        for (final Component c : model.components().toList()) {
-            lines.add("C|" + c.uniqueName() + "|" + c.componentType() + "|" + c.sourceFile());
+        for (final Component c : components) {
+            final Set<String> imported = new TreeSet<>();
+            c.importedFiles().forEach(f -> imported.add(inTree(f, directory)));
+            lines.add("C|" + c.uniqueName() + "|" + c.componentType() + "|"
+                    + inTree(c.sourceFile(), directory) + "|" + imported);
             for (final ComponentReference ref : c.references()) {
                 lines.add("R|" + c.uniqueName() + "|" + ref.getClass().getSimpleName() + "|"
                         + ref.invokedComponent() + "|" + ref.isExternal() + "|" + ref.resolutionKind());
@@ -89,35 +108,54 @@ public class JavaCrossLanguageParityTest {
         return lines;
     }
 
+    private static Component[] components(final ProjectFiles files) throws Exception {
+        return new ClarpseProject(files, Lang.JAVA).result().model().components().toList()
+                .toArray(new Component[0]);
+    }
+
+    private static Set<String> describeDirectory(final Path dir) throws Exception {
+        return describe(components(new ProjectFiles(dir.toString())), dir.toString());
+    }
+
     private static OOPSourceCodeModel model(final ProjectFiles files) throws Exception {
         return new ClarpseProject(files, Lang.JAVA).result().model();
     }
 
     @Test
-    public void aDirectoryGivesTheModelItsArchiveGives() throws Exception {
-        final Set<String> fromDir = describe(model(fromDirectory(tree())));
-        final Set<String> fromZip = describe(model(fromZip(tree())));
+    public void aDirectoryGivesTheModelItsArchiveGivesOnceThePathsAreNormalised() throws Exception {
+        final Set<String> fromDir = describeDirectory(writeTree(tree()));
+        final Set<String> fromZip = describe(components(fromZip(tree())), "");
         assertEquals(fromZip, fromDir);
     }
 
     @Test
     public void aDirectoryBindsSamePackageTypesAnnotationsAndConstants() throws Exception {
-        final Set<String> lines = describe(model(fromDirectory(tree())));
+        final Set<String> lines = describeDirectory(writeTree(tree()));
         final String all = lines.toString();
         assertTrue(all, lines.stream().anyMatch(l -> l.startsWith("R|app.A.e|") && l.contains("|app.Error|false|")));
+        assertTrue(all, lines.stream().anyMatch(l -> l.startsWith("R|app.A.s|") && l.contains("|app.Sib|false|")));
         assertTrue(all, lines.stream().anyMatch(l -> l.startsWith("R|app.A|AnnotationReference|app.Anno|false|")));
         assertTrue(all, lines.stream().anyMatch(l -> l.startsWith("R|app.A.f()|") && l.contains("|app.Qux|false|")));
+        assertTrue(all, lines.stream().anyMatch(l -> l.startsWith("R|app.sub.C|") && l.contains("|app.Marker|false|")));
         assertFalse(all, all.contains("java.lang.Error"));
     }
 
     @Test
-    public void aDirectoryHoldsFilesUnderTheirPathInsideIt() throws Exception {
-        final ProjectFiles files = fromDirectory(tree());
+    public void aDirectoryKeepsTheAbsoluteOnDiskPaths() throws Exception {
+        final Path dir = writeTree(tree());
+        final String root = dir.toFile().getAbsolutePath();
+        final ProjectFiles files = new ProjectFiles(dir.toString());
         final Set<String> paths = new TreeSet<>();
         for (final ProjectFile f : files.files(Lang.JAVA)) {
             paths.add(f.path());
         }
-        assertTrue(paths.toString(), paths.contains("/src/main/java/app/A.java"));
+        assertTrue(paths.toString(), paths.contains(root + "/src/main/java/app/A.java"));
+        final Component a = new ClarpseProject(new ProjectFiles(dir.toString()), Lang.JAVA).result().model()
+                .copyOfComponent("app.A").orElseThrow();
+        assertEquals(root + "/src/main/java/app/A.java", a.sourceFile());
+        final Component b = new ClarpseProject(new ProjectFiles(dir.toString()), Lang.JAVA).result().model()
+                .copyOfComponent("app.sub.B").orElseThrow();
+        assertTrue(b.importedFiles().toString(), b.importedFiles().contains(root + "/src/main/java/app/Qux.java"));
     }
 
     private static OOPSourceCodeModel modelOf(final String... pathAndSource) throws Exception {

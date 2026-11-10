@@ -75,6 +75,8 @@ public class ProjectFiles implements AutoCloseable {
     private int size = 0;
     private String projectDir;
     private boolean tempProjectDir = false;
+    /** The absolute directory this instance was read from, or null when it was not read from one. */
+    private String loadedDirectory;
     private final Map<String, String> configFiles = new HashMap<>();
     private final Set<String> unreadSourcePaths = new LinkedHashSet<>();
     private boolean unreadSourcePathsComplete = true;
@@ -155,6 +157,7 @@ public class ProjectFiles implements AutoCloseable {
     public ProjectFiles(final ProjectFiles other) {
         this.projectDir = other.projectDir;
         this.tempProjectDir = false; // Copy doesn't own the temp dir
+        this.loadedDirectory = other.loadedDirectory;
         this.size = other.size;
         // Deep copy langToFilesMap with cloned ProjectFile instances
         other.langToFilesMap.forEach((lang, files) -> {
@@ -221,21 +224,17 @@ public class ProjectFiles implements AutoCloseable {
     private void initFilesFromDir(File projectFiles) throws IOException {
         LOGGER.info("Reading source files from dir: " + projectFiles.getPath());
         this.projectDir = projectFiles.getAbsolutePath();
+        this.loadedDirectory = this.projectDir;
         this.tempProjectDir = false;
-        final Path root = projectFiles.getAbsoluteFile().toPath();
         Iterator<File> it = FileUtils.iterateFiles(projectFiles, null, true);
         while (it.hasNext()) {
             File nextFile = it.next();
             if (nextFile.isFile()) {
-                // A file is held under its path inside the directory, as an archive entry is, so the
-                // same tree gives the same model whichever way it is read.
-                final String inTree = "/" + root.relativize(nextFile.getAbsoluteFile().toPath())
-                        .toString().replace(File.separatorChar, '/');
-                if (shouldLoadPath(inTree)) {
+                if (shouldLoadPath(nextFile.getAbsolutePath())) {
                     String content = FileUtils.readFileToString(nextFile, StandardCharsets.UTF_8);
-                    this.insertFile(new ProjectFile(inTree, content));
+                    this.insertFile(new ProjectFile(nextFile.getAbsolutePath(), content));
                 } else {
-                    recordUnreadSourceFile(inTree);
+                    recordUnreadSourceFile(nextFile.getAbsolutePath());
                 }
             }
         }
@@ -570,6 +569,28 @@ public class ProjectFiles implements AutoCloseable {
         return result;
     }
 
+    /**
+     * A file's path relative to the project root. Files read from a directory are held under their
+     * absolute path on disk, so the path inside the project is what follows the directory; any other
+     * path is already relative to the project and is returned unchanged. Internal: it lets a compiler
+     * read a path's position in the tree without the paths this class hands out changing.
+     */
+    String pathInProject(final String path) {
+        if (this.loadedDirectory == null || path == null) {
+            return path;
+        }
+        final String normalized = path.replace('\\', '/');
+        final String root = this.loadedDirectory.replace('\\', '/');
+        String prefix = root;
+        if (!prefix.endsWith("/")) {
+            prefix = prefix + "/";
+        }
+        if (normalized.startsWith(prefix)) {
+            return "/" + normalized.substring(prefix.length());
+        }
+        return path;
+    }
+
     public String projectDir() {
         if (this.projectDir != null && !this.projectDir.isEmpty()) {
             return this.projectDir;
@@ -577,14 +598,6 @@ public class ProjectFiles implements AutoCloseable {
             this.persistDir();
             return this.projectDir;
         }
-    }
-
-    /** The directory this instance was read from, or null when it was not read from one. */
-    String directoryReadFrom() {
-        if (this.tempProjectDir || this.projectDir == null || this.projectDir.isEmpty()) {
-            return null;
-        }
-        return this.projectDir;
     }
 
     public boolean isTempProjectDir() {

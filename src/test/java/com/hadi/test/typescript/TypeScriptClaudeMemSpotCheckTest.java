@@ -54,7 +54,7 @@ public class TypeScriptClaudeMemSpotCheckTest {
         Path srcRoot = repoRoot.resolve("src").toAbsolutePath();
         List<String> keep = new ArrayList<>();
         for (ProjectFile file : projectFiles.files()) {
-            Path filePath = repoRoot.resolve(file.path().substring(1)).toAbsolutePath();
+            Path filePath = Paths.get(file.path()).toAbsolutePath();
             if (filePath.startsWith(srcRoot)) {
                 keep.add(file.path());
             }

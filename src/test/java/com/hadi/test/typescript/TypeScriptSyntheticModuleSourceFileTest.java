@@ -65,6 +65,6 @@ public class TypeScriptSyntheticModuleSourceFileTest {
     }
 
     private static String filePath(final String relativePath) {
-        return "/" + relativePath;
+        return fixtureRoot.resolve(relativePath).toAbsolutePath().toString();
     }
 }

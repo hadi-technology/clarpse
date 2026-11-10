@@ -94,21 +94,9 @@ public interface ClarpseCompiler {
         if (analyzedFilePaths.isEmpty()) {
             return List.of();
         }
-        final String directory = projectFiles.directoryReadFrom();
-        String normalizedDirectory = null;
-        if (directory != null) {
-            normalizedDirectory = normalizeForComparison(directory);
-        }
         final Set<String> normalizedIncludedPaths = new HashSet<>();
         for (String path : analyzedFilePaths) {
-            String normalized = normalizeForComparison(path);
-            // Files read from a directory are held under their path inside it, but a caller may
-            // still name one by its path on disk.
-            if (normalizedDirectory != null && normalized != null
-                    && normalized.startsWith(normalizedDirectory + "/")) {
-                normalized = normalized.substring(normalizedDirectory.length() + 1);
-            }
-            normalizedIncludedPaths.add(normalized);
+            normalizedIncludedPaths.add(normalizeForComparison(path));
         }
         final List<ProjectFile> result = new ArrayList<>();
         for (final ProjectFile file : files) {

@@ -84,6 +84,6 @@ public class TypeScriptComponentProjectFilePathTest {
     }
 
     private static String filePath(final String relativePath) {
-        return "/" + relativePath;
+        return fixtureRoot.resolve(relativePath).toAbsolutePath().toString();
     }
 }

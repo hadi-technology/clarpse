@@ -55,7 +55,7 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             try {
                 persistDir = projectFiles.projectDir();
                 final String projectDir = persistDir;
-                final Set<String> sourceRoots = sourceRoots(javaFiles, projectDir);
+                final Set<String> sourceRoots = sourceRoots(projectFiles, javaFiles, projectDir);
                 final KotlinDeclarations kotlin = kotlinDeclarations(projectFiles);
                 final JavaDeclarationIndex importIndex = JavaDeclarationIndex.of(projectFiles.files(Lang.JAVA));
                 final Predicate<String> declaredTypes = declaredTypes(importIndex, kotlin);
@@ -135,10 +135,13 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
      * layouts and anything unconventional, and costs one regex per file. Guessing
      * {@code src/main/java} by name would have missed the second half of that list.
      */
-    private static Set<String> sourceRoots(final List<ProjectFile> files, final String persistDir) {
+    private static Set<String> sourceRoots(final ProjectFiles projectFiles, final List<ProjectFile> files,
+                                           final String persistDir) {
         final Set<String> roots = new HashSet<>();
         for (final ProjectFile file : files) {
-            final String path = file.path();
+            // Relative to the project root, so a directory load, which holds absolute paths, reads the
+            // same roots as an archive of the same tree.
+            final String path = projectFiles.pathInProject(file.path());
             if (path == null || file.content() == null) {
                 continue;
             }
