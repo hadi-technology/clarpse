@@ -670,6 +670,7 @@ final class CSharpModelAssembler {
             }
             Resolution resolved = null;
             String prefix = receiver;
+            String bound = receiver;
             while (true) {
                 final Resolution candidate = typeIndex.resolveType(prefix, ownerType, memberModel);
                 // A leading run of segments may be a namespace or a member rather than a type, so
@@ -679,6 +680,7 @@ final class CSharpModelAssembler {
                 if (candidate != null && (candidate.kind() == ResolutionKind.EXACT
                         || (whole && candidate.kind() == ResolutionKind.UNIQUE_SIMPLE_NAME))) {
                     resolved = candidate;
+                    bound = prefix;
                     break;
                 }
                 final int cut = prefix.lastIndexOf('.');
@@ -691,6 +693,7 @@ final class CSharpModelAssembler {
                 resolved = typeIndex.resolveType(receiver, ownerType, memberModel);
             }
             if (resolved == null || resolved.name().equals(component.uniqueName())
+                    || isPossiblyInherited(receiver, bound, resolved, ownerType, memberModel, typeIndex)
                     || !seen.add(resolved.name())) {
                 continue;
             }
@@ -698,6 +701,35 @@ final class CSharpModelAssembler {
             reference.setResolutionKind(resolved.kind());
             component.insertCmpRef(reference);
         }
+    }
+
+    /**
+     * Whether the leading name of a receiver may be a member the enclosing class inherits from a
+     * base the parse does not hold, and so is not the type it spells. {@code User.FindFirst()} in a
+     * class deriving from a framework controller reads the inherited {@code User} property.
+     * A receiver written with its full namespace or through an alias names a type whatever the base
+     * declares.
+     */
+    private static boolean isPossiblyInherited(final String receiver, final String bound,
+                                               final Resolution resolved,
+                                               final CSharpModel.CSharpTypeModel ownerType,
+                                               final CSharpModel.CSharpMemberModel memberModel,
+                                               final TypeIndex typeIndex) {
+        final int dot = receiver.indexOf('.');
+        final String root;
+        if (dot < 0) {
+            root = receiver;
+        } else {
+            root = receiver.substring(0, dot);
+        }
+        if (ownerType.usingAliases.containsKey(root) || memberModel.usingAliases.containsKey(root)) {
+            return false;
+        }
+        if (resolved.kind() == ResolutionKind.EXACT && bound.indexOf('.') >= 0
+                && resolved.name().equals(bound)) {
+            return false;
+        }
+        return typeIndex.mayBeInheritedMember(root, ownerType);
     }
 
     /**
@@ -1504,6 +1536,30 @@ final class CSharpModelAssembler {
                         break;
                     }
                 }
+            }
+            return false;
+        }
+
+        /**
+         * Whether a bare name written in the type's body may be a member inherited from a base the
+         * parse does not hold. Looking outward from the type, a nested type of that name hides what
+         * is inherited, so it ends the search; a type whose ancestry is not fully parsed answers yes.
+         */
+        private boolean mayBeInheritedMember(final String name, final CSharpModel.CSharpTypeModel type) {
+            String current = type.uniqueName;
+            while (current != null && !current.isEmpty()) {
+                if (lookup(current + "." + name, CSharpTypeNames.UNKNOWN_ARITY) != null) {
+                    return false;
+                }
+                final CSharpModel.CSharpTypeModel level = typeModelsByName.get(current);
+                if (level != null && !hasFullyParsedAncestry(level)) {
+                    return true;
+                }
+                final int cut = current.lastIndexOf('.');
+                if (cut < 0) {
+                    return false;
+                }
+                current = current.substring(0, cut);
             }
             return false;
         }
