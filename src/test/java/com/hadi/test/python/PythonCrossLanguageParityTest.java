@@ -130,4 +130,41 @@ public class PythonCrossLanguageParityTest {
         assertFalse(onClass.toString(), onClass.contains("pkg.models.Foo"));
         assertTrue(project.references("pkg.use.handler").contains("pkg.models.Foo"));
     }
+
+    @Test
+    public void aDeclarationInAModuleLevelIfOrTryIsAComponent() throws Exception {
+        final PythonInlineProject project = PythonInlineProject.compile(
+                "/pkg/compat.py", lines(
+                        "import sys",
+                        "",
+                        "if sys.version_info >= (3, 8):",
+                        "    class Compat:",
+                        "        \"\"\"new\"\"\"",
+                        "else:",
+                        "    class Compat:",
+                        "        \"\"\"old\"\"\"",
+                        "",
+                        "try:",
+                        "    from fastlib import Speedy",
+                        "except ImportError:",
+                        "    class Speedy:",
+                        "        pass",
+                        "finally:",
+                        "    def cleanup():",
+                        "        return 1"),
+                "/pkg/use.py", lines(
+                        "from pkg.compat import Compat, Speedy",
+                        "",
+                        "def go(c: Compat, s: Speedy):",
+                        "    return c"));
+        assertEquals("new", project.component("pkg.compat.Compat").comment().trim());
+        assertEquals(1, project.model().components()
+                .filter(c -> c.uniqueName().equals("pkg.compat.Compat")).count());
+        project.component("pkg.compat.Speedy");
+        project.component("pkg.compat.cleanup");
+        final Set<String> refs = project.references("pkg.use.go");
+        assertTrue(refs.toString(), refs.contains("pkg.compat.Compat"));
+        assertTrue(refs.toString(), refs.contains("pkg.compat.Speedy"));
+        assertTrue(refs.toString(), refs.stream().noneMatch(name -> name.endsWith("[ext]")));
+    }
 }

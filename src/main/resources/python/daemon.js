@@ -1038,7 +1038,7 @@ function moduleLevelValueNames(parseTree, parseNodeType) {
   for (const name of collectTopLevelNames(parseTree, parseNodeType)) {
     values.add(name);
   }
-  for (const statement of getStatementsFromSuite(parseTree)) {
+  for (const statement of getModuleStatements(parseTree, parseNodeType)) {
     if (statement && (isClassNode(statement, parseNodeType) || isFunctionNode(statement, parseNodeType))) {
       values.delete(nameFromNode(statement.d && statement.d.name ? statement.d.name : null));
     }
@@ -1049,7 +1049,7 @@ function moduleLevelValueNames(parseTree, parseNodeType) {
 /** The names bound at the top of a module by a function definition. */
 function collectLocalFunctions(parseTree, parseNodeType) {
   const functions = new Set();
-  for (const statement of getStatementsFromSuite(parseTree)) {
+  for (const statement of getModuleStatements(parseTree, parseNodeType)) {
     if (statement && isFunctionNode(statement, parseNodeType)) {
       const name = nameFromNode(statement.d && statement.d.name ? statement.d.name : null);
       if (name) {
@@ -1077,7 +1077,7 @@ function assignedNameOf(statement) {
  */
 function collectAliasCandidates(parseTree, parseNodeType, fileText) {
   const aliases = new Map();
-  for (const statement of getStatementsFromSuite(parseTree)) {
+  for (const statement of getModuleStatements(parseTree, parseNodeType)) {
     if (!statement || !isAssignmentStatement(statement, parseNodeType)) {
       continue;
     }
@@ -1093,7 +1093,7 @@ function collectAliasCandidates(parseTree, parseNodeType, fileText) {
 /** The names bound at the top of a module by a class, a function or an assignment. */
 function collectTopLevelNames(parseTree, parseNodeType) {
   const names = new Set();
-  for (const statement of getStatementsFromSuite(parseTree)) {
+  for (const statement of getModuleStatements(parseTree, parseNodeType)) {
     if (!statement) {
       continue;
     }
@@ -2019,6 +2019,75 @@ function getParseNodeTypeEnum(api) {
   return parseMod;
 }
 
+/**
+ * The statements of a module that declare something at its top level: its own statements, and the
+ * classes and functions that `if`, `elif`, `else`, `try`, `except` and `finally` blocks at module
+ * level declare. `if sys.version_info >= (3, 8): class Compat` and `try: ... except ImportError:
+ * class Speedy` declare `Compat` and `Speedy` of the module as surely as a bare `class` does.
+ *
+ * A name is declared once. When the branches of a conditional declare the same name, the first
+ * declaration in source order is the one kept and the later ones are not read, so the choice does not
+ * depend on which branch a run would take. Only classes and functions are drawn out of the blocks:
+ * what else they assign or import is not a declaration of the module.
+ */
+function getModuleStatements(parseTree, parseNodeType) {
+  const types = parseNodeType || {};
+  const declared = new Set();
+  const result = [];
+  const declare = (statement) => {
+    const name = nameFromNode(statement.d && statement.d.name ? statement.d.name : null);
+    if (name) {
+      declared.add(name);
+    }
+  };
+  const wrapped = (suite) => {
+    const nested = [];
+    for (const statement of getStatementsFromSuite(suite)) {
+      if (!statement) {
+        continue;
+      }
+      if (isClassNode(statement, parseNodeType) || isFunctionNode(statement, parseNodeType)) {
+        const name = nameFromNode(statement.d && statement.d.name ? statement.d.name : null);
+        if (name && !declared.has(name)) {
+          declared.add(name);
+          nested.push(statement);
+        }
+      } else {
+        nested.push(...compound(statement));
+      }
+    }
+    return nested;
+  };
+  const compound = (statement) => {
+    if (!statement || !statement.d) {
+      return [];
+    }
+    if (statement.nodeType === types.If) {
+      const elseSuite = statement.d.elseSuite;
+      return wrapped(statement.d.ifSuite).concat(
+        elseSuite && elseSuite.nodeType === types.If ? compound(elseSuite) : wrapped(elseSuite));
+    }
+    if (statement.nodeType === types.Try) {
+      const clauses = (statement.d.exceptClauses || []).map(clause => clause.d.exceptSuite);
+      return [statement.d.trySuite].concat(clauses, [statement.d.elseSuite, statement.d.finallySuite])
+        .reduce((all, suite) => all.concat(wrapped(suite)), []);
+    }
+    return [];
+  };
+  for (const statement of getStatementsFromSuite(parseTree)) {
+    if (!statement) {
+      continue;
+    }
+    if (isClassNode(statement, parseNodeType) || isFunctionNode(statement, parseNodeType)) {
+      declare(statement);
+      result.push(statement);
+    } else {
+      result.push(statement, ...compound(statement));
+    }
+  }
+  return result;
+}
+
 function getStatementsFromSuite(node) {
   if (!node || !node.d) {
     return [];
@@ -2503,7 +2572,7 @@ function isFunctionNode(node, parseNodeType) {
 
 function collectLocalClasses(parseTree, parseNodeType) {
   const classes = new Set();
-  const statements = getStatementsFromSuite(parseTree);
+  const statements = getModuleStatements(parseTree, parseNodeType);
   for (const statement of statements) {
     if (!statement) {
       continue;
@@ -4258,13 +4327,13 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
 }
 
 function extractClasses(parseTree, ctx, parseNodeType) {
-  const statements = getStatementsFromSuite(parseTree);
+  const statements = getModuleStatements(parseTree, parseNodeType);
   return extractClassesFromStatements(statements, ctx, parseNodeType, null);
 }
 
 function extractFunctions(parseTree, ctx, parseNodeType) {
   const functions = [];
-  const statements = getStatementsFromSuite(parseTree);
+  const statements = getModuleStatements(parseTree, parseNodeType);
   for (const statement of statements) {
     if (!statement || !isFunctionNode(statement, parseNodeType)) {
       continue;
@@ -4279,7 +4348,7 @@ function extractFunctions(parseTree, ctx, parseNodeType) {
 
 function extractModuleFields(parseTree, ctx, parseNodeType) {
   const fields = [];
-  const statements = getStatementsFromSuite(parseTree);
+  const statements = getModuleStatements(parseTree, parseNodeType);
   for (const statement of statements) {
     if (!statement || isClassNode(statement, parseNodeType) || isFunctionNode(statement, parseNodeType)) {
       continue;
@@ -4431,7 +4500,7 @@ async function handleGetFileModel(params) {
     localFunctions: collectLocalFunctions(parseTree, parseNodeType),
     localValues: moduleLevelValueNames(parseTree, parseNodeType),
     typeVariables: collectTypeVariableNames(parseTree, parseNodeType),
-    classNames: collectClassNames(getStatementsFromSuite(parseTree),
+    classNames: collectClassNames(getModuleStatements(parseTree, parseNodeType),
       (packageName ? packageName + '.' : '') + moduleName, parseNodeType, new Set()),
     fileText,
     parseNodeType,
