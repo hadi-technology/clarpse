@@ -161,6 +161,7 @@ the target.
 | `EXTENSION` | `TypeExtensionReference` | `extension` | inheritance: `extends`, a base class, the first entry of a Kotlin supertype list with a constructor call, an interface extending interfaces |
 | `IMPLEMENTATION` | `TypeImplementationReference` | `implementation` | interface implementation |
 | `ANNOTATION` | `AnnotationReference` | `annotation` | an annotation, attribute or decorator applied to this declaration, with literal arguments where read. Not a use dependency. |
+| `MEMBER` | `MemberReference` | `member` | a call of one named member of a type (§2.3). Its target is the owning type, so it is also a use of that type. |
 
 Rules that hold for every kind:
 - **Identity.** Two references are equal when they have the same class and the same target name.
@@ -186,7 +187,56 @@ functions and values, and C# targets extension methods. Until then read "type" a
 
 ### 2.3 Member references
 
-Documented with the MemberReference type.
+A `MemberReference` (`MEMBER`) records that a component **calls one named member of a type**:
+`order.total()` is a reference to the member `total` of `Order`. It is the finer companion of the
+type reference to `Order`, never a replacement for it.
+
+**What is recorded.**
+- `invokedComponent()` and `ownerType()` are the same value: the owning type, written the way a type
+  reference to that type is written in the language (the internal component name for a type of the
+  codebase, the external name form of §4 for a library type). The reference is classified
+  (§3.2) and resolved as a type reference to the owner is, and `resolutionKind()` is the receiver
+  type's. A consumer that ignores this kind sees the type-level graph it would see without it, plus
+  at most a reference to a type it already has.
+- `member()` is the member's simple name as written. No parameters, so overloads are one member: the
+  member name is the unit.
+- `memberKind()` is `CALL`. `FIELD_READ` exists in `MemberKind` and is not produced yet.
+- `externalUnit()` is the unit that supplies an external owner: the npm package (TypeScript), the
+  package (Java, Kotlin), the namespace (C#) or the module that defines the class (Python). It is
+  `null` for an owner inside the codebase. A Node built-in module is always `node:<name>`, so
+  `import "fs"` and `import "node:fs"` give the one unit `node:fs`.
+- Equality is the class, the owner, the member and the kind. One component can reference several
+  members of one type; the unit and the resolution kind take no part.
+
+**The owner.**
+- *A type of the codebase:* the type that declares the member when the parse finds it on the
+  receiver's type or on a supertype it parsed, and the receiver's type otherwise (inherited from a
+  library, or not found).
+- *A library type:* the receiver's type. The library's own declaring type is not read.
+- *An extension call* (C# extension methods, Kotlin extension functions): the owner is the static
+  class or file class that declares the extension, the member is the extension's name and the kind
+  is `CALL`. The existing type reference to that class stays.
+
+**When it is recorded.** For `r.m(...)` only when the receiver `r` has a type known exactly from the
+source (a written type, a parameter or field type, a local the front end types, or a static call
+through a type name) and that type is a type of the codebase, or a library type whose name and unit
+are both known exactly (from an import that names the package, or a resolved declaration; never from
+capitalisation). A receiver of unknown type adds nothing, and neither does one the front end cannot
+rule out being shadowed, such as a body that may redeclare the name, an array or pointer, a supertype
+the parse cannot read that could supply the name, or `this`/`self`.
+
+| language | receiver types read | library owners |
+|---|---|---|
+| Java | the symbol solver: variables, fields, `var` locals, type names | declarations the solver resolves (the JDK) |
+| Kotlin | written or constructor-made parameters, locals and properties; objects and companions | a JDK type that has a member of that name |
+| C# | declared or `var x = new T()` locals, parameters, fields; type names | the built-in types (`string`, `int`, ...), when no using can add an extension method |
+| TypeScript | the checker's type of the receiver expression | a class or interface a package declares, or a type imported from a package that is not installed |
+| Python | Pyright: annotated, or inferred to a single class; a class by its name | the defining module of the class |
+
+**TypeScript, deprecated string form.** Through 11.x a call on a library-typed receiver is also
+recorded, as before, as a `SimpleTypeReference` whose target is the string `<package>:<Type>.<member>`.
+That form is **deprecated and is removed in 12.0**: it cannot be told from a nested type name, and its
+split is ambiguous for nested types and Node built-ins. Use the `MemberReference` instead.
 
 ### 2.4 Extension edges
 
@@ -614,7 +664,11 @@ User-visible changes in this release.
   arguments of a `var`; Kotlin and C# type a literal initializer.
 - **Documentation:** the per-language table of component types (§1.2), the meaning of
   `isExternal()` (§3.2) and of an empty `importedFiles()` (§5.2).
-- **New: the member reference kind** (§2.3). Documented with the MemberReference type.
+- **New: the member reference kind `MemberReference`** (§2.3), in all five languages. It records the
+  member a call uses, on the owning type, with `member()`, `memberKind()` and `externalUnit()`.
+  `TypeReferences` gains `MEMBER`, and a `switch` over it or a reader built against an older version
+  meets the new `member` value in serialised JSON. The TypeScript `<package>:<Type>.<member>` string
+  is deprecated and is removed in 12.0.
 - **Reference fixes** (§8). Each narrows or adds only references the source determines:
   - Java: only `java.lang` is imported implicitly, after every import the file names, and the
     table lists every public `java.lang` type; a bare name binds to the current package only when
