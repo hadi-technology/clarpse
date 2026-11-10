@@ -309,8 +309,9 @@ final class KotlinModelAssembler {
     }
 
     /**
-     * The repository type a local declared without a type depends on: the type of its initializer,
-     * when that is a member or top-level function the repository declares with a written type.
+     * The type a local declared without a type depends on: the type of its initializer, when a
+     * declaration the repository holds writes it. It is recorded as a written type would be, a library
+     * or JDK type included.
      */
     private void addInferredType(final Component component, final KotlinMemberModel local,
                                  final KotlinReceiverTyping typing) {
@@ -318,7 +319,7 @@ final class KotlinModelAssembler {
             return;
         }
         final String inferred = typing.typeOf(local.initializer);
-        if (inferred == null || !resolver.index().isType(inferred)) {
+        if (inferred == null) {
             return;
         }
         final SimpleTypeReference reference = new SimpleTypeReference(inferred);

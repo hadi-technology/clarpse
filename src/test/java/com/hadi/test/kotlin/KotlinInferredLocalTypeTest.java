@@ -48,6 +48,7 @@ public class KotlinInferredLocalTypeTest {
                         "class Odd : Missing() { fun bar(): Bar = Bar() }",
                         "object Registry { val current: Baz = Baz() }",
                         "class Holder { val item: Item = Item() }",
+                        "class Library { fun count(): Int = 1; fun id(): java.util.UUID = java.util.UUID.randomUUID() }",
                         "fun makeQux(): Qux = Qux()",
                         "fun twice(): Bar = Bar()",
                         "fun twice(x: Int): Baz = Baz()")),
@@ -73,6 +74,8 @@ public class KotlinInferredLocalTypeTest {
                         "  fun narrowed(f: Foo) { if (f is Sub) { }; val b = f.bar() }",
                         "  fun assigned(f: Foo) { var g: Foo = f; g = Sub(); val b = g.bar() }",
                         "  fun chained(h: Holder) { val i = h.item.toString() }",
+                        "  fun library(l: Library) { val n = l.count(); val u = l.id() }",
+                        "  fun writtenInt(l: Library) { val n: Int = 1 }",
                         "}")))
                 .model();
     }
@@ -137,5 +140,12 @@ public class KotlinInferredLocalTypeTest {
     @Test
     public void aChainThroughAnUnknownMemberAddsNothing() {
         assertFalse(targetsOf("chained(Holder)").contains("app.Item"));
+    }
+
+    @Test
+    public void aLibraryTypeIsRecordedAsAWrittenTypeIs() {
+        assertTrue(targetsOf("library(Library)").contains("kotlin.Int"));
+        assertTrue(targetsOf("writtenInt(Library)").contains("kotlin.Int"));
+        assertTrue(targetsOf("library(Library)").contains("java.util.UUID"));
     }
 }
