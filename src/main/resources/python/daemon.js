@@ -1138,18 +1138,28 @@ function typeInferrer(filePath) {
     const tree = parsed && parsed.parserOutput ? parsed.parserOutput.parseTree : null;
     return tree ? { tree, evaluator: evaluation.program.evaluator } : null;
   };
-  return (node) => {
+  /** The evaluated type of a node of the file, or null. */
+  const typeOf = (node) => {
     try {
       if (session === undefined) {
         session = open();
       }
       const found = session ? sameNodeIn(session.tree, node) : null;
-      const info = found ? instanceClassOf(session.evaluator.getTypeOfExpression(found).type) : null;
-      return info ? inferredClassRef(info) : null;
+      return found ? session.evaluator.getTypeOfExpression(found).type : null;
     } catch (err) {
       return null;
     }
   };
+  const infer = (node) => {
+    const info = instanceClassOf(typeOf(node));
+    return info ? inferredClassRef(info) : null;
+  };
+  /** Whether Pyright resolves the node to a class itself, which calling constructs. */
+  infer.isClassObject = (node) => {
+    const type = typeOf(node);
+    return !!type && type.category === PYRIGHT_CATEGORY_CLASS && !(type.flags & PYRIGHT_FLAG_INSTANCE);
+  };
+  return infer;
 }
 
 function moduleDeclarations(filePath) {
@@ -3613,7 +3623,7 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     return false;
   }
 
-  function addRef(calleeText) {
+  function addRef(calleeText, calleeNode) {
     if (!calleeText || seen.has(calleeText)) return;
     seen.add(calleeText);
     const dotIdx = calleeText.indexOf('.');
@@ -3636,24 +3646,28 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
           refs.push({ raw: calleeText, targetUniqueName: resolved, externalLabel: resolved });
         }
       } else {
-        addExternalConstruction(calleeText);
+        addExternalConstruction(calleeText, calleeNode);
       }
     }
   }
 
   /**
-   * A capitalised name an import binds to a module outside the repo and that the code calls --
-   * `Session()` after `from requests import Session` -- constructs a class of a package the repo
-   * does not hold, and is the dependency the annotation `s: Session` already records, under the same
-   * label. Only a name an import binds counts, and only where the function does not bind it itself;
-   * a name no import binds is never guessed at.
+   * A name an import binds to a module outside the repo, that the code calls and that Pyright
+   * resolves to a class -- `Session()` after `from requests import Session` -- constructs a class of
+   * a package the repo does not hold, and is the dependency the annotation `s: Session` already
+   * records, under the same label. What Pyright resolves to a function, or does not resolve, is not
+   * a construction, whatever it is called; and a name the function binds itself is not the import.
    */
-  function addExternalConstruction(name) {
-    if (!/^[A-Z]/.test(name) || TYPE_VARIABLE_FACTORIES.has(name) || isLocal(name) || !ctx.importedSymbols) {
+  function addExternalConstruction(name, calleeNode) {
+    if (TYPE_VARIABLE_FACTORIES.has(name) || isLocal(name) || !ctx.importedSymbols || !calleeNode
+      || !ctx.inferType || !ctx.inferType.isClassObject) {
       return;
     }
     const imported = ctx.importedSymbols.get(name);
     if (!imported || !imported.moduleName || !imported.symbolName || moduleFileFor(imported.moduleName, ctx)) {
+      return;
+    }
+    if (!ctx.inferType.isClassObject(calleeNode)) {
       return;
     }
     refs.push({ raw: name, targetUniqueName: null, externalLabel: imported.moduleName + '.' + imported.symbolName });
@@ -3702,7 +3716,7 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
       addTypeVariableStringBounds(node);
       const calleeNode = node.d.leftExpr;
       if (calleeNode && !addModuleMemberRef(dottedNameOf(calleeNode, parseNodeType))) {
-        addRef(textForNode(calleeNode, ctx.fileText));
+        addRef(textForNode(calleeNode, ctx.fileText), calleeNode);
       }
       if (calleeNode && calleeNode.nodeType === parseNodeType.Name) {
         // `User()` is recorded by addRef above, as it always has been.
