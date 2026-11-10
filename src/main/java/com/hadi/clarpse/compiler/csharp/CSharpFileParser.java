@@ -1070,6 +1070,7 @@ final class CSharpFileParser {
         }
         CSharpBodyText.collectStaticReceivers(text, member);
         CSharpBodyText.collectTypeofOperands(text, member);
+        CSharpTypeTestText.collect(text, member);
         CSharpBodyText.collectExtensionCalls(text, member);
     }
 

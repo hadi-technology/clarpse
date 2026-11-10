@@ -233,6 +233,12 @@ final class CSharpModel {
         List<String> staticReceivers = new ArrayList<>();
         /** The operands of {@code typeof} in the member's body or initializer; each is a type as written. */
         List<String> typeofOperands = new ArrayList<>();
+        /** Types named where only a type can stand: {@code o as T}, {@code o is T t}, {@code default(T)}. */
+        List<String> typeTestOperands = new ArrayList<>();
+        /** Names that are a type only if they resolve to one: {@code o is T}, {@code nameof(T)}, {@code (T)(x)}. */
+        List<String> typeCandidates = new ArrayList<>();
+        /** The parenthesised names of casts {@code (T)x}, which are a type only if they resolve to one. */
+        List<String> castTypes = new ArrayList<>();
         List<String> memberUsages = new ArrayList<>();
         /**
          * The calls of the form {@code receiver.Name(...)} in the member's body or initializer, each of

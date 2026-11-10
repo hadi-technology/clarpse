@@ -285,4 +285,145 @@ public class CSharpCrossLanguageParityTest {
         assertEquals(ResolutionKind.EXACT, kindOf(model, "App.Use.a", "App.Decimal"));
         assertEquals(ResolutionKind.EXACT, kindOf(model, "App.Use.b", "System.Decimal"));
     }
+
+    // ---- type tests, casts and patterns name a type ----
+
+    private static final ProjectFile PATTERN_TYPES = new ProjectFile("/Types.cs", """
+            namespace App {
+              public class Tst { }
+              public class Asx { }
+              public class Cst { }
+              public class Nmo { }
+              public class Dft { }
+              public class Pat { }
+              public class Arm { }
+              public class Gen { }
+              public class Neg { }
+              public enum Color { Red }
+            }
+            """);
+
+    private static OOPSourceCodeModel withBody(final String members) throws Exception {
+        return model(PATTERN_TYPES, new ProjectFile("/Use.cs",
+                "namespace App { public class Use { " + members + " } }"));
+    }
+
+    @Test
+    public void anIsTestNamesItsType() throws Exception {
+        final OOPSourceCodeModel model = withBody("public bool A(object o) { return o is Tst; }"
+                + "public bool B(object o) { return o is Pat p && p != null; }"
+                + "public bool C(object o) { return o is not Neg; }");
+        assertTrue(references(model, "App.Use.A(object)", "App.Tst"));
+        assertTrue(references(model, "App.Use.B(object)", "App.Pat"));
+        assertTrue(references(model, "App.Use.C(object)", "App.Neg"));
+    }
+
+    @Test
+    public void anAsCastNamesItsType() throws Exception {
+        final OOPSourceCodeModel model = withBody("public object A(object o) { return o as Asx; }");
+        assertTrue(references(model, "App.Use.A(object)", "App.Asx"));
+    }
+
+    @Test
+    public void aCastNamesItsType() throws Exception {
+        final OOPSourceCodeModel model = withBody("public object A(object o) { return (Cst)o; }"
+                + "public object B(object o) { var x = (App.Tst) o; return x; }"
+                + "public object C(object o) { return (System.Collections.Generic.List<Gen>)o; }");
+        assertTrue(references(model, "App.Use.A(object)", "App.Cst"));
+        assertTrue(references(model, "App.Use.B(object)", "App.Tst"));
+        assertTrue(references(model, "App.Use.C(object)", "App.Gen"));
+    }
+
+    @Test
+    public void nameofAndDefaultNameTheirType() throws Exception {
+        final OOPSourceCodeModel model = withBody("public string A() { return nameof(Nmo); }"
+                + "public object B() { return default(Dft); }");
+        assertTrue(references(model, "App.Use.A()", "App.Nmo"));
+        assertTrue(references(model, "App.Use.B()", "App.Dft"));
+    }
+
+    @Test
+    public void caseAndSwitchArmPatternsNameTheirType() throws Exception {
+        final OOPSourceCodeModel model = withBody(
+                "public int A(object o) { switch (o) { case Pat p: return 1; default: return 0; } }"
+                + "public int B(object o) => o switch { Arm a => 1, _ => 0 };"
+                + "public int C(object o) { switch (o) { case Tst: return 1; default: return 0; } }");
+        assertTrue(references(model, "App.Use.A(object)", "App.Pat"));
+        assertTrue(references(model, "App.Use.B(object)", "App.Arm"));
+        assertTrue(references(model, "App.Use.C(object)", "App.Tst"));
+    }
+
+    /** A pattern naming an enum constant or a null names no type. */
+    @Test
+    public void aConstantPatternNamesNoType() throws Exception {
+        final OOPSourceCodeModel model = withBody("public bool A(object o) { return o is null || o is Color.Red; }");
+        assertFalse(mentions(model, "App.Use.A(object)", "App.Color.Red"));
+        assertFalse(mentions(model, "App.Use.A(object)", "Color.Red"));
+        assertFalse(mentions(model, "App.Use.A(object)", "null"));
+    }
+
+    /** {@code (a) - b} is a subtraction and {@code (flag) return} a condition: a parenthesised value is no cast. */
+    @Test
+    public void aParenthesisedValueIsNoCast() throws Exception {
+        final OOPSourceCodeModel model = withBody(
+                "public object A(int b) { return (Cst) - b; }"
+                + "public object B(int b) { if (Tst) return null; return (Nmo) + b; }"
+                + "public object C(int b) { return (Dft) ? 1 : 2; }"
+                + "public object D(object o) { return M(Pat) as object; }"
+                + "public object M(object o) { return o; }");
+        assertFalse(mentions(model, "App.Use.A(int)", "App.Cst"));
+        assertFalse(mentions(model, "App.Use.B(int)", "App.Tst"));
+        assertFalse(mentions(model, "App.Use.B(int)", "App.Nmo"));
+        assertFalse(mentions(model, "App.Use.C(int)", "App.Dft"));
+        assertFalse(mentions(model, "App.Use.D(object)", "App.Pat"));
+    }
+
+    /** {@code (Foo)(bar)} is a cast of {@code bar} when {@code Foo} is a type, and a call when it is a variable. */
+    @Test
+    public void aParenthesisedNameBeforeAParenthesisIsACastOnlyForATypeInScope() throws Exception {
+        final OOPSourceCodeModel model = withBody(
+                "public object A(object bar) { return (Cst)(bar); }"
+                + "public object B(object bar, System.Func<object, object> Tst) { return (Tst)(bar); }"
+                + "public object C(object bar) { var Pat = new System.Func<object, object>(x => x); return (Pat)(bar); }");
+        assertTrue(references(model, "App.Use.A(object)", "App.Cst"));
+        assertFalse(mentions(model, "App.Use.B(object, Func<object, object>)", "App.Tst"));
+        assertFalse(mentions(model, "App.Use.C(object)", "App.Pat"));
+    }
+
+    /** A name that resolves to no type of the scope is not recorded when it might be a value. */
+    @Test
+    public void aCastOrPatternNameThatIsNoVisibleTypeIsNotRecorded() throws Exception {
+        final OOPSourceCodeModel model = withBody("public object A(object o) { return (Unknown)o; }"
+                + "public bool B(object o) { return o is Missing; }"
+                + "public string C() { return nameof(Absent); }");
+        assertFalse(mentions(model, "App.Use.A(object)", "Unknown"));
+        assertFalse(mentions(model, "App.Use.B(object)", "Missing"));
+        assertFalse(mentions(model, "App.Use.C()", "Absent"));
+    }
+
+    /** {@code nameof(x)} of a parameter or a local names that variable, not a type of the same name. */
+    @Test
+    public void nameofAVariableIsNotAType() throws Exception {
+        final OOPSourceCodeModel model = withBody(
+                "public string A(object Tst) { return nameof(Tst); }"
+                + "public string B() { var Cst = 1; return nameof(Cst) + (Cst); }");
+        assertFalse(mentions(model, "App.Use.A(object)", "App.Tst"));
+        assertFalse(mentions(model, "App.Use.B()", "App.Cst"));
+    }
+
+    /** {@code nameof(User)} in a controller may name the inherited property: no bare candidate is read as a type. */
+    @Test
+    public void aCandidateNameInAClassWithAnUnparsedBaseIsNotReadAsAType() throws Exception {
+        final OOPSourceCodeModel model = model(USER_TYPE, new ProjectFile("/C.cs", """
+                namespace App {
+                  public class UsersController : Framework.ControllerBase {
+                    public string Get(object o) { return nameof(User) + (o is User ? "a" : "b"); }
+                    public object Cast(object o) { return (User)o; }
+                  }
+                }
+                """));
+        assertFalse(mentions(model, "App.UsersController.Get(object)", "App.User"));
+        assertTrue("a cast cannot be a property read, so it still names the type",
+                references(model, "App.UsersController.Cast(object)", "App.User"));
+    }
 }

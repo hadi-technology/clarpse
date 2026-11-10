@@ -383,6 +383,9 @@ final class CSharpModelAssembler {
         attachExtensionCalls(component, memberModel, typeIndex, ownerType);
         // The operand of typeof is a type whatever else shares its name, so no member-access filter.
         attachTypeReferences(component, memberModel.typeofOperands, typeIndex, ownerType, memberModel, false);
+        attachTypeReferences(component, memberModel.typeTestOperands, typeIndex, ownerType, memberModel, false);
+        attachCandidateTypes(component, memberModel.typeCandidates, true, typeIndex, ownerType, memberModel);
+        attachCandidateTypes(component, memberModel.castTypes, false, typeIndex, ownerType, memberModel);
         attachMemberReferences(component, memberModel.memberUsages, typeIndex, ownerType);
         if (component.componentType().isMethodComponent()) {
             component.setCyclo(memberModel.cyclo);
@@ -595,6 +598,48 @@ final class CSharpModelAssembler {
                 }
                 final SimpleTypeReference reference = new SimpleTypeReference(resolved.name());
                 reference.setResolutionKind(resolved.kind());
+                component.insertCmpRef(reference);
+            }
+        }
+    }
+
+    /**
+     * Records the types that written names denote when they are types and nothing else could stand
+     * there: {@code nameof(T)}, a pattern {@code o is T} and the parenthesised name of a cast
+     * {@code (T)x} may equally be a constant, a member or a value. A name is recorded only when it
+     * resolves to a type through the scoping rules and is not the name of a variable or member in
+     * scope. With {@code guardInherited}, a bare name in a class that may inherit a member of the
+     * name from a base the parse does not hold is not recorded either.
+     */
+    private static void attachCandidateTypes(final Component component,
+                                             final Collection<String> candidates,
+                                             final boolean guardInherited,
+                                             final TypeIndex typeIndex,
+                                             final CSharpModel.CSharpTypeModel ownerType,
+                                             final CSharpModel.CSharpMemberModel memberModel) {
+        final Set<String> seen = new LinkedHashSet<>();
+        for (final String written : candidates) {
+            if (isLikelyMemberAccess(written, ownerType, memberModel, true, typeIndex)) {
+                continue;
+            }
+            boolean first = true;
+            for (final CSharpFileParser.TypeToken token : CSharpFileParser.extractTypeReferences(written)) {
+                final boolean head = first;
+                first = false;
+                if (ownerType.typeParameters.contains(token.name())
+                        || memberModel.typeParameters.contains(token.name())) {
+                    continue;
+                }
+                final Resolution resolved = typeIndex.resolveType(token.name(), token.arity(), ownerType, memberModel);
+                if (resolved == null || resolved.kind() != ResolutionKind.EXACT
+                        || resolved.name().equals(component.uniqueName())
+                        || (head && guardInherited
+                            && isPossiblyInherited(token.name(), token.name(), resolved, ownerType, memberModel, typeIndex))
+                        || !seen.add(resolved.name())) {
+                    continue;
+                }
+                final SimpleTypeReference reference = new SimpleTypeReference(resolved.name());
+                reference.setResolutionKind(ResolutionKind.EXACT);
                 component.insertCmpRef(reference);
             }
         }
