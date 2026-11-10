@@ -540,24 +540,47 @@ A TypeScript file is read in a program, and a program is built from a config.
 ## Files a component's imports resolve to
 `Component.imports()` lists what a file imports as names, and a name cannot always be split back
 into a path: a folder called `fit.core` looks like two folders. `Component.importedFiles()` is the
-exact answer for TypeScript and Python: the project files, in the form of `Component.sourceFile()`,
-that the file's imports resolve to, whether or not the target declares a type. The set keeps the
-order the imports first appear in the file, is unmodifiable, never `null`, is attached to the
-components that carry `imports()`, and is empty for every other language.
+exact answer: the project files that the import directives of the component's file name. That is a
+module file a TypeScript or Python import resolves to, or the file(s) declaring a single type or
+member that a Java, Kotlin or C# directive names.
+
+- Namespace and package wildcard imports (`import a.b.*`, Kotlin `import a.b.*`, C# `using A.B;`, a
+  namespace alias) contribute nothing. A wildcard over a type contributes that type's file.
+- Library, framework, JDK and unresolved targets, files outside the project, and the file itself
+  contribute nothing.
+- The path form is that of `Component.sourceFile()`. The order is the source order of first
+  appearance, with no repeats. The set is unmodifiable and never `null`, and is attached to the
+  components that carry `imports()`.
+
+Per language:
 
 - **TypeScript.** Static imports, `export ... from`, and literal `import()` and `require()` calls,
-  resolved by relative path, `paths` alias or workspace link. Packages resolved into
-  `node_modules` and specifiers that do not resolve add nothing.
+  resolved by relative path, `paths` alias or workspace link. A target counts whether or not it
+  declares a type. Packages resolved into `node_modules` and specifiers that do not resolve add
+  nothing.
 - **Python.** Each import is resolved from the importing file by Pyright's import resolution.
   `import a.b.c` is the file of `a.b.c` (`a/b/c.py`, or `a/b/c/__init__.py` for a package); the
   `__init__.py` of the parent packages are not listed. `from a.b import c` is `a/b/c.py` when `c`
-  is a submodule, and otherwise the file of `a.b`, where a name it defines is found. `from a.b
-  import *` is the file of `a.b`. Relative imports resolve against the importing file's package,
-  and `importlib.import_module("pkg.mod")`, `import_module("pkg.mod")` and `__import__("pkg.mod")`
-  with a literal argument count as imports. Imports in functions, classes and
-  `if TYPE_CHECKING:` blocks count. The standard library, bundled stubs, installed packages,
-  unresolved imports and non-literal dynamic imports add nothing, and neither does a file that is
-  not a project file.
+  is a submodule, and otherwise the file of `a.b`. `from a.b import *` is the file of `a.b`.
+  Relative imports resolve against the importing file's package, and
+  `importlib.import_module("pkg.mod")`, `import_module("pkg.mod")` and `__import__("pkg.mod")` with
+  a literal argument count as imports. Imports in functions, classes and `if TYPE_CHECKING:`
+  blocks count. A resolution that lands on a `.pyi` stub records the `.py` beside it; a stub with
+  none beside it names no file. The standard library, bundled stubs, installed packages and
+  non-literal dynamic imports add nothing.
+- **Java.** A single-type import gives the file declaring the top-level type its name falls under,
+  so a nested type leads to the file of the type containing it. A static import gives the file
+  declaring the type whose member it names. An on-demand import over a nested type gives the file
+  of the top-level type. A name no Java file declares is looked up among the project's Kotlin
+  files, a top-level Kotlin function going through the file class it compiles into.
+- **Kotlin.** A name import gives every file declaring a type, a typealias or a top-level
+  function or property of that name. A name that matches none is read as a member of a type and
+  gives the file declaring the nearest enclosing type. An alias changes the name a file sees, not
+  the target. A name no Kotlin file declares is looked up among the project's Java files.
+- **C#.** A `using static` gives every file declaring the type, so all parts of a partial type are
+  listed, and an alias of a type gives the files declaring it. A directive inside a namespace is
+  looked up from the innermost enclosing namespace outwards, and a `global::` name from the root.
+  A global using belongs to the file that writes it.
 
 ## Failure Contract
 - Java/C#/TypeScript/Python/Kotlin all report recoverable issues in `CompileResult.failures()` using

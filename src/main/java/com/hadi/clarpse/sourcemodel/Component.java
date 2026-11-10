@@ -263,49 +263,62 @@ public final class Component implements Serializable {
     }
 
     /**
-     * The repository files that the imports of this component's file resolve to.
+     * The project files that the import directives of this component's file name.
      *
-     * <p>TypeScript and Python components are populated; the set is empty for every other
-     * language.
+     * <p>For TypeScript and Python that is a module file an import resolves to. For Java, Kotlin
+     * and C# it is the file or files declaring the single type or member a directive names. A
+     * namespace or package wildcard ({@code import a.b.*}, Kotlin {@code import a.b.*}, C#
+     * {@code using A.B;}, a namespace alias) names no file and contributes nothing; a wildcard
+     * over a type contributes that type's file. A library, framework, JDK or unresolved target,
+     * a file outside the project, and the component's own file contribute nothing.
      *
-     * <p><b>TypeScript.</b> Included: the target of every relative import, and of every
-     * workspace-package or path-alias import that resolves to a source file inside the project,
-     * whether written as a static import, {@code export ... from}, {@code import()} or
-     * {@code require} with a literal argument. A target is recorded whether or not it declares a
-     * type. Not included: a package resolved into {@code node_modules}, a specifier that does not
-     * resolve, a target outside the project, and any target that is not a file of the project.
+     * <p>Each entry is a path in the form of {@link #sourceFile()}, so it can be compared with the
+     * source file of another component directly. The order is the source order of first appearance,
+     * without repeats. No path is derived from the text of an import.
      *
-     * <p><b>Python.</b> Each import is resolved from the importing file's position by the type
-     * checker's own import resolution, and what it resolves to is a file of the project. Included:
      * <ul>
-     *   <li>{@code import a.b.c} and {@code import a.b.c as m}: the file of the module
-     *       {@code a.b.c}, which is {@code a/b/c.py}, or {@code a/b/c/__init__.py} when it is a
-     *       package. The {@code __init__.py} files of the parent packages {@code a} and
-     *       {@code a.b} are run by the import too, but are not what it names, and are not
-     *       listed.</li>
-     *   <li>{@code from a.b import c}, {@code from a.b import c as d}: for each imported name, the
-     *       file of the submodule {@code a.b.c} when {@code a.b} has one, and otherwise the file of
-     *       {@code a.b} itself, which is where a name it defines is found. The name is not
-     *       checked against what that file defines.</li>
-     *   <li>{@code from a.b import *}: the file of {@code a.b}.</li>
-     *   <li>Relative imports ({@code from . import x}, {@code from .mod import y},
-     *       {@code from ..pkg.mod import z}), resolved against the importing file's package by the
-     *       same rules.</li>
-     *   <li>{@code importlib.import_module("pkg.mod")}, {@code import_module("pkg.mod")} after
-     *       {@code from importlib import import_module}, and {@code __import__("pkg.mod")}, with a
-     *       literal first argument, as {@code import pkg.mod}.</li>
+     *   <li><b>TypeScript.</b> The target of every relative import, and of every workspace-package
+     *       or path-alias import that resolves to a source file inside the project, whether written
+     *       as a static import, {@code export ... from}, {@code import()} or {@code require} with a
+     *       literal argument. A target counts whether or not it declares a type. A package resolved
+     *       into {@code node_modules} and a specifier that does not resolve contribute
+     *       nothing.</li>
+     *   <li><b>Python.</b> Each import is resolved from the importing file by the type checker's
+     *       import resolution. {@code import a.b.c} gives the file of the module {@code a.b.c}
+     *       ({@code a/b/c.py}, or {@code a/b/c/__init__.py} for a package); the {@code __init__.py}
+     *       files of the parent packages are not listed. {@code from a.b import c} gives
+     *       {@code a/b/c.py} when {@code c} is a submodule, and otherwise the file of
+     *       {@code a.b}; {@code from a.b import *} gives the file of {@code a.b}. Relative imports
+     *       resolve against the importing file's package, and {@code importlib.import_module},
+     *       {@code import_module} and {@code __import__} with a literal argument count as imports,
+     *       as do imports inside functions, classes and {@code if TYPE_CHECKING:}. A resolution
+     *       that lands on a {@code .pyi} stub records the {@code .py} beside it (or the
+     *       {@code __init__.py} beside an {@code __init__.pyi}); a stub with none beside it names
+     *       no file. The standard library, bundled stubs and installed packages contribute
+     *       nothing.</li>
+     *   <li><b>Java.</b> A single-type import gives the file declaring the top-level type its name
+     *       falls under, so a nested type leads to the file of the type containing it. A static
+     *       import gives the file declaring the type whose member it names, and a static
+     *       on-demand import the file declaring that type. An on-demand import over a nested type
+     *       gives the file of the top-level type. When no Java file declares the name, the
+     *       project's Kotlin files are asked, a Kotlin top-level function going through the file
+     *       class it compiles into.</li>
+     *   <li><b>Kotlin.</b> A name import gives every file declaring a type, a typealias or a
+     *       top-level function or property of that name, so overloads spread over several files
+     *       are all listed. A name that matches none is read as a member of a type (an object
+     *       member, an enum entry, a nested type) and gives the file declaring the nearest
+     *       enclosing type. An alias changes the name a file sees, not the target. A name no
+     *       Kotlin file declares is looked up among the project's Java files by the Java rule.</li>
+     *   <li><b>C#.</b> A {@code using static} gives every file declaring the type, so all parts of
+     *       a partial type are listed, and an alias of a type gives the files declaring it. A
+     *       directive written inside a namespace is looked up from the innermost enclosing
+     *       namespace outwards, and a {@code global::} name from the root. A global using belongs
+     *       to the file that writes it and is not applied to the others. A partial type's
+     *       component carries the directives of every part.</li>
      * </ul>
-     * Imports written inside functions and classes, and under {@code if TYPE_CHECKING:}, count.
-     * Not included: the standard library, stubs bundled with the type checker, installed packages
-     * and anything under a dependency directory, imports that do not resolve, a dynamic import
-     * whose argument is not a string literal, a resolved file that is not a file of the project
-     * (a {@code .pyi} stub among them, since stubs are not project files), a namespace package
-     * directory, which has no file, and the importing file itself.
      *
-     * <p>Each entry is a path in the form of {@link #sourceFile()}, so an entry can be compared
-     * with the source file of another component directly. A component of a boundary file reports
-     * what the import resolution of its file gives, exactly as for an analysed file; no path is
-     * ever derived from the text of an import.
+     * <p>A component of a boundary file reports what the resolution of its file gives, exactly as
+     * for an analysed file.
      *
      * @return Unmodifiable set of paths, in the order the imports first appear in the file; never
      *         {@code null}.
