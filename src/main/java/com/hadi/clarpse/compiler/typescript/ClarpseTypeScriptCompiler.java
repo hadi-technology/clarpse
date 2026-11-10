@@ -77,7 +77,9 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             final TypeScriptDaemon.InitResult initResult = daemon.initRepo(persistDir);
             addInvalidConfigFailures(initResult, compileFailures, persistDir);
             final ModellingBudget budget = new ModellingBudget();
-            modelFiles(daemon, persistDir, tsFiles, false,
+            final DiskPaths diskPaths = new DiskPaths(persistDir,
+                    new ArrayList<>(projectFiles.files(Lang.TYPESCRIPT)));
+            modelFiles(daemon, persistDir, diskPaths, tsFiles, false,
                     new ModelSink(srcModel, compileFailures, null), budget);
             CompilerSupport.classifyClassCyclo(srcModel, EnumSet.of(
                     OOPSourceModelConstants.ComponentType.CLASS,
@@ -114,12 +116,14 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
      * not modelled is therefore on the failure list. An interrupt of the analysing thread still
      * ends the compile with no result, as does a failure to start the daemon.
      *
+     * @param diskPaths Translation from the on-disk files the daemon resolved imports to into the
+     *                  project's file paths, over every TypeScript file of the project.
      * @param boundary Whether the files are level-one files of a one-level analysis, whose bodies
      *                 are not read.
      * @param sink     Where the models and the failures go.
      */
     private static void modelFiles(final TypeScriptDaemon daemon, final String persistDir,
-                                   final List<ProjectFile> files, final boolean boundary,
+                                   final DiskPaths diskPaths, final List<ProjectFile> files, final boolean boundary,
                                    final ModelSink sink, final ModellingBudget budget)
             throws CompileException {
         final Map<String, TypeScriptFileModel> fetched = new HashMap<>();
@@ -138,6 +142,8 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
             final String diskPath = CompilerSupport.resolveFileOnDisk(persistDir, file.path());
             final Package pkg = TypeScriptModelAssembler.resolvePackage(persistDir, diskPath);
             final String moduleName = CompilerSupport.moduleNameForFile(diskPath);
+            // A resolved file that is not a file of the project is left out rather than guessed.
+            fileModel.importedFiles = diskPaths.toProjectPaths(fileModel.importedFiles);
             TypeScriptModelAssembler.insertFileModel(pkg, moduleName, file.path(), persistDir, fileModel,
                     sink.model(), sink.inRepositoryNames());
             addUnresolvedBaseFailures(file, fileModel, sink.failures());
@@ -314,8 +320,8 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
                 daemon.planOneLevel(diskPaths.toDisk(analysed()), diskPaths.toDisk(selection.modelled()));
                 final ModellingBudget budget = new ModellingBudget();
                 final ModelSink sink = new ModelSink(srcModel, compileFailures, inRepositoryNames);
-                modelFiles(daemon, persistDir, analysed(), false, sink, budget);
-                modelFiles(daemon, persistDir, selection.modelled(), true, sink, budget);
+                modelFiles(daemon, persistDir, diskPaths, analysed(), false, sink, budget);
+                modelFiles(daemon, persistDir, diskPaths, selection.modelled(), true, sink, budget);
             } catch (final TypeScriptDaemonException e) {
                 for (final ProjectFile file : analysed()) {
                     compileFailures.add(new CompileFailure(file, e.getMessage(), daemonFailureCode(e)));
@@ -375,6 +381,9 @@ public class ClarpseTypeScriptCompiler implements ClarpseCompiler {
 
         List<String> toProjectPaths(final List<String> diskPaths) {
             final List<String> paths = new ArrayList<>();
+            if (diskPaths == null) {
+                return paths;
+            }
             for (final String diskPath : diskPaths) {
                 final String path = projectPathByDisk.get(canonical(diskPath));
                 if (path != null) {

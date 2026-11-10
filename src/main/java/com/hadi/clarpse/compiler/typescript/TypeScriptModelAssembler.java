@@ -81,11 +81,20 @@ final class TypeScriptModelAssembler {
                                      final String sourcePath,
                                      final TypeScriptFileModel fileModel,
                                      final OOPSourceCodeModel srcModel) {
-        if (fileModel.imports == null || fileModel.imports.isEmpty()) {
+        final java.util.Set<String> importedFiles = new java.util.LinkedHashSet<>();
+        if (fileModel.importedFiles != null) {
+            fileModel.importedFiles.stream().filter(f -> f != null && !f.isEmpty()).forEach(importedFiles::add);
+        }
+        if ((fileModel.imports == null || fileModel.imports.isEmpty()) && importedFiles.isEmpty()) {
             return;
         }
         final java.util.Set<String> imports = new java.util.LinkedHashSet<>();
-        for (final com.hadi.clarpse.compiler.typescript.model.TypeScriptImportModel imported : fileModel.imports) {
+        java.util.List<com.hadi.clarpse.compiler.typescript.model.TypeScriptImportModel> importList =
+                java.util.List.of();
+        if (fileModel.imports != null) {
+            importList = fileModel.imports;
+        }
+        for (final com.hadi.clarpse.compiler.typescript.model.TypeScriptImportModel imported : importList) {
             if (imported == null) {
                 continue;
             }
@@ -103,7 +112,7 @@ final class TypeScriptModelAssembler {
                 imports.add(value);
             }
         }
-        if (imports.isEmpty()) {
+        if (imports.isEmpty() && importedFiles.isEmpty()) {
             return;
         }
         final java.util.List<Component> declared = srcModel.components()
@@ -113,7 +122,10 @@ final class TypeScriptModelAssembler {
         // just as much as the types do, so it holds them too.
         declared.stream()
                 .filter(TypeScriptModelAssembler::carriesFileImports)
-                .forEach(component -> component.setImports(imports));
+                .forEach(component -> {
+                    component.setImports(imports);
+                    component.setImportedFiles(importedFiles);
+                });
     }
 
     private static boolean carriesFileImports(final Component component) {

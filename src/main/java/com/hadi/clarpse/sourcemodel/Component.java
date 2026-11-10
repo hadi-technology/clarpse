@@ -45,6 +45,8 @@ public final class Component implements Serializable {
     @JsonInclude(Include.NON_EMPTY)
     private Set<String> imports = new HashSet<>();
     @JsonInclude(Include.NON_EMPTY)
+    private Set<String> importedFiles = new LinkedHashSet<>();
+    @JsonInclude(Include.NON_EMPTY)
     private Set<String> modifiers = new LinkedHashSet<>();
     private ComponentType type;
     @JsonIgnore
@@ -80,6 +82,7 @@ public final class Component implements Serializable {
         if (pool == null) {
             this.modifiers = new LinkedHashSet<>(component.modifiers);
             this.imports = new LinkedHashSet<>(component.imports);
+            this.importedFiles = new LinkedHashSet<>(component.importedFiles());
             this.codeFragment = component.codeFragment;
             this.componentName = component.componentName;
             this.pkg = component.pkg;
@@ -92,6 +95,7 @@ public final class Component implements Serializable {
         } else {
             this.modifiers = pool.pooledSet(component.modifiers);
             this.imports = pool.pooledSet(component.imports);
+            this.importedFiles = pool.pooledSet(component.importedFiles);
             this.codeFragment = pool.pooled(component.codeFragment);
             this.componentName = pool.pooled(component.componentName);
             this.pkg = pool.pooled(component.pkg);
@@ -258,6 +262,33 @@ public final class Component implements Serializable {
         return Collections.unmodifiableSet(imports);
     }
 
+    /**
+     * The repository files that the imports of this component's file resolve to.
+     *
+     * <p>Included: the target of every relative import, and of every workspace-package or
+     * path-alias import that resolves to a source file inside the project, whether written as a
+     * static import, {@code export ... from}, {@code import()} or {@code require} with a literal
+     * argument. A target is recorded whether or not it declares a type.
+     *
+     * <p>Not included: a package resolved into {@code node_modules}, a specifier that does not
+     * resolve, a target outside the project, and any target that is not a file of the project.
+     * Only TypeScript components are populated; the set is empty for every other language.
+     *
+     * <p>Each entry is a path in the form of {@link #sourceFile()}, so an entry can be compared
+     * with the source file of another component directly. A component of a boundary file reports
+     * what the module resolution of its file's import specifiers gives, exactly as for an analysed
+     * file; no path is ever derived from the text of a specifier.
+     *
+     * @return Unmodifiable set of paths, in the order the imports first appear in the file; never
+     *         {@code null}.
+     */
+    public Set<String> importedFiles() {
+        if (importedFiles == null) {
+            return Collections.emptySet();
+        }
+        return Collections.unmodifiableSet(importedFiles);
+    }
+
     public String componentName() {
         return componentName;
     }
@@ -335,6 +366,19 @@ public final class Component implements Serializable {
             imports = new LinkedHashSet<>();
         } else {
             imports = new LinkedHashSet<>(currentImports);
+        }
+    }
+
+    /**
+     * Sets the repository files this component's imports resolve to; see {@link #importedFiles()}.
+     *
+     * @param files The paths, in order; {@code null} is the empty set.
+     */
+    public void setImportedFiles(final Set<String> files) {
+        if (files == null) {
+            importedFiles = new LinkedHashSet<>();
+        } else {
+            importedFiles = new LinkedHashSet<>(files);
         }
     }
 

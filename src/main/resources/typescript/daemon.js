@@ -3539,10 +3539,17 @@ async function handleGetFileModel(params) {
   } catch (err) {
     imports = [];
   }
+  let importedFiles = [];
+  try {
+    importedFiles = collectImportedFiles(ts, entryInfo.source, checker);
+  } catch (err) {
+    importedFiles = [];
+  }
   return {
     filePath: normalized,
     declarations,
     imports,
+    importedFiles,
     unresolvedBases
   };
 }
@@ -3627,6 +3634,42 @@ function collectImports(ts, source, checker) {
   }
   collectLoadedModules(ts, source, checker, results);
   return results;
+}
+
+/**
+ * The repository source files a file's module specifiers resolve to, in source order and without
+ * repeats. Covers static imports, `import x = require(...)`, `export ... from`, and `import()` and
+ * `require()` calls with a literal argument, each resolved as `collectImports` resolves it. A
+ * specifier that resolves into `node_modules`, outside the repository, to a file that is not
+ * TypeScript, or not at all, adds nothing. Whether the target declares a type does not matter.
+ */
+function collectImportedFiles(ts, source, checker) {
+  const files = [];
+  const seen = new Set();
+  const record = (specifierNode) => {
+    if (!specifierNode || !ts.isStringLiteralLike(specifierNode) || !specifierNode.text) return;
+    const resolved = resolveImportedFile(specifierNode, specifierNode.text, source, checker);
+    if (resolved && isTypeScriptFile(resolved) && !seen.has(resolved)) {
+      seen.add(resolved);
+      files.push(resolved);
+    }
+  };
+  function visit(node) {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      record(node.moduleSpecifier);
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      record(node.moduleReference.expression);
+    } else if (ts.isCallExpression(node) && node.arguments.length === 1) {
+      const callee = node.expression;
+      const requireCall = isRequireFunction(callee)
+        || (ts.isPropertyAccessExpression(callee) && callee.name.text === "resolve"
+          && ts.isIdentifier(callee.expression) && callee.expression.text === "require");
+      if (callee.kind === ts.SyntaxKind.ImportKeyword || requireCall) record(node.arguments[0]);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return files;
 }
 
 /**

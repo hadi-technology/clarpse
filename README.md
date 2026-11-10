@@ -533,6 +533,14 @@ A TypeScript file is read in a program, and a program is built from a config.
   the repository wrote first. `InitResult.unownedFileCount()` says how many such files there are.
   Set `clarpse.typescript.unownedFiles=report` to have them reported as failure `2001` and not
   modelled, which is also what a project with no config then gets as failure `1002`.
+- **Files a component's imports resolve to.** `Component.imports()` lists what a TypeScript
+  file imports as names (a resolved import becomes the dotted name of the type it brings in), and
+  a name cannot be split back into a path. `Component.importedFiles()` is the exact answer: the
+  project files, in the form of `Component.sourceFile()`, that the file's static imports,
+  `export ... from`, and literal `import()` and `require()` calls resolve to, by relative path,
+  `paths` alias or workspace link, whether or not the target declares a type. Packages resolved
+  into `node_modules` and specifiers that do not resolve add nothing. The set keeps the order the
+  imports appear in the file, is unmodifiable, and is empty for every other language.
 - **Options that make the compiler report.** `traceResolution`, `listFiles`, `explainFiles`,
   `extendedDiagnostics` and the like are dropped from a config's options. They change nothing a
   program holds.
