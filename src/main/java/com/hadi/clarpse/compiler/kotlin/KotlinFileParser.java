@@ -761,10 +761,10 @@ final class KotlinFileParser {
 
         /** Records a call {@code name.callee(...)} whose receiver is a single name. */
         private void recordReceiverCall(final KotlinSyntaxNode expression, final KotlinMemberModel member) {
-            if (member == null || expression.children.size() != 2 || !expression.children.get(0).is(REFERENCE_EXPRESSION)) {
+            if (member == null || expression.children.size() < 2 || !expression.children.get(0).is(REFERENCE_EXPRESSION)) {
                 return;
             }
-            final KotlinSyntaxNode selector = expression.children.get(1);
+            final KotlinSyntaxNode selector = expression.children.get(expression.children.size() - 1);
             if (!selector.is(CALL_EXPRESSION) || selector.children.isEmpty()
                     || !selector.children.get(0).is(REFERENCE_EXPRESSION)) {
                 return;
@@ -819,9 +819,9 @@ final class KotlinFileParser {
                 }
                 return new CallExpr(name);
             }
-            if (QUALIFIED_EXPRESSIONS.contains(node.type) && node.children.size() == 2) {
+            if (QUALIFIED_EXPRESSIONS.contains(node.type) && node.children.size() >= 2) {
                 final KotlinExpr receiver = expressionOf(node.children.get(0));
-                final KotlinSyntaxNode selector = node.children.get(1);
+                final KotlinSyntaxNode selector = node.children.get(node.children.size() - 1);
                 if (receiver == null) {
                     return null;
                 }
