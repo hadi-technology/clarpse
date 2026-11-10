@@ -8,8 +8,9 @@ import static com.hadi.test.python.PythonInlineProject.lines;
 /**
  * Constructing a class that an import binds to a package outside the repo is the dependency an
  * annotation naming it already records, under the same label. Only what Pyright resolves to a class
- * counts: a capitalised function, or a name Pyright cannot resolve, constructs nothing, and a name
- * no import binds is never guessed at.
+ * counts as a construction: a capitalised function constructs nothing, and a name no import binds is
+ * never guessed at. An imported name Pyright cannot resolve at all, as for a package that is not
+ * installed, is not known to be a class and is referenced as the plain external name, unresolved.
  */
 public class PythonExternalConstructionTest {
 
@@ -18,6 +19,9 @@ public class PythonExternalConstructionTest {
                 "from collections import OrderedDict, deque",
                 "from ctypes import POINTER",
                 "from nowhere import Widget",
+                "from requests import Session",
+                "import requests",
+                "import os",
                 "from os import getcwd",
                 "from pkg.models import Foo",
                 "def annotated(s: OrderedDict):",
@@ -40,6 +44,14 @@ public class PythonExternalConstructionTest {
                 "    return POINTER(int)",
                 "def unresolvable():",
                 "    return Widget()",
+                "def uninstalledClass():",
+                "    return Session()",
+                "def throughUninstalledModule():",
+                "    return requests.Session()",
+                "def throughResolvedModule():",
+                "    return os.getcwd()",
+                "def shadowedModule(requests):",
+                "    return requests.Session()",
                 "def lowercaseClass():",
                 "    return deque()",
                 "def mentions():",
@@ -61,8 +73,39 @@ public class PythonExternalConstructionTest {
     }
 
     @Test
-    public void aNamePyrightCannotResolveIsNotAConstruction() throws Exception {
-        Assert.assertTrue(project().references("pkg.ext.unresolvable").isEmpty());
+    public void aNamePyrightCannotResolveReferencesTheImportedNameUnresolved() throws Exception {
+        final PythonInlineProject project = project();
+        Assert.assertEquals(java.util.Collections.singleton("nowhere.Widget[ext]"),
+                project.references("pkg.ext.unresolvable"));
+        Assert.assertEquals(java.util.Collections.singleton("requests.Session[ext]"),
+                project.references("pkg.ext.uninstalledClass"));
+        assertUnresolved(project, "pkg.ext.uninstalledClass", "requests.Session");
+    }
+
+    @Test
+    public void aCallThroughAnImportedModulePyrightCannotResolveReferencesTheImportedName() throws Exception {
+        final PythonInlineProject project = project();
+        Assert.assertEquals(java.util.Collections.singleton("requests.Session[ext]"),
+                project.references("pkg.ext.throughUninstalledModule"));
+        assertUnresolved(project, "pkg.ext.throughUninstalledModule", "requests.Session");
+    }
+
+    @Test
+    public void aCallThroughAModulePyrightResolvesToAFunctionReferencesNothing() throws Exception {
+        Assert.assertTrue(project().references("pkg.ext.throughResolvedModule").isEmpty());
+    }
+
+    @Test
+    public void aModuleNameTheFunctionBindsItselfIsNotTheImport() throws Exception {
+        Assert.assertTrue(project().references("pkg.ext.shadowedModule").isEmpty());
+    }
+
+    private static void assertUnresolved(final PythonInlineProject project, final String function, final String name) {
+        final com.hadi.clarpse.reference.ComponentReference reference = project.component(function).references()
+                .stream().filter(ref -> ref.invokedComponent().equals(name)).findFirst().get();
+        Assert.assertEquals(com.hadi.clarpse.reference.ResolutionKind.UNRESOLVED, reference.resolutionKind());
+        Assert.assertTrue(reference.getClass().toString(),
+                reference.getClass() == com.hadi.clarpse.reference.SimpleTypeReference.class);
     }
 
     @Test

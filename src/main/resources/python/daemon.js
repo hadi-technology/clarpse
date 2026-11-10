@@ -1041,6 +1041,7 @@ function evaluationProgram() {
 const EVALUATION_FILE_BUDGET = 200;
 
 /** The kinds of type Pyright's evaluator reports, and the flag that marks a type as an instance. */
+const PYRIGHT_CATEGORY_UNKNOWN = 1;
 const PYRIGHT_CATEGORY_CLASS = 6;
 const PYRIGHT_CATEGORY_UNION = 8;
 const PYRIGHT_FLAG_INSTANCE = 2;
@@ -1198,10 +1199,20 @@ function typeInferrer(filePath) {
     const info = instanceClassOf(typeOf(node));
     return info ? inferredClassRef(info) : null;
   };
-  /** Whether Pyright resolves the node to a class itself, which calling constructs. */
-  infer.isClassObject = (node) => {
+  /**
+   * What Pyright makes of a callee: `class` when it resolves to a class itself, which calling
+   * constructs; `unresolved` when it cannot resolve the name at all, as for a package that is not
+   * installed; `other` for anything else, a function included.
+   */
+  infer.calleeKind = (node) => {
     const type = typeOf(node);
-    return !!type && type.category === PYRIGHT_CATEGORY_CLASS && !(type.flags & PYRIGHT_FLAG_INSTANCE);
+    if (!type) {
+      return 'other';
+    }
+    if (type.category === PYRIGHT_CATEGORY_CLASS && !(type.flags & PYRIGHT_FLAG_INSTANCE)) {
+      return 'class';
+    }
+    return type.category === PYRIGHT_CATEGORY_UNKNOWN ? 'unresolved' : 'other';
   };
   /** The reference to the owner of `member` called on `node`, with the module of an external owner. */
   infer.receiver = (node, member) => {
@@ -3728,6 +3739,8 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
         const resolved = resolveTypeFromRaw(base, ctx);
         if (resolved) {
           refs.push({ raw: calleeText, targetUniqueName: null, externalLabel: resolved + calleeText.substring(dotIdx) });
+        } else {
+          addExternalModuleCall(calleeText, calleeNode);
         }
       }
     } else if (!isLocal(calleeText)) {
@@ -3744,25 +3757,49 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
   }
 
   /**
+   * `m.N(...)` after `import m`, with `m` outside the repo and Pyright unable to resolve the callee,
+   * references the imported name `m.N`, unresolved. It is not a construction, since nothing says
+   * `N` is a class.
+   */
+  function addExternalModuleCall(calleeText, calleeNode) {
+    const parts = calleeText.split('.');
+    if (parts.length !== 2 || isLocal(parts[0]) || !ctx.importedModules || !calleeNode || !ctx.inferType
+      || !ctx.inferType.calleeKind) {
+      return;
+    }
+    const moduleName = ctx.importedModules.get(parts[0]);
+    if (!moduleName || moduleFileFor(moduleName, ctx) || ctx.importedSymbols.has(parts[0])
+      || ctx.inferType.calleeKind(calleeNode) !== 'unresolved') {
+      return;
+    }
+    refs.push({ raw: calleeText, targetUniqueName: null, externalLabel: moduleName + '.' + parts[1], unresolved: true });
+  }
+
+  /**
    * A name an import binds to a module outside the repo, that the code calls and that Pyright
    * resolves to a class -- `Session()` after `from requests import Session` -- constructs a class of
    * a package the repo does not hold, and is the dependency the annotation `s: Session` already
-   * records, under the same label. What Pyright resolves to a function, or does not resolve, is not
-   * a construction, whatever it is called; and a name the function binds itself is not the import.
+   * records, under the same label. What Pyright cannot resolve at all, as for a package that is not
+   * installed, is not known to be a class: it references the imported name, unresolved. What Pyright
+   * resolves to a function is not a construction, whatever it is called; and a name the function
+   * binds itself is not the import.
    */
   function addExternalConstruction(name, calleeNode) {
     if (TYPE_VARIABLE_FACTORIES.has(name) || isLocal(name) || !ctx.importedSymbols || !calleeNode
-      || !ctx.inferType || !ctx.inferType.isClassObject) {
+      || !ctx.inferType || !ctx.inferType.calleeKind) {
       return;
     }
     const imported = ctx.importedSymbols.get(name);
     if (!imported || !imported.moduleName || !imported.symbolName || moduleFileFor(imported.moduleName, ctx)) {
       return;
     }
-    if (!ctx.inferType.isClassObject(calleeNode)) {
-      return;
+    const kind = ctx.inferType.calleeKind(calleeNode);
+    if (kind === 'class') {
+      refs.push({ raw: name, targetUniqueName: null, externalLabel: imported.moduleName + '.' + imported.symbolName });
+    } else if (kind === 'unresolved') {
+      refs.push({ raw: name, targetUniqueName: null, externalLabel: imported.moduleName + '.' + imported.symbolName,
+        unresolved: true });
     }
-    refs.push({ raw: name, targetUniqueName: null, externalLabel: imported.moduleName + '.' + imported.symbolName });
   }
 
   /**
