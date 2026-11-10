@@ -1174,8 +1174,9 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 ParseUtil.insertCmpRef(componentStack.peek(), new SimpleTypeReference(inferredName),
                         this.componentStack);
             }
-        } catch (final Exception ignored) {
-            // The solver could not type the initializer; the local records nothing for it.
+        } catch (final Exception | StackOverflowError ignored) {
+            // The solver could not type the initializer, or ran out of stack doing so; the local
+            // records nothing for it.
         }
     }
 
@@ -1606,7 +1607,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                         && ((ObjectCreationExpr) current).getAnonymousClassBody().isPresent()) {
                     ((ObjectCreationExpr) current).getType().resolve();
                 }
-            } catch (final RuntimeException unseen) {
+            } catch (final RuntimeException | StackOverflowError unseen) {
                 return false;
             }
             current = current.getParentNode().orElse(null);
