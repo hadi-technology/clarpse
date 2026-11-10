@@ -17,6 +17,8 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModelAssembler.Shadow;
 import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Origin;
 import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Resolution;
 import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Scope;
+import com.hadi.clarpse.reference.MemberKind;
+import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 
 import java.util.ArrayList;
@@ -318,6 +320,63 @@ final class KotlinReceiverTyping {
             }
         }
         return null;
+    }
+
+    /**
+     * The member a call on a receiver of exactly known type uses. The receiver is a parameter, local
+     * or property of a written type, or an object or companion named in the source; a call with no
+     * receiver, on {@code this}, on a name the member redeclares and on any other receiver adds
+     * nothing.
+     *
+     * <p>A type of the repository owns the member itself unless a readable ancestor declares it, and
+     * a name that no readable type declares is not credited while an extension function of that name
+     * is visible, since the call may be that. A JDK type owns the member only when the platform has
+     * a member of that name on it.
+     *
+     * @param call The call.
+     * @return The reference, or null when the receiver or the owner is not known.
+     */
+    MemberReference memberReference(final ReceiverCall call) {
+        final String receiver = call.receiver();
+        if ("this".equals(receiver) || member.declarations.containsKey(call.name())) {
+            return null;
+        }
+        String type = typeOfReceiver(receiver);
+        if (type == null && !receiver.isEmpty() && receiver.indexOf('.') < 0
+                && Character.isUpperCase(receiver.charAt(0))) {
+            type = typeOfRoot(receiver);
+        }
+        if (type == null || KotlinTypeMembers.isArray(type)) {
+            return null;
+        }
+        final MemberReference reference;
+        if (resolver.index().declaration(type) != null) {
+            String owner = typeMembers.declaringType(type, call.name());
+            if (owner == null) {
+                if (hasVisibleExtension(call.name())) {
+                    return null;
+                }
+                owner = type;
+            }
+            reference = new MemberReference(owner, call.name(), MemberKind.CALL);
+        } else {
+            final String unit = typeMembers.platformPackage(type, call.name());
+            if (unit == null) {
+                return null;
+            }
+            reference = new MemberReference(type, call.name(), MemberKind.CALL, unit);
+        }
+        reference.setResolutionKind(ResolutionKind.EXACT);
+        return reference;
+    }
+
+    private boolean hasVisibleExtension(final String name) {
+        for (final TopLevelFunction visible : resolver.visibleFunctions(name, scope)) {
+            if (visible.function().receiverType != null) {
+                return true;
+            }
+        }
+        return opaqueStarImport() && !importedByName(name);
     }
 
     /**

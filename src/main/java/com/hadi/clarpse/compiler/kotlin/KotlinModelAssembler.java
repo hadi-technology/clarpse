@@ -19,6 +19,7 @@ import com.hadi.clarpse.reference.AnnotationArgument;
 import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
@@ -327,17 +328,28 @@ final class KotlinModelAssembler {
         ParseUtil.insertCmpRef(component, reference, stack);
     }
 
-    /** References to the file classes of the extension functions a member calls on a typed receiver. */
+    /**
+     * References to the file classes of the extension functions a member calls on a typed receiver,
+     * and the members it calls on receivers of known type.
+     */
     private void addExtensionReferences(final Component component, final KotlinMemberModel member,
                                         final KotlinReceiverTyping typing) {
         for (final KotlinModel.ReceiverCall call : member.receiverCalls) {
             final String fileClass = typing.extensionFileClass(call);
             if (fileClass == null) {
+                final MemberReference used = typing.memberReference(call);
+                if (used != null) {
+                    ParseUtil.insertCmpRef(component, used, stack);
+                }
                 continue;
             }
             final SimpleTypeReference reference = new SimpleTypeReference(fileClass);
             reference.setResolutionKind(ResolutionKind.EXACT);
             ParseUtil.insertCmpRef(component, reference, stack);
+            final MemberReference extension = new MemberReference(fileClass, call.name(),
+                    com.hadi.clarpse.reference.MemberKind.CALL);
+            extension.setResolutionKind(ResolutionKind.EXACT);
+            ParseUtil.insertCmpRef(component, extension, stack);
         }
     }
 

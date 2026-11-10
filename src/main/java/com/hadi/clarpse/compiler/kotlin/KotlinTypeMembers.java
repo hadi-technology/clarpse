@@ -274,6 +274,61 @@ final class KotlinTypeMembers {
     }
 
     /**
+     * The repository type, among a type and its readable ancestors, that declares a member of the
+     * name: the type itself first, then its ancestors in the order they were read.
+     *
+     * @param uniqueName The receiver's type, fully qualified.
+     * @param name       The member's name.
+     * @return The declaring type's fully qualified name, or null when no readable type declares it.
+     */
+    String declaringType(final String uniqueName, final String name) {
+        final KotlinDeclaration root = resolver.index().declaration(uniqueName);
+        if (root == null) {
+            return null;
+        }
+        final List<KotlinDeclaration> chain = new ArrayList<>();
+        readChain(root, chain, new HashSet<>(), new HashSet<>());
+        for (final KotlinDeclaration declaration : chain) {
+            if (ownNames(declaration.type(), false).contains(name)) {
+                return declaration.uniqueName();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The package of a type the JDK declares, when the platform has a public or protected method or
+     * field of the name on it: a call of that name on the type is then a call of a member, which wins
+     * over any extension function of the same name.
+     *
+     * @param qualifiedName The type's fully qualified name, as the source resolves it.
+     * @param name          The member's name.
+     * @return The type's package, or null for a type the platform does not declare, a {@code kotlin}
+     *         type (whose members are not those of its JDK counterpart), or a name it has no member of.
+     */
+    String platformPackage(final String qualifiedName, final String name) {
+        if (!qualifiedName.startsWith("java.") && !qualifiedName.startsWith("javax.")) {
+            return null;
+        }
+        final Set<String> members = platformMembers(qualifiedName);
+        if (members == null || !members.contains(name)) {
+            return null;
+        }
+        String candidate = qualifiedName;
+        while (true) {
+            try {
+                return Class.forName(candidate, false, ClassLoader.getPlatformClassLoader()).getPackageName();
+            } catch (final ClassNotFoundException | LinkageError unreadable) {
+                final int cut = candidate.lastIndexOf('.');
+                if (cut < 0) {
+                    return null;
+                }
+                candidate = candidate.substring(0, cut) + "$" + candidate.substring(cut + 1);
+            }
+        }
+    }
+
+    /**
      * Collects a declaration and the repository declarations of its ancestors, and the member names
      * of the JDK ancestors; returns whether every supertype, at every level, was one of the two.
      */
