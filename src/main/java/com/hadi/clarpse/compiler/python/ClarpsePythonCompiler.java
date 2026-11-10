@@ -5,6 +5,7 @@ import com.hadi.clarpse.compiler.AnalysisOptions;
 import com.hadi.clarpse.compiler.ClarpseCompiler;
 import com.hadi.clarpse.compiler.CompileException;
 import com.hadi.clarpse.compiler.CompileFailure;
+import com.hadi.clarpse.compiler.FailureCode;
 import com.hadi.clarpse.compiler.CompileResult;
 import com.hadi.clarpse.compiler.CompilerSupport;
 import com.hadi.clarpse.compiler.internal.DiskPaths;
@@ -388,17 +389,43 @@ public class ClarpsePythonCompiler implements ClarpseCompiler {
             }
             throw e;
         }
-        final Package pkg = PythonModelAssembler.resolvePackage(fileModel);
-        final String moduleName;
-        if (fileModel.moduleName == null) {
-            moduleName = "";
-        } else {
-            moduleName = fileModel.moduleName;
+        final CompileFailure assemblyFailure = assembleIsolated(file, () -> {
+            final Package pkg = PythonModelAssembler.resolvePackage(fileModel);
+            final String moduleName;
+            if (fileModel.moduleName == null) {
+                moduleName = "";
+            } else {
+                moduleName = fileModel.moduleName;
+            }
+            // A resolved file that is not a file of the project is left out rather than guessed.
+            fileModel.importedFiles = diskPaths.toProjectPaths(fileModel.importedFiles);
+            PythonModelAssembler.insertFileModel(pkg, moduleName, file.path(), fileModel, localModel);
+        });
+        if (assemblyFailure != null) {
+            return new ParseOutcome(index, new OOPSourceCodeModel(), assemblyFailure);
         }
-        // A resolved file that is not a file of the project is left out rather than guessed.
-        fileModel.importedFiles = diskPaths.toProjectPaths(fileModel.importedFiles);
-        PythonModelAssembler.insertFileModel(pkg, moduleName, file.path(), fileModel, localModel);
         return new ParseOutcome(index, localModel, failure);
+    }
+
+    /**
+     * Runs the building of one file's model and turns a failure of it into that file's failure, so
+     * that one file's model that cannot be built does not take the other files down with it.
+     *
+     * @param file  The file.
+     * @param build Builds the file's model.
+     * @return The failure, or null when the model was built.
+     */
+    static CompileFailure assembleIsolated(final ProjectFile file, final Runnable build) {
+        try {
+            build.run();
+            return null;
+        } catch (final RuntimeException | StackOverflowError e) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw e;
+            }
+            LOGGER.warn("Python model of file {} could not be built.", file.path(), e);
+            return new CompileFailure(file, String.valueOf(e.getMessage()), FailureCode.PARSE_FAILED);
+        }
     }
 
     /**
