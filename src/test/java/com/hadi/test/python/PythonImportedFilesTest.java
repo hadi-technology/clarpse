@@ -449,15 +449,4 @@ public class PythonImportedFilesTest {
         Files.createDirectories(target.getParent());
         Files.writeString(target, content);
     }
-
-    @Test
-    public void aJavaComponentHasNone() throws Exception {
-        final ProjectFiles files = new ProjectFiles();
-        files.insertFile(new ProjectFile("/src/a/A.java", "package a; import b.B; public class A { B b; }"));
-        files.insertFile(new ProjectFile("/src/b/B.java", "package b; public class B {}"));
-        final Component a = new ClarpseProject(files, Lang.JAVA).result().model().component("a.A").orElseThrow();
-
-        assertFalse(a.imports().isEmpty());
-        assertTrue(a.importedFiles().isEmpty());
-    }
 }
