@@ -5,11 +5,13 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinFileModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinImport;
 import com.hadi.clarpse.reference.ResolutionKind;
 
+import java.lang.reflect.Modifier;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Resolves a name written in a Kotlin file to the fully qualified name of the type it denotes, in
@@ -38,6 +40,9 @@ final class KotlinNameResolver {
     }
 
     private static final int MAX_ALIAS_DEPTH = 8;
+
+    /** Whether the platform declares a public top-level type of a name, by name. */
+    private static final Map<String, Boolean> PLATFORM_TYPES = new ConcurrentHashMap<>();
 
     /** The first segments of the packages libraries and platforms publish under. */
     private static final Set<String> PACKAGE_ROOTS = Set.of("com", "org", "net", "io", "edu", "gov", "java",
@@ -164,7 +169,50 @@ final class KotlinNameResolver {
         if (defaultImport != null) {
             return new Resolution(defaultImport, ResolutionKind.EXACT);
         }
+        final String platformType = platformStarImport(name, file);
+        if (platformType != null) {
+            return new Resolution(platformType, ResolutionKind.EXACT);
+        }
         return null;
+    }
+
+    /**
+     * The JDK type a name denotes through the star imports of {@code java} and {@code javax}
+     * packages, read from the running platform as the Java side's type solver reads it. Only a name
+     * that exactly one such package declares as a public type is answered; a package outside the JDK
+     * cannot be asked, so it adds nothing. Kotlin's default imports are looked up first, so a name
+     * they bring in is never read here.
+     */
+    private String platformStarImport(final String name, final KotlinFileModel file) {
+        if (name.isEmpty() || !Character.isUpperCase(name.charAt(0))) {
+            return null;
+        }
+        String found = null;
+        for (final KotlinImport kotlinImport : file.imports) {
+            if (!kotlinImport.star() || !(kotlinImport.target().startsWith("java.")
+                    || kotlinImport.target().startsWith("javax."))) {
+                continue;
+            }
+            final String candidate = kotlinImport.target() + "." + name;
+            if (isPlatformType(candidate)) {
+                if (found != null && !found.equals(candidate)) {
+                    return null;
+                }
+                found = candidate;
+            }
+        }
+        return found;
+    }
+
+    private static boolean isPlatformType(final String qualifiedName) {
+        return PLATFORM_TYPES.computeIfAbsent(qualifiedName, name -> {
+            try {
+                final Class<?> type = Class.forName(name, false, ClassLoader.getPlatformClassLoader());
+                return Modifier.isPublic(type.getModifiers()) && type.getEnclosingClass() == null;
+            } catch (final ClassNotFoundException | LinkageError | SecurityException unreadable) {
+                return false;
+            }
+        });
     }
 
     /** Where in the order of lookup a simple name is found. */
@@ -212,6 +260,9 @@ final class KotlinNameResolver {
         }
         if (DEFAULT_IMPORTS.containsKey(name)) {
             return Origin.DEFAULT;
+        }
+        if (platformStarImport(name, file) != null) {
+            return Origin.STAR;
         }
         return Origin.NONE;
     }
