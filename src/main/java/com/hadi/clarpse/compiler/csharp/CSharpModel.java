@@ -237,6 +237,8 @@ final class CSharpModel {
         List<String> typeTestOperands = new ArrayList<>();
         /** Names that are a type only if they resolve to one: {@code o is T}, {@code nameof(T)}, {@code (T)(x)}. */
         List<String> typeCandidates = new ArrayList<>();
+        /** The types the {@code where} clauses of a generic method constrain its type parameters to. */
+        List<String> constraintTypes = new ArrayList<>();
         /** The parenthesised names of casts {@code (T)x}, which are a type only if they resolve to one. */
         List<String> castTypes = new ArrayList<>();
         List<String> memberUsages = new ArrayList<>();

@@ -527,4 +527,62 @@ public class CSharpCrossLanguageParityTest {
         assertTrue(references(model, "App.Use", "App.Bar"));
         assertFalse(mentions(model, "App.Use", "App.Baz"));
     }
+
+    // ---- method and delegate constraints ----
+
+    private static final ProjectFile CONSTRAINT_TYPES = new ProjectFile("/Constraints.cs", """
+            namespace App {
+              public class Cfg2 { }
+              public class Cfg4 { }
+              public class Cfg6 { }
+              public interface IThing { }
+            }
+            """);
+
+    @Test
+    public void aMethodConstraintReferencesItsTypes() throws Exception {
+        final OOPSourceCodeModel model = model(CONSTRAINT_TYPES, new ProjectFile("/Use.cs", """
+                namespace App {
+                  public class Svc {
+                    public void Run<U>(U u) where U : Cfg2, IThing { }
+                    public T Make<T>() where T : class, new() { return null; }
+                    public void Two<A, B>(A a, B b) where A : Cfg6 where B : IThing, new() { }
+                  }
+                }
+                """));
+        assertTrue(references(model, "App.Svc.Run<U>(U)", "App.Cfg2"));
+        assertTrue(references(model, "App.Svc.Run<U>(U)", "App.IThing"));
+        assertTrue(references(model, "App.Svc", "App.Cfg2"));
+        assertTrue(references(model, "App.Svc.Two<A, B>(A, B)", "App.Cfg6"));
+        assertTrue(references(model, "App.Svc.Two<A, B>(A, B)", "App.IThing"));
+        assertFalse(mentions(model, "App.Svc.Make<T>()", "T"));
+        assertFalse(mentions(model, "App.Svc.Run<U>(U)", "U"));
+    }
+
+    @Test
+    public void aDelegateConstraintReferencesItsTypes() throws Exception {
+        final OOPSourceCodeModel model = model(CONSTRAINT_TYPES, new ProjectFile("/Use.cs", """
+                namespace App {
+                  public delegate void Handler<T>(T t) where T : Cfg4;
+                }
+                """));
+        assertTrue(references(model, "App.Handler", "App.Cfg4"));
+    }
+
+    /** A constraint that is another type parameter names no type, and the expression body is not a clause. */
+    @Test
+    public void aConstraintOnAnotherTypeParameterNamesNoTypeAndTheBodyIsNotRead() throws Exception {
+        final OOPSourceCodeModel model = model(CONSTRAINT_TYPES, new ProjectFile("/Use.cs", """
+                namespace App {
+                  public class Svc {
+                    public void Pair<A, B>(A a, B b) where A : B { }
+                    public int Body<T>(T t) where T : class => Cfg6.Limit;
+                  }
+                  public class Cfg6X { }
+                }
+                """));
+        assertFalse(mentions(model, "App.Svc.Pair<A, B>(A, B)", "App.B"));
+        assertFalse(mentions(model, "App.Svc.Pair<A, B>(A, B)", "B"));
+        assertFalse(mentions(model, "App.Svc.Body<T>(T)", "App.Cfg6X"));
+    }
 }

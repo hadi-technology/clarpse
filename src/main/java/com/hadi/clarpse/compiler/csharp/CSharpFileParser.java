@@ -707,6 +707,10 @@ final class CSharpFileParser {
 
         if ("delegate".equals(typeModel.kind)) {
             typeModel.members.addAll(parseParametersAsMembers(node, fileModel, typeModel, "parameter"));
+            final SyntaxNode parameters = firstChild(node, "cs:parent-list");
+            if (parameters != null) {
+                typeModel.constraintTypes.addAll(constraintsAfter(parameters, node, fileModel.sourceText));
+            }
         }
         if ("class".equals(typeModel.kind) || "struct".equals(typeModel.kind)) {
             final SyntaxNode parentList = firstChild(node, "cs:parent-list");
@@ -935,6 +939,7 @@ final class CSharpFileParser {
                     member.parameters.add(parameter);
                 }
             }
+            member.constraintTypes.addAll(constraintsAfter(parentList, node, fileModel.sourceText));
         }
         final SyntaxNode block = firstChild(node, "cs:block-list");
         if (block != null) {
@@ -949,6 +954,16 @@ final class CSharpFileParser {
             }
         }
         return member;
+    }
+
+    /** The types the {@code where} clauses after a parameter list constrain the type parameters to. */
+    private static List<String> constraintsAfter(final SyntaxNode parameterList, final SyntaxNode node,
+                                                 final String sourceText) {
+        if (sourceText == null || node.endOffset > sourceText.length()
+                || parameterList.endOffset > node.endOffset) {
+            return new ArrayList<>();
+        }
+        return CSharpConstraintText.constraintTypes(sourceText.substring(parameterList.endOffset, node.endOffset));
     }
 
     private static final Pattern PARAMS_MODIFIER = Pattern.compile("(?:^|\\s)params\\s");

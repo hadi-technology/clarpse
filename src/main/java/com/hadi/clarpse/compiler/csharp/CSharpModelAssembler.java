@@ -377,6 +377,7 @@ final class CSharpModelAssembler {
                 ParseUtil.copyRefsToParents(localComponent, stack);
             }
         }
+        attachTypeReferences(component, memberModel.constraintTypes, typeIndex, ownerType, memberModel, false);
         attachTypeReferences(component, memberModel.simpleTypeUsages, typeIndex, ownerType, memberModel,
                 "method".equals(memberModel.kind) || "constructor".equals(memberModel.kind));
         attachStaticReceivers(component, memberModel, typeIndex, ownerType);
