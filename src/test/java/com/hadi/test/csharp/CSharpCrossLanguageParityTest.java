@@ -124,4 +124,75 @@ public class CSharpCrossLanguageParityTest {
                         """));
         assertEquals(ResolutionKind.EXACT, kindOf(model, "App.Service.Get()", "App.User"));
     }
+
+    // ---- a namespace is never a type ----
+
+    private static final ProjectFile LIB = new ProjectFile("/Lib.cs", """
+            namespace App.Lib {
+              public static class Util { public static void Run() { } }
+              public class Thing { }
+            }
+            """);
+
+    private static boolean mentions(final OOPSourceCodeModel model, final String from, final String name) {
+        return references(model, from).stream().anyMatch(r -> r.invokedComponent().equals(name));
+    }
+
+    /** {@code new App.Lib.Thing()} constructs the type; {@code App.Lib} is the namespace it is in. */
+    @Test
+    public void aNamespaceBeforeAConstructedTypeIsNotReferenced() throws Exception {
+        final OOPSourceCodeModel model = model(LIB, new ProjectFile("/Use.cs", """
+                namespace Web {
+                  public class Use { public object Make() { return new App.Lib.Thing(); } }
+                }
+                """));
+        assertTrue(references(model, "Web.Use.Make()", "App.Lib.Thing"));
+        assertFalse(mentions(model, "Web.Use.Make()", "App.Lib"));
+        assertFalse(mentions(model, "Web.Use", "App.Lib"));
+    }
+
+    /** A namespace the repository does not hold is just as much a namespace when a using names it. */
+    @Test
+    public void anExternalNamespaceBeforeAConstructedTypeIsNotReferenced() throws Exception {
+        final OOPSourceCodeModel model = model(new ProjectFile("/A.cs", """
+                using Ext.Http;
+                namespace App {
+                  public class A { public object G() { return new Ext.Http.Client(); } }
+                }
+                """));
+        assertTrue(mentions(model, "App.A.G()", "Ext.Http.Client"));
+        assertFalse(mentions(model, "App.A.G()", "Ext.Http"));
+        assertFalse(mentions(model, "App.A", "Ext.Http"));
+    }
+
+    /** The namespace before a declared type is no receiver either, with or without a using. */
+    @Test
+    public void aNamespaceBeforeADeclaredTypeIsNotReferenced() throws Exception {
+        final OOPSourceCodeModel model = model(LIB, new ProjectFile("/Use.cs", """
+                namespace Web {
+                  public class Use {
+                    public void F() { App.Lib.Thing t = null; Vendor.Pkg.Widget w = null; }
+                  }
+                }
+                """));
+        assertTrue(references(model, "Web.Use.F()", "App.Lib.Thing"));
+        assertFalse(mentions(model, "Web.Use.F()", "App.Lib"));
+        assertFalse(mentions(model, "Web.Use.F()", "Vendor.Pkg"));
+    }
+
+    /** A static call through a qualified type name still names the type, in the repository or not. */
+    @Test
+    public void aQualifiedStaticCallStillNamesItsType() throws Exception {
+        final OOPSourceCodeModel model = model(LIB, new ProjectFile("/Use.cs", """
+                namespace Web {
+                  public class Use {
+                    public void Call() { App.Lib.Util.Run(); }
+                    public void Ext() { Vendor.Pkg.Tool.Go(); }
+                  }
+                }
+                """));
+        assertEquals(ResolutionKind.EXACT, kindOf(model, "Web.Use.Call()", "App.Lib.Util"));
+        assertEquals(ResolutionKind.UNRESOLVED, kindOf(model, "Web.Use.Ext()", "Vendor.Pkg.Tool"));
+        assertFalse(mentions(model, "Web.Use.Call()", "App.Lib"));
+    }
 }

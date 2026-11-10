@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -693,6 +694,8 @@ final class CSharpModelAssembler {
                 resolved = typeIndex.resolveType(receiver, ownerType, memberModel);
             }
             if (resolved == null || resolved.name().equals(component.uniqueName())
+                    || (resolved.kind() != ResolutionKind.EXACT
+                        && typeIndex.isNamespace(receiver, ownerType, memberModel))
                     || isPossiblyInherited(receiver, bound, resolved, ownerType, memberModel, typeIndex)
                     || !seen.add(resolved.name())) {
                 continue;
@@ -1155,6 +1158,8 @@ final class CSharpModelAssembler {
         private final Map<String, NavigableMap<Integer, String>> typesByLookupName = new HashMap<>();
         /** Lookup names by simple name. */
         private final Map<String, Set<String>> typesBySimpleName = new HashMap<>();
+        /** Every namespace the repository declares a type in, and every namespace enclosing one. */
+        private final Set<String> namespaces = new HashSet<>();
         private final Map<String, String> memberByTypeAndName = new HashMap<>();
         private final Map<String, CSharpModel.CSharpTypeModel> typeModelsByName = new HashMap<>();
         private final Set<String> interfaceTypes = new LinkedHashSet<>();
@@ -1469,6 +1474,10 @@ final class CSharpModelAssembler {
                         .putIfAbsent(type.arity, type.uniqueName);
                 typesBySimpleName.computeIfAbsent(type.name, ignored -> new LinkedHashSet<>()).add(lookupName);
                 typeModelsByName.putIfAbsent(type.uniqueName, type);
+                for (String space = type.namespaceName; space != null && !space.isEmpty();
+                     space = space.substring(0, Math.max(0, space.lastIndexOf('.')))) {
+                    namespaces.add(space);
+                }
                 if ("interface".equals(type.kind)) {
                     interfaceTypes.add(type.uniqueName);
                 }
@@ -1535,6 +1544,25 @@ final class CSharpModelAssembler {
                         }
                         break;
                     }
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Whether a written name is a namespace rather than a type: one the repository declares types
+         * in, or the start of one, or one a using directive of the scope names or begins.
+         */
+        private boolean isNamespace(final String written, final CSharpModel.CSharpTypeModel type,
+                                    final CSharpModel.CSharpMemberModel member) {
+            if (namespaces.contains(written)) {
+                return true;
+            }
+            final Set<String> imported = new LinkedHashSet<>(type.imports);
+            imported.addAll(member.imports);
+            for (final String target : imported) {
+                if (target.equals(written) || target.startsWith(written + ".")) {
+                    return true;
                 }
             }
             return false;

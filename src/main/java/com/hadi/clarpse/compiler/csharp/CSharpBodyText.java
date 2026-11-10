@@ -2,6 +2,7 @@ package com.hadi.clarpse.compiler.csharp;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -270,10 +271,40 @@ final class CSharpBodyText {
      * and string literals, and does not itself follow a member access.
      */
     static void collectStaticReceivers(final String text, final CSharpModel.CSharpMemberModel member) {
-        final Matcher matcher = STATIC_RECEIVER_PATTERN.matcher(withoutCommentsAndStrings(text));
+        final String clean = withoutCommentsAndStrings(text);
+        final Matcher matcher = STATIC_RECEIVER_PATTERN.matcher(clean);
         while (matcher.find()) {
-            member.staticReceivers.add(matcher.group(1));
+            if (!namesATypeInstead(clean, matcher.start(), matcher.end())) {
+                member.staticReceivers.add(matcher.group(1));
+            }
         }
+    }
+
+    private static final Pattern NEW_BEFORE = Pattern.compile("(?<![\\w.@])new\\s+$");
+
+    private static final Pattern DECLARATION_AFTER = Pattern.compile(
+            "\\G\\s*[A-Za-z_]\\w*(?:\\s*<[^;(){}]*?>)?(?:\\s*\\.\\s*[A-Za-z_]\\w*(?:\\s*<[^;(){}]*?>)?)*"
+                    + "\\s+([A-Za-z_@]\\w*)");
+
+    /** Words that may follow an expression, so that a name before one is not a declared type. */
+    private static final Set<String> AFTER_EXPRESSION = Set.of(
+            "is", "as", "in", "and", "or", "when", "with", "switch", "select", "where", "orderby", "group",
+            "join", "let", "into", "by", "on", "equals", "ascending", "descending", "from");
+
+    /**
+     * Whether the dotted name that a receiver match starts is a type written in a type position, and
+     * so not a receiver: the match is only the leading segments of {@code new App.Lib.Thing()} or
+     * {@code Vendor.Pkg.Widget w;}, whose last segment is the type and whose earlier ones are
+     * namespaces.
+     */
+    private static boolean namesATypeInstead(final String clean, final int start, final int end) {
+        final String before = clean.substring(Math.max(0, start - 16), start);
+        if (NEW_BEFORE.matcher(before).find()) {
+            return true;
+        }
+        final Matcher declaration = DECLARATION_AFTER.matcher(clean);
+        declaration.region(end, clean.length());
+        return declaration.lookingAt() && !AFTER_EXPRESSION.contains(declaration.group(1));
     }
 
     /** The text with comments and the contents of plain string and character literals blanked out. */
