@@ -257,6 +257,23 @@ final class KotlinTypeMembers {
     }
 
     /**
+     * Every Kotlin type the repository declares among a type's ancestors, itself included.
+     *
+     * @param uniqueName The type's fully qualified name.
+     * @return Their fully qualified names; empty when no single Kotlin declaration answers for it.
+     */
+    Set<String> ancestorsOf(final String uniqueName) {
+        final KotlinDeclaration root = resolver.index().declaration(uniqueName);
+        final Set<String> names = new HashSet<>();
+        if (root != null) {
+            final List<KotlinDeclaration> chain = new ArrayList<>();
+            readChain(root, chain, new HashSet<>(), new HashSet<>());
+            chain.forEach(declaration -> names.add(declaration.uniqueName()));
+        }
+        return names;
+    }
+
+    /**
      * Collects a declaration and the repository declarations of its ancestors, and the member names
      * of the JDK ancestors; returns whether every supertype, at every level, was one of the two.
      */

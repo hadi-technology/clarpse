@@ -240,7 +240,8 @@ final class KotlinModelAssembler {
         stack.push(component);
         addAnnotationReferences(component, member.annotations, scope);
         final Shadow closer = new Shadow(closerNames(member, context), context.ancestryUnknown);
-        final KotlinReceiverTyping typing = new KotlinReceiverTyping(member, scope, closer, resolver, typeMembers);
+        final KotlinReceiverTyping typing = new KotlinReceiverTyping(member, scope, closer, context.memberNames,
+                resolver, typeMembers);
         if (componentType.isMethodComponent()) {
             for (final KotlinParameterModel parameter : member.parameters) {
                 addParameter(file, parameter, member, component, scope, closer);
@@ -252,6 +253,7 @@ final class KotlinModelAssembler {
         }
         addTypeReferences(component, member.typeUsages, scope, closer);
         addFileClassReferences(component, member, context, scope);
+        addExtensionReferences(component, member, typing);
         model.insertComponent(component);
         stack.pop();
         ParseUtil.copyRefsToParents(component, stack);
@@ -322,6 +324,20 @@ final class KotlinModelAssembler {
         final SimpleTypeReference reference = new SimpleTypeReference(inferred);
         reference.setResolutionKind(ResolutionKind.EXACT);
         ParseUtil.insertCmpRef(component, reference, stack);
+    }
+
+    /** References to the file classes of the extension functions a member calls on a typed receiver. */
+    private void addExtensionReferences(final Component component, final KotlinMemberModel member,
+                                        final KotlinReceiverTyping typing) {
+        for (final KotlinModel.ReceiverCall call : member.receiverCalls) {
+            final String fileClass = typing.extensionFileClass(call);
+            if (fileClass == null) {
+                continue;
+            }
+            final SimpleTypeReference reference = new SimpleTypeReference(fileClass);
+            reference.setResolutionKind(ResolutionKind.EXACT);
+            ParseUtil.insertCmpRef(component, reference, stack);
+        }
     }
 
     /** The fields a primary constructor declares through its {@code val} and {@code var} parameters. */

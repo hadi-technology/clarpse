@@ -8,6 +8,7 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinMemberModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinParameterModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.NameExpr;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.ReceiverCall;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModelAssembler.Shadow;
 import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Origin;
@@ -15,7 +16,10 @@ import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Resolution;
 import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Scope;
 import com.hadi.clarpse.reference.ResolutionKind;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * What the declarations of one member say about the types of the names and expressions it uses,
@@ -34,15 +38,17 @@ final class KotlinReceiverTyping {
     private final KotlinMemberModel member;
     private final Scope scope;
     private final Shadow shadow;
+    private final Set<String> classMembers;
     private final KotlinNameResolver resolver;
     private final KotlinTypeMembers typeMembers;
 
     KotlinReceiverTyping(final KotlinMemberModel member, final Scope scope, final Shadow shadow,
-                         final KotlinNameResolver resolver,
+                         final Set<String> classMembers, final KotlinNameResolver resolver,
                          final KotlinTypeMembers typeMembers) {
         this.member = member;
         this.scope = scope;
         this.shadow = shadow;
+        this.classMembers = classMembers;
         this.resolver = resolver;
         this.typeMembers = typeMembers;
     }
@@ -186,5 +192,83 @@ final class KotlinReceiverTyping {
             found = resolved;
         }
         return found;
+    }
+
+    /**
+     * The file class holding the extension function a call on a typed receiver reaches, or null.
+     * It is credited only when the receiver is a single name of a known type; exactly one file class
+     * holds the extensions of that name that the file sees; one of them takes the call's arguments
+     * and extends the receiver's type, a type the receiver's type inherits from, or any type; and
+     * the receiver's type has no member of that name, which needs its whole ancestry readable. A
+     * receiver of a type the repository does not declare qualifies only for an extension of that
+     * very type.
+     *
+     * @param call The call.
+     * @return The file class's fully qualified name, or null.
+     */
+    String extensionFileClass(final ReceiverCall call) {
+        if (classMembers.contains(call.name())) {
+            return null;
+        }
+        final String receiver = typeOfName(call.receiver());
+        if (receiver == null) {
+            return null;
+        }
+        final List<TopLevelFunction> extensions = new ArrayList<>();
+        for (final TopLevelFunction visible : resolver.visibleFunctions(call.name(), scope)) {
+            if (visible.function().receiverType != null) {
+                extensions.add(visible);
+            }
+        }
+        if (extensions.isEmpty()) {
+            return null;
+        }
+        final String fileClass = extensions.get(0).fileClass();
+        for (final TopLevelFunction extension : extensions) {
+            if (!fileClass.equals(extension.fileClass())) {
+                return null;
+            }
+        }
+        for (final TopLevelFunction extension : extensions) {
+            if (argumentsFit(extension.function(), call.arguments()) && extends0(extension, receiver, call.name())) {
+                return fileClass;
+            }
+        }
+        return null;
+    }
+
+    private static boolean argumentsFit(final KotlinMemberModel function, final int arguments) {
+        int required = 0;
+        boolean vararg = false;
+        for (final KotlinParameterModel parameter : function.parameters) {
+            if (!parameter.optional) {
+                required += 1;
+            }
+            vararg |= parameter.vararg;
+        }
+        return arguments >= required && (vararg || arguments <= function.parameters.size());
+    }
+
+    private boolean extends0(final TopLevelFunction extension, final String receiver, final String name) {
+        final String written = KotlinTypeMembers.writtenName(extension.function().receiverType);
+        if (written == null) {
+            return false;
+        }
+        final KotlinTypeMembers.MemberSet members = typeMembers.of(receiver);
+        if (extension.function().typeParameters.contains(written)) {
+            return !extension.function().boundedTypeParameters.contains(written) && members != null
+                    && members.complete() && !members.names().contains(name);
+        }
+        final Set<String> declared = new HashSet<>(extension.function().typeParameters);
+        final String extended = typeMembers.resolveWritten(extension.function().receiverType,
+                new Scope(extension.file(), List.of(), declared));
+        if (extended == null) {
+            return false;
+        }
+        if (members == null) {
+            return extended.equals(receiver) && !resolver.index().isType(receiver);
+        }
+        return members.complete() && !members.names().contains(name)
+                && (extended.equals(receiver) || typeMembers.ancestorsOf(receiver).contains(extended));
     }
 }

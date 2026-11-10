@@ -175,6 +175,16 @@ final class KotlinModel {
     record MemberExpr(KotlinExpr receiver, String name, boolean call) implements KotlinExpr {
     }
 
+    /**
+     * A call of a member on a receiver that is a single name, {@code receiver.name(arguments)}.
+     *
+     * @param receiver  The receiver's name.
+     * @param name      The called name.
+     * @param arguments How many arguments the call passes, a trailing lambda included.
+     */
+    record ReceiverCall(String receiver, String name, int arguments) {
+    }
+
     /** A class, interface, object, enum class or annotation class. */
     static final class KotlinTypeModel {
         TypeKind kind;
@@ -231,6 +241,8 @@ final class KotlinModel {
         final Set<String> calledInLambdas = new LinkedHashSet<>();
         /** Names of this member's own type parameters. */
         final Set<String> typeParameters = new LinkedHashSet<>();
+        /** The type parameters of this member that carry a bound, in the list or in a {@code where} clause. */
+        final Set<String> boundedTypeParameters = new LinkedHashSet<>();
         /**
          * How many times the member's text declares each name as a value: its parameters, its
          * locals, and the parameters of lambdas, loops and catch clauses and the entries of
@@ -244,6 +256,8 @@ final class KotlinModel {
         final Set<String> narrowed = new LinkedHashSet<>();
         /** For a local declared without a type, the expression that initializes it, when readable. */
         KotlinExpr initializer;
+        /** The calls on a receiver that is a single name. */
+        final List<ReceiverCall> receiverCalls = new ArrayList<>();
     }
 
     /** A parameter of a function or constructor. */
@@ -256,5 +270,8 @@ final class KotlinModel {
         /** Whether a primary constructor parameter declares a property ({@code val} or {@code var}). */
         boolean property;
         boolean mutable;
+        /** Whether a call may leave the parameter out: it has a default value, or takes a vararg. */
+        boolean optional;
+        boolean vararg;
     }
 }

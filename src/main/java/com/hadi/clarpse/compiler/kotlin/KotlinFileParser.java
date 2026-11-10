@@ -20,6 +20,7 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.KotlinTypeModel;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberExpr;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.MemberKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.NameExpr;
+import com.hadi.clarpse.compiler.kotlin.KotlinModel.ReceiverCall;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeUsage;
 import com.hadi.clarpse.compiler.kotlin.KotlinSyntaxTree.Token;
@@ -307,6 +308,28 @@ final class KotlinFileParser {
             }
         }
 
+        /** The type parameters of a declaration that carry a bound. */
+        private void readBounded(final KotlinSyntaxNode declaration, final Set<String> bounded) {
+            final KotlinSyntaxNode list = declaration.child("TYPE_PARAMETER_LIST");
+            if (list != null) {
+                for (final KotlinSyntaxNode parameter : list.children("TYPE_PARAMETER")) {
+                    final String name = identifier(parameter);
+                    if (name != null && parameter.child(TYPE_REFERENCE) != null) {
+                        bounded.add(name);
+                    }
+                }
+            }
+            final KotlinSyntaxNode constraints = declaration.child("TYPE_CONSTRAINT_LIST");
+            if (constraints != null) {
+                for (final KotlinSyntaxNode constraint : constraints.children("TYPE_CONSTRAINT")) {
+                    final KotlinSyntaxNode subject = constraint.child(REFERENCE_EXPRESSION);
+                    if (subject != null) {
+                        bounded.add(referenceName(subject));
+                    }
+                }
+            }
+        }
+
         private void readSuperTypes(final KotlinSyntaxNode list, final KotlinTypeModel type) {
             for (final KotlinSyntaxNode entry : list.children) {
                 final boolean constructorCall = entry.is("SUPER_TYPE_CALL_ENTRY");
@@ -406,6 +429,7 @@ final class KotlinFileParser {
                 member.name = stripBackticks(name.text());
             }
             readTypeParameters(node, member.typeParameters, member.typeUsages);
+            readBounded(node, member.boundedTypeParameters);
             final KotlinSyntaxNode parameters = node.child(VALUE_PARAMETER_LIST);
             for (final KotlinSyntaxNode child : node.children) {
                 if (!child.is(TYPE_REFERENCE)) {
@@ -550,7 +574,13 @@ final class KotlinFileParser {
                     } else if ("var".equals(token.type())) {
                         parameter.property = true;
                         parameter.mutable = true;
+                    } else if ("EQ".equals(token.type())) {
+                        parameter.optional = true;
                     }
+                }
+                if (modifierKeywords(node).contains("vararg")) {
+                    parameter.vararg = true;
+                    parameter.optional = true;
                 }
                 final KotlinSyntaxNode typeReference = node.child(TYPE_REFERENCE);
                 if (typeReference != null) {
@@ -659,7 +689,7 @@ final class KotlinFileParser {
                         }
                     }
                 } else if (QUALIFIED_EXPRESSIONS.contains(current.type)) {
-                    addQualifiedExpressionUsages(current, usages);
+                    addQualifiedExpressionUsages(current, usages, member);
                 } else if (current.is(CALL_EXPRESSION)) {
                     addCallUsage(current, usages, member);
                 } else if (current.is("CLASS_LITERAL_EXPRESSION") || current.is("CALLABLE_REFERENCE_EXPRESSION")) {
@@ -709,10 +739,12 @@ final class KotlinFileParser {
             return kept;
         }
 
-        private void addQualifiedExpressionUsages(final KotlinSyntaxNode expression, final List<TypeUsage> usages) {
+        private void addQualifiedExpressionUsages(final KotlinSyntaxNode expression, final List<TypeUsage> usages,
+                                                  final KotlinMemberModel member) {
             if (expression.children.isEmpty()) {
                 return;
             }
+            recordReceiverCall(expression, member);
             final String receiver = chainText(expression.children.get(0));
             if (receiver == null) {
                 return;
@@ -725,6 +757,29 @@ final class KotlinFileParser {
                     usages.add(new TypeUsage(receiver + "." + referenceName(selector.children.get(0)), true));
                 }
             }
+        }
+
+        /** Records a call {@code name.callee(...)} whose receiver is a single name. */
+        private void recordReceiverCall(final KotlinSyntaxNode expression, final KotlinMemberModel member) {
+            if (member == null || expression.children.size() != 2 || !expression.children.get(0).is(REFERENCE_EXPRESSION)) {
+                return;
+            }
+            final KotlinSyntaxNode selector = expression.children.get(1);
+            if (!selector.is(CALL_EXPRESSION) || selector.children.isEmpty()
+                    || !selector.children.get(0).is(REFERENCE_EXPRESSION)) {
+                return;
+            }
+            member.receiverCalls.add(new ReceiverCall(referenceName(expression.children.get(0)),
+                    referenceName(selector.children.get(0)), argumentCount(selector)));
+        }
+
+        private int argumentCount(final KotlinSyntaxNode call) {
+            int count = call.children("LAMBDA_ARGUMENT").size();
+            final KotlinSyntaxNode arguments = call.child("VALUE_ARGUMENT_LIST");
+            if (arguments != null) {
+                count += arguments.children("VALUE_ARGUMENT").size();
+            }
+            return count;
         }
 
         /**
