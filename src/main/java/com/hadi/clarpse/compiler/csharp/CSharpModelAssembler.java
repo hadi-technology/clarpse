@@ -488,6 +488,9 @@ final class CSharpModelAssembler {
                 continue;
             }
             final String token = annotationName.trim();
+            // A type an argument names, as in `[Foo(typeof(Bar))]`, is referenced from the attributed component.
+            attachTypeReferences(component, CSharpBodyText.typeofOperands(attribute.arguments()),
+                    typeIndex, ownerType, null, false);
             final Resolution resolved = resolveAttribute(token, typeIndex, ownerType);
             if (resolved == null) {
                 // `[Mark]` could be `Mark` or `MarkAttribute`, both visible: C# rejects it.

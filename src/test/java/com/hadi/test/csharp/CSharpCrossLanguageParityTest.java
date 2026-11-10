@@ -473,4 +473,58 @@ public class CSharpCrossLanguageParityTest {
         assertFalse(mentions(model, "App.A", "Elsewhere.MarkAttribute"));
         assertEquals(ResolutionKind.UNRESOLVED, kindOf(model, "App.A", "Mark"));
     }
+
+    // ---- typeof inside attribute arguments ----
+
+    private static final ProjectFile ATTRIBUTE_TARGETS = new ProjectFile("/Targets.cs", """
+            namespace App {
+              public class FooAttribute : System.Attribute {
+                public FooAttribute(System.Type t) { }
+                public System.Type Kind { get; set; }
+              }
+              public class Bar { }
+              public class Baz { }
+              public class Qux { }
+            }
+            """);
+
+    @Test
+    public void aTypeofInAClassAttributeIsReferencedFromTheClass() throws Exception {
+        final OOPSourceCodeModel model = model(ATTRIBUTE_TARGETS, new ProjectFile("/Use.cs", """
+                namespace App {
+                  [Foo(typeof(Bar), Kind = typeof(Baz))]
+                  public class Use { }
+                }
+                """));
+        assertTrue(references(model, "App.Use", "App.Bar"));
+        assertTrue(references(model, "App.Use", "App.Baz"));
+        assertTrue(references(model, "App.Use", "App.FooAttribute"));
+    }
+
+    @Test
+    public void aTypeofInAMethodAttributeIsReferencedFromTheMethod() throws Exception {
+        final OOPSourceCodeModel model = model(ATTRIBUTE_TARGETS, new ProjectFile("/Use.cs", """
+                namespace App {
+                  public class Use {
+                    [Foo(typeof(Qux))]
+                    public void Run() { }
+                  }
+                }
+                """));
+        assertTrue(references(model, "App.Use.Run()", "App.Qux"));
+        assertTrue(references(model, "App.Use", "App.Qux"));
+    }
+
+    /** A type named only in a string argument, or a typeof out of scope, is not a repository reference. */
+    @Test
+    public void aStringArgumentNamesNoType() throws Exception {
+        final OOPSourceCodeModel model = model(ATTRIBUTE_TARGETS, new ProjectFile("/Use.cs", """
+                namespace App {
+                  [Foo(typeof(Bar), Kind = null, Name = "typeof(Baz)")]
+                  public class Use { }
+                }
+                """));
+        assertTrue(references(model, "App.Use", "App.Bar"));
+        assertFalse(mentions(model, "App.Use", "App.Baz"));
+    }
 }

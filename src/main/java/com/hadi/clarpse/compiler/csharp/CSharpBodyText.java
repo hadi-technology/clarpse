@@ -260,10 +260,20 @@ final class CSharpBodyText {
 
     /** Records the operand of every {@code typeof} outside comments and string literals. */
     static void collectTypeofOperands(final String text, final CSharpModel.CSharpMemberModel member) {
+        member.typeofOperands.addAll(typeofOperands(text));
+    }
+
+    /** The operand of every {@code typeof} in the text, outside comments and string literals. */
+    static List<String> typeofOperands(final String text) {
+        final List<String> operands = new ArrayList<>();
+        if (text == null) {
+            return operands;
+        }
         final Matcher matcher = TYPEOF_OPERAND_PATTERN.matcher(withoutCommentsAndStrings(text));
         while (matcher.find()) {
-            member.typeofOperands.add(matcher.group(1));
+            operands.add(matcher.group(1));
         }
+        return operands;
     }
 
     /**
