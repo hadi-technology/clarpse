@@ -87,4 +87,38 @@ public class TypeScriptCrossLanguageParityTest {
         assertTrue(targets.toString(), targets.contains("src.types.Bar"));
         assertFalse(targets.toString(), targets.contains("(typeof Bar)[]"));
     }
+
+    @Test
+    public void decoratorArgumentsAndTheDecoratorAreReferenced() throws Exception {
+        final String deco = "export function Component(o: object) { return (t: object) => {}; }\n"
+                + "export function ManyToOne(f: () => unknown) { return (t: object, k: string) => {}; }\n"
+                + "export function Inject(t: unknown) { return (a: object, k: string | undefined, i: number) => {}; }\n";
+        final String use = "import { Component, ManyToOne, Inject } from './deco';\n"
+                + "import { Foo, Bar, TOKEN } from './types';\n"
+                + "@Component({ providers: [Foo] })\n"
+                + "export class Use {\n"
+                + "  @ManyToOne(() => Bar) owner: unknown;\n"
+                + "  run(@Inject(TOKEN) p: string) {}\n"
+                + "}\n";
+        final CompileResult result = TypeScriptReferenceGapsTest.compile(
+                "/src/types.ts", TYPES, "/src/deco.ts", deco, "/src/use.ts", use);
+        final Set<String> cls = TypeScriptReferenceGapsTest.targets(
+                TypeScriptReferenceGapsTest.component(result, "src.use.Use"));
+        assertTrue(cls.toString(), cls.contains("src.types.Foo"));
+        assertTrue(cls.toString(), cls.contains("src.deco.Component"));
+        assertFalse(cls.toString(), cls.contains("Component"));
+        final Set<String> field = TypeScriptReferenceGapsTest.targets(
+                TypeScriptReferenceGapsTest.component(result, "src.use.Use.owner"));
+        assertTrue(field.toString(), field.contains("src.types.Bar"));
+        assertTrue(field.toString(), field.contains("src.deco.ManyToOne"));
+        final Set<String> parameter = TypeScriptReferenceGapsTest.targets(
+                TypeScriptReferenceGapsTest.component(result, "src.use.Use.run(string).p"));
+        assertTrue(parameter.toString(), parameter.contains("src.types.TOKEN"));
+        assertTrue(parameter.toString(), parameter.contains("src.deco.Inject"));
+        assertFalse(parameter.stream().anyMatch(t -> t.equals("Inject")));
+        final Set<String> annotations = TypeScriptReferenceGapsTest.component(result, "src.use.Use")
+                .references(TypeReferences.ANNOTATION).stream()
+                .map(ComponentReference::invokedComponent).collect(Collectors.toSet());
+        assertTrue(annotations.toString(), annotations.contains("src.deco.Component"));
+    }
 }

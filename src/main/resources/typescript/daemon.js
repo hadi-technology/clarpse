@@ -1866,15 +1866,38 @@ function buildDecoratorReferences(node, checker) {
   for (const decorator of decorators) {
     const name = decoratorTypeName(decorator.expression);
     if (name) {
+      const declared = decoratorDeclaration(decorator.expression, checker);
       references.push({
         kind: "annotation",
-        external: true,
-        displayName: name,
+        external: !declared,
+        ...(declared ? { target: declared } : { displayName: name }),
         arguments: readDecoratorArguments(decorator.expression, checker)
       });
     }
+    if (state.ts.isCallExpression(decorator.expression)) {
+      // What the arguments name (`providers: [FooService]`, `() => Qux`, `TOKEN`) is depended on.
+      for (const argument of decorator.expression.arguments) {
+        references.push(...collectValueReferences(argument, checker, null));
+      }
+    }
   }
   return references;
+}
+
+/**
+ * The declaration of this repository a decorator's name (`@Component`, `@Component(...)`) resolves
+ * to, as a reference target, or null where it resolves to none.
+ */
+function decoratorDeclaration(expression, checker) {
+  let callee = expression;
+  while (state.ts.isCallExpression(callee)) {
+    callee = callee.expression;
+  }
+  if (!state.ts.isIdentifier(callee)) {
+    return null;
+  }
+  const reference = buildValueReference(callee, checker, null);
+  return reference && !reference.external && reference.target ? reference.target : null;
 }
 
 // The arguments written on a decorator, in written order: an empty list for a decorator written
@@ -2685,7 +2708,8 @@ function buildParameterModels(parameters, checker) {
       jsDoc: getJsDoc(param),
       references: mergeReferences(
         buildReferenceModelsFromType(paramType, checker, "type"),
-        writtenAliasReferences(param.type, checker)
+        writtenAliasReferences(param.type, checker),
+        buildDecoratorReferences(param, checker)
       )
     });
   }
