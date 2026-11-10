@@ -53,8 +53,15 @@ final class CSharpBodyText {
         return i == n && head.end() < n;
     }
 
+    /**
+     * One literal and nothing else. The string forms are possessive: a run of ordinary characters is
+     * taken in one step and the repeated group never gives back, so the matcher does not recurse once
+     * per repetition and a string of any length is read on the stack it already has. Possessive is
+     * exact here because the alternatives cannot overlap (an ordinary character is never a quote or a
+     * backslash, and a doubled quote is never a lone one) and the closing quote is in neither.
+     */
     private static final Pattern LITERAL_INITIALIZER = Pattern.compile(
-            "(?s)(?:\"(?:[^\"\\\\]|\\\\.)*\"|\\$?@\"(?:[^\"]|\"\")*\"|\\$\"[^\"]*\")"
+            "(?s)(?:\"(?:[^\"\\\\]++|\\\\.)*+\"|\\$?@\"(?:[^\"]++|\"\")*+\"|\\$\"[^\"]*+\")"
                     + "|('(?:[^'\\\\]|\\\\.)')|(true|false)"
                     + "|([0-9][0-9_]{0,8})|([0-9][0-9_]*[lL])"
                     + "|([0-9][0-9_]*\\.[0-9][0-9_]*[dD]?|[0-9][0-9_]*[dD])|([0-9][0-9_]*(?:\\.[0-9][0-9_]*)?[fF])"
