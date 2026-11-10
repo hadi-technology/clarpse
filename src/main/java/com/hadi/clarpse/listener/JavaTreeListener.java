@@ -847,7 +847,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 return resolveType(scope.asFieldAccessExpr().getNameAsString(), false);
             }
         }
-        return resolveType(ctx.getNameAsString());
+        return resolveType(ctx.getNameAsString(), false);
     }
 
     /**
@@ -897,7 +897,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 return resolveType(scope.asFieldAccessExpr().getNameAsString(), false);
             }
         }
-        return resolveType(ctx.getNameAsString());
+        return resolveType(ctx.getNameAsString(), false);
     }
 
     @Override
@@ -1067,7 +1067,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      * simple name written in the source otherwise. Resolution never assumes the current package -- an
      * annotation whose type is not on the parse path is far more useful reported as {@code Service}
      * than invented as {@code <package>.Service}, which is the failure mode {@code resolveType}'s
-     * {@code assumeCurrentPackage=false} path exists to avoid.
+     * {@code keepWrittenName=false} path exists to avoid.
      */
     private String resolveAnnotationName(final AnnotationExpr annotation) {
         final String writtenName = annotation.getNameAsString();
@@ -1395,18 +1395,16 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     /**
      * Resolves a token to a qualified type name.
      *
-     * @param assumeCurrentPackage whether an unresolved token may be assumed to name a type in the
-     *     current package. True in a <em>type position</em> -- {@code B b;} really does name a
-     *     type, and if it is a sibling in the same package with no import there is nothing else it
-     *     could be, so the assumption recovers a real edge. False for a bare identifier, where the
-     *     token is as likely to be a constant, a variable or a method as a type: assuming there
-     *     turned every {@code return MAX_NOTES;} into a reference to a type
-     *     {@code <package>.MAX_NOTES} that does not exist. Measured on one repository, 528 of 1368
-     *     external symbols were constants invented this way and 249 were generic expressions.
-     *     Inventing is worse than omitting, because a missing edge reads as a coverage gap while
-     *     an invented one reads as a fact.
+     * @param keepWrittenName whether a token nothing in scope provides is kept as written, in a
+     *     <em>type position</em> -- {@code B b;} really does name a type, and what it names is
+     *     reported as the bare {@code B}. False for a bare identifier, where the token is as likely
+     *     to be a constant, a variable or a method as a type, and nothing is reported. A name is
+     *     never made a type of the current package unless the project has that type: inventing
+     *     {@code <package>.MAX_NOTES} for a constant, or {@code <package>.ResponseEntity} for a type
+     *     of a library the file imports on demand, reads as a fact where a missing edge reads as a
+     *     coverage gap.
      */
-    private String resolveType(final String writtenType, final boolean assumeCurrentPackage) {
+    private String resolveType(final String writtenType, final boolean keepWrittenName) {
         // Resolution is by name, and every lookup below -- the import map, the default classes, the
         // type solver, the on-demand imports -- is keyed on the name of a type. A written type
         // expression is not that: `DTO<HttpRequest>` is absent from an import map that holds `DTO`,
@@ -1453,17 +1451,15 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
         }
         if (resolvedType.isEmpty() && type.indexOf('.') > 0) {
-            return resolveQualifiedName(type, assumeCurrentPackage);
+            return resolveQualifiedName(type, keepWrittenName);
         }
         if (resolvedType.isEmpty()) {
-            if (!assumeCurrentPackage) {
+            // Nothing in scope provides this name. It stays as written, and is never made a type of
+            // the current package.
+            if (!keepWrittenName) {
                 return null;
             }
-            if (currentPkg != null) {
-                resolvedType = currentPkg.path() + "." + type;
-            } else {
-                resolvedType = type;
-            }
+            resolvedType = type;
         }
         final String resolvedClassType = extractClassName(resolvedType);
         if (!resolvedClassType.isEmpty()) {
@@ -1577,13 +1573,13 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
      * {@code p.Outer.Inner}. Otherwise the qualifier is a package and the name is already fully
      * qualified, and is kept exactly as written, which is what an import of it would have recorded.
      */
-    private String resolveQualifiedName(final String type, final boolean assumeCurrentPackage) {
+    private String resolveQualifiedName(final String type, final boolean keepWrittenName) {
         final int lastDot = type.lastIndexOf('.');
-        final String enclosingType = resolveType(type.substring(0, lastDot), assumeCurrentPackage);
+        final String enclosingType = resolveType(type.substring(0, lastDot), keepWrittenName);
         if (enclosingType != null) {
             return enclosingType + type.substring(lastDot);
         }
-        if (!assumeCurrentPackage) {
+        if (!keepWrittenName) {
             return null;
         }
         final String writtenName = extractClassName(type);

@@ -177,4 +177,52 @@ public class JavaCrossLanguageParityTest {
         assertTrue(referencedBy(model, "app.A.f()").contains("app.Util"));
         assertTrue(referencedBy(model, "app.A.g()").contains("ext.Tool"));
     }
+
+    // A bare name is a type of the current package only when the project has that type.
+
+    @Test
+    public void aNameFromALibraryWildcardImportIsNotMadeATypeOfThePackage() throws Exception {
+        final OOPSourceCodeModel model = modelOf("/src/app/web/C.java", String.join("\n",
+                "package app.web;",
+                "import org.springframework.http.*;",
+                "public class C {",
+                "  ResponseEntity<String> r;",
+                "  HttpHeaders h() { return null; }",
+                "}"));
+        final Set<String> refs = referencedBy(model, "app.web.C");
+        assertFalse(refs.toString(), refs.stream().anyMatch(r -> r.startsWith("app.web.")));
+        assertTrue(refs.toString(), refs.contains("ResponseEntity"));
+        assertTrue(refs.toString(), refs.contains("HttpHeaders"));
+    }
+
+    @Test
+    public void aBareNameWithNoSuchTypeStaysBareAndNeverBindsAnUnrelatedPackage() throws Exception {
+        final OOPSourceCodeModel model = modelOf(
+                "/src/com/other/Widget.java", "package com.other;\npublic class Widget { }\n",
+                "/src/app/b/D.java", String.join("\n",
+                        "package app.b;",
+                        "import lib.ext.*;",
+                        "public class D {",
+                        "  Gadget g;",
+                        "  Widget w;",
+                        "}"));
+        final Set<String> refs = referencedBy(model, "app.b.D");
+        assertEquals("[Gadget, Widget]", refs.toString());
+    }
+
+    @Test
+    public void aSamePackageTypeAndAnImportedTypeStillBind() throws Exception {
+        final OOPSourceCodeModel model = modelOf(
+                "/src/app/Sib.java", "package app;\npublic class Sib { }\n",
+                "/src/other/Imp.java", "package other;\npublic class Imp { }\n",
+                "/src/app/E.java", String.join("\n",
+                        "package app;",
+                        "import other.Imp;",
+                        "import lib.ext.*;",
+                        "public class E {",
+                        "  Sib s;",
+                        "  Imp i;",
+                        "}"));
+        assertEquals("[app.Sib, other.Imp]", referencedBy(model, "app.E").toString());
+    }
 }

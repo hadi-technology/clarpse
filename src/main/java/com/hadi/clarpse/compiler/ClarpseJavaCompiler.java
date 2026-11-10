@@ -58,9 +58,10 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
                 final Set<String> sourceRoots = sourceRoots(javaFiles, projectDir);
                 final KotlinDeclarations kotlin = kotlinDeclarations(projectFiles);
                 final JavaDeclarationIndex importIndex = JavaDeclarationIndex.of(projectFiles.files(Lang.JAVA));
+                final Predicate<String> declaredTypes = declaredTypes(importIndex, kotlin);
                 final ParseResults parseResults = parseJavaFiles(javaFiles,
                         () -> new ParserContext(projectDir, sourceRoots).withOtherLanguageTypes(
-                                kotlinTypes(kotlin)).withImportResolver(
+                                declaredTypes).withImportResolver(
                                 new JavaImportResolver(importIndex, kotlinFiles(kotlin))), false);
                 requireKotlinRead(kotlin);
                 srcModel.merge(parseResults.model());
@@ -105,6 +106,17 @@ public class ClarpseJavaCompiler implements ClarpseCompiler {
             return null;
         }
         return kotlin::filesDeclaring;
+    }
+
+    /**
+     * Whether a type of this qualified name is declared by one of the project's files -- Java files
+     * wherever they sit, whatever their directory says of their package, and Kotlin files -- so that
+     * a name is bound to a type of the project only when the project has it.
+     */
+    private static Predicate<String> declaredTypes(final JavaDeclarationIndex index,
+                                                   final KotlinDeclarations kotlin) {
+        final Predicate<String> kotlinTypes = kotlinTypes(kotlin);
+        return name -> index.declares(name) || kotlinTypes != null && kotlinTypes.test(name);
     }
 
     private static Predicate<String> kotlinTypes(final KotlinDeclarations kotlin) {
