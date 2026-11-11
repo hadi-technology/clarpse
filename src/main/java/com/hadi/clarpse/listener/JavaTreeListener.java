@@ -55,17 +55,22 @@ import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration;
 import com.github.javaparser.resolution.model.SymbolReference;
 import com.github.javaparser.resolution.types.ResolvedType;
+import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
+import com.hadi.clarpse.compiler.StandardLibraries;
 import com.hadi.clarpse.compiler.java.JavaImportResolver;
 import com.hadi.clarpse.TypeNames;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.ConstructionReference;
 import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
 import com.hadi.clarpse.sourcemodel.Component;
+import com.hadi.clarpse.sourcemodel.ImportDirective;
+import com.hadi.clarpse.sourcemodel.ImportKind;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType;
@@ -102,6 +107,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     private final JavaImportResolver importResolver;
     /** The repository files the import directives read so far resolve to, in source order. */
     private final Set<String> currentImportedFiles = new LinkedHashSet<>();
+    private final List<ImportDirective> currentImportDirectives = new ArrayList<>();
     /** The type variables the declaration being visited may legally mention; they name no type. */
     private Set<String> typeVariables = new HashSet<>();
     private final TypeSolver typeSolver;
@@ -275,6 +281,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         final String fullImportName = ctx.getNameAsString().trim().replaceAll(";", "");
         final String shortImportName = ctx.getName().getId().trim().replaceAll(";", "");
         currentImports.add(fullImportName);
+        currentImportDirectives.add(importDirective(fullImportName, ctx.isStatic(), ctx.isAsterisk()));
         recordImportedFiles(fullImportName, ctx.isStatic(), ctx.isAsterisk());
         hasStaticImport |= ctx.isStatic();
         // An on-demand import names a package, not a type, so it cannot go in the short-name map:
@@ -295,6 +302,18 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             currentImportsMap.put(shortImportName, fullImportName);
         }
         super.visit(ctx, arg);
+    }
+
+    /** The description of one import declaration: static or not, single or on demand. */
+    private static ImportDirective importDirective(final String target, final boolean isStatic,
+                                                   final boolean onDemand) {
+        final ImportKind kind = ImportKind.of(isStatic, onDemand);
+        final List<String> names = new ArrayList<>();
+        if (!onDemand) {
+            names.add(target.substring(target.lastIndexOf('.') + 1));
+        }
+        return new ImportDirective(target, kind, false, names, names, null,
+                StandardLibraries.ofImport(Lang.JAVA, target, false, false));
     }
 
     /**
@@ -361,6 +380,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             cmp.setName(ctx.getNameAsString());
             cmp.setImports(currentImports);
             cmp.setImportedFiles(currentImportedFiles);
+            cmp.setImportDirectives(currentImportDirectives);
             if (ctx.getComment().isPresent()) {
                 cmp.setComment(ctx.getComment().get().toString());
             }
@@ -467,6 +487,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             cmp.setName(ctx.getNameAsString());
             cmp.setImports(currentImports);
             cmp.setImportedFiles(currentImportedFiles);
+            cmp.setImportDirectives(currentImportDirectives);
             if (ctx.getComment().isPresent()) {
                 cmp.setComment(ctx.getComment().get().toString());
             }
@@ -687,6 +708,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             cmp.setName(ctx.getNameAsString());
             cmp.setImports(currentImports);
             cmp.setImportedFiles(currentImportedFiles);
+            cmp.setImportDirectives(currentImportDirectives);
             cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
             recordAnnotations(ctx.getAnnotations(), cmp);
             if (ctx.getComment().isPresent()) {
@@ -738,6 +760,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             declareMemberTypes(ctx, enumCmp);
             enumCmp.setImports(currentImports);
             enumCmp.setImportedFiles(currentImportedFiles);
+            enumCmp.setImportDirectives(currentImportDirectives);
             enumCmp.setName(ctx.getNameAsString());
             enumCmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
             recordAnnotations(ctx.getAnnotations(), enumCmp);
@@ -1394,6 +1417,23 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 }
             }
 
+        }
+        super.visit(ctx, arg);
+    }
+
+    /**
+     * A creation {@code new T(...)} constructs T, which is recorded beside the type reference the
+     * written name already gives. A creation with a class body constructs an anonymous subtype, not T,
+     * and records no construction.
+     */
+    @Override
+    public final void visit(final ObjectCreationExpr ctx, final Object arg) {
+        if (!componentStack.isEmpty() && ctx.getAnonymousClassBody().isEmpty()) {
+            final String resolvedType = resolveType(ctx.getType().getNameWithScope());
+            if (resolvedType != null) {
+                ParseUtil.insertCmpRef(componentStack.peek(), typed(new ConstructionReference(resolvedType)),
+                        this.componentStack);
+            }
         }
         super.visit(ctx, arg);
     }

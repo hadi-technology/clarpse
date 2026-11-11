@@ -671,6 +671,7 @@ final class CSharpFileParser {
         typeModel.startOffset = node.startOffset;
         typeModel.endOffset = node.endOffset;
         typeModel.imports = importTargets(fileModel.usings);
+        typeModel.importDirectives = importDirectives(fileModel.usings);
         typeModel.usingAliases = usingAliases(fileModel.usings);
         if (parentTypeComponentName == null || parentTypeComponentName.isEmpty()) {
             typeModel.componentName = typeModel.name;
@@ -1067,6 +1068,9 @@ final class CSharpFileParser {
                 final String typeText = firstDirectChildText(descendant, "cs:type-usage-role");
                 if (typeText != null && !typeText.isEmpty()) {
                     member.simpleTypeUsages.add(typeText);
+                    if (!typeText.contains("[")) {
+                        member.constructedTypes.add(typeText);
+                    }
                 }
             } else if ("cs:type-list-role".equals(descendant.type)) {
                 // The type arguments of a generic call: `Has<Auto>()`.
@@ -1249,6 +1253,35 @@ final class CSharpFileParser {
             }
         }
         return imports;
+    }
+
+    /**
+     * The using directives a file writes. A namespace the project imports implicitly is no directive of
+     * the file. A C# using has no relative form, no module value and no dynamic form.
+     */
+    private static List<com.hadi.clarpse.sourcemodel.ImportDirective> importDirectives(
+            final List<CSharpModel.CSharpUsingModel> usings) {
+        final List<com.hadi.clarpse.sourcemodel.ImportDirective> directives = new ArrayList<>();
+        for (final CSharpModel.CSharpUsingModel using : usings) {
+            if (using.implicitImport || using.target == null || using.target.isEmpty()) {
+                continue;
+            }
+            final com.hadi.clarpse.sourcemodel.ImportKind kind;
+            String alias = null;
+            if (using.aliasImport) {
+                kind = com.hadi.clarpse.sourcemodel.ImportKind.SINGLE;
+                alias = using.alias;
+            } else if (using.staticImport) {
+                kind = com.hadi.clarpse.sourcemodel.ImportKind.STATIC_ON_DEMAND;
+            } else {
+                kind = com.hadi.clarpse.sourcemodel.ImportKind.ON_DEMAND;
+            }
+            directives.add(new com.hadi.clarpse.sourcemodel.ImportDirective(using.target, kind, false,
+                    List.of(), List.of(), alias,
+                    com.hadi.clarpse.compiler.StandardLibraries.ofImport(
+                            com.hadi.clarpse.compiler.Lang.CSHARP, using.target, false, false)));
+        }
+        return directives;
     }
 
     private static java.util.Map<String, String> usingAliases(final List<CSharpModel.CSharpUsingModel> usings) {

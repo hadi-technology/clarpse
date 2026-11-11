@@ -158,6 +158,8 @@ final class CSharpModel {
         List<CSharpMemberModel> members = new ArrayList<>();
         List<CSharpTypeModel> nestedTypes = new ArrayList<>();
         Set<String> imports = new LinkedHashSet<>();
+        /** The using directives written in the file that declares this type, with the manner of each. */
+        List<com.hadi.clarpse.sourcemodel.ImportDirective> importDirectives = new ArrayList<>();
         Map<String, String> usingAliases = new LinkedHashMap<>();
         /** The repository files the using directives of the file declaring this type resolve to. */
         Set<String> importedFiles = new LinkedHashSet<>();
@@ -192,6 +194,7 @@ final class CSharpModel {
                 copy.nestedTypes.add(nested.assemblyCopy());
             }
             copy.imports = new LinkedHashSet<>(imports);
+            copy.importDirectives = new ArrayList<>(importDirectives);
             copy.usingAliases = new LinkedHashMap<>(usingAliases);
             copy.importedFiles = new LinkedHashSet<>(importedFiles);
             return copy;
@@ -226,6 +229,8 @@ final class CSharpModel {
         /** Names of the type parameters a generic method declares. */
         Set<String> typeParameters = new LinkedHashSet<>();
         List<String> simpleTypeUsages = new ArrayList<>();
+        /** The types named by {@code new T(...)} in the member's body or initializer, as written. */
+        List<String> constructedTypes = new ArrayList<>();
         /**
          * Dotted names written before a member access in the member's body or initializer; each
          * denotes a type, or a type followed by members.

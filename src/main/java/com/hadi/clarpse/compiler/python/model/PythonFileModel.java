@@ -23,6 +23,9 @@ public class PythonFileModel {
      */
     public List<String> imports = new ArrayList<>();
 
+    /** The import directives the file writes, in source order, each with the manner of the import. */
+    public List<PythonImportDirectiveModel> importDirectives = new ArrayList<>();
+
     /**
      * The repository source files this file's imports resolve to, in source order. The daemon
      * reports on-disk paths; the compiler replaces them with project file paths and drops any that

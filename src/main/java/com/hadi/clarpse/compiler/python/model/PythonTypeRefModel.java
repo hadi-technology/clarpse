@@ -21,6 +21,9 @@ public class PythonTypeRefModel {
     /** The module of an external owner of the member. */
     public String externalUnit;
 
+    /** Whether this is a call of a class, which constructs it; the reference to the class stays beside it. */
+    public boolean construction;
+
     /** Whether the written name is a type variable, which names no type and so records no reference. */
     public boolean typeVariable;
 

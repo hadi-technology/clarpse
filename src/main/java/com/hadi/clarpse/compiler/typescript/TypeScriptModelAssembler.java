@@ -1,6 +1,9 @@
 package com.hadi.clarpse.compiler.typescript;
 
 import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.Lang;
+import com.hadi.clarpse.compiler.StandardLibraries;
+import com.hadi.clarpse.compiler.typescript.model.TypeScriptImportDirectiveModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptArgumentModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptComponentModel;
 import com.hadi.clarpse.compiler.typescript.model.TypeScriptFileModel;
@@ -12,6 +15,7 @@ import com.hadi.clarpse.reference.AnnotationArgument;
 import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.ConstructionReference;
 import com.hadi.clarpse.reference.MemberKind;
 import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
@@ -19,6 +23,8 @@ import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
 import com.hadi.clarpse.sourcemodel.Component;
+import com.hadi.clarpse.sourcemodel.ImportDirective;
+import com.hadi.clarpse.sourcemodel.ImportKind;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.Package;
@@ -87,7 +93,9 @@ final class TypeScriptModelAssembler {
         if (fileModel.importedFiles != null) {
             fileModel.importedFiles.stream().filter(f -> f != null && !f.isEmpty()).forEach(importedFiles::add);
         }
-        if ((fileModel.imports == null || fileModel.imports.isEmpty()) && importedFiles.isEmpty()) {
+        final java.util.List<ImportDirective> directives = importDirectives(fileModel);
+        if ((fileModel.imports == null || fileModel.imports.isEmpty()) && importedFiles.isEmpty()
+                && directives.isEmpty()) {
             return;
         }
         final java.util.Set<String> imports = new java.util.LinkedHashSet<>();
@@ -114,7 +122,7 @@ final class TypeScriptModelAssembler {
                 imports.add(value);
             }
         }
-        if (imports.isEmpty() && importedFiles.isEmpty()) {
+        if (imports.isEmpty() && importedFiles.isEmpty() && directives.isEmpty()) {
             return;
         }
         final java.util.List<Component> declared = srcModel.components()
@@ -127,7 +135,27 @@ final class TypeScriptModelAssembler {
                 .forEach(component -> {
                     component.setImports(imports);
                     component.setImportedFiles(importedFiles);
+                    component.setImportDirectives(directives);
                 });
+    }
+
+    private static java.util.List<ImportDirective> importDirectives(final TypeScriptFileModel fileModel) {
+        final java.util.List<ImportDirective> directives = new java.util.ArrayList<>();
+        if (fileModel.importDirectives == null) {
+            return directives;
+        }
+        for (final TypeScriptImportDirectiveModel raw : fileModel.importDirectives) {
+            if (raw == null || raw.target == null || raw.target.isEmpty()) {
+                continue;
+            }
+            ImportKind kind = ImportKind.SINGLE;
+            if ("on_demand".equals(raw.kind)) {
+                kind = ImportKind.ON_DEMAND;
+            }
+            directives.add(new ImportDirective(raw.target, kind, raw.relative, raw.names, raw.binds, raw.alias,
+                    StandardLibraries.ofImport(Lang.TYPESCRIPT, raw.target, raw.relative, raw.inProject)).loading(raw.importsModule, raw.dynamic));
+        }
+        return directives;
     }
 
     private static boolean carriesFileImports(final Component component) {
@@ -366,6 +394,9 @@ final class TypeScriptModelAssembler {
         }
         if ("extends".equals(reference.kind)) {
             return new TypeExtensionReference(invoked);
+        }
+        if ("construction".equals(reference.kind)) {
+            return new ConstructionReference(invoked);
         }
         if ("implements".equals(reference.kind)) {
             return new TypeImplementationReference(invoked);

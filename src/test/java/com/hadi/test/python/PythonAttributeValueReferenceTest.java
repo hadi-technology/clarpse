@@ -81,7 +81,11 @@ public class PythonAttributeValueReferenceTest {
                 "both = [Foo(), Foo.LIMIT, Foo]",
                 ""));
         Assert.assertEquals(1, project.component("pkg.twice.both").references().stream()
-                .filter(ref -> ref.invokedComponent().equals("pkg.models.Foo")).count());
+                .filter(ref -> ref.invokedComponent().equals("pkg.models.Foo"))
+                .filter(ref -> !(ref instanceof com.hadi.clarpse.reference.ConstructionReference)).count());
+        Assert.assertEquals(1, project.component("pkg.twice.both").references().stream()
+                .filter(ref -> ref.invokedComponent().equals("pkg.models.Foo"))
+                .filter(ref -> ref instanceof com.hadi.clarpse.reference.ConstructionReference).count());
     }
 
     @Test

@@ -2906,6 +2906,12 @@ function collectBodyDetails(body, checker, owner) {
     if (state.ts.isNewExpression(node)) {
       const newType = checker.getTypeAtLocation(node);
       references.push(...buildReferenceModelsFromType(newType, checker, "type"));
+      // The constructed type itself, without its type arguments; a creation the checker cannot
+      // type (`any`, `unknown`, an unresolved class) records no construction.
+      if (newType && !(newType.flags & (state.ts.TypeFlags.Any | state.ts.TypeFlags.Unknown))) {
+        references.push(...buildReferenceModelsFromType(newType, checker, "construction", true)
+          .filter((entry) => !entry.lost));
+      }
     }
     if (nested) {
       nestedDepth += 1;
@@ -3999,11 +4005,19 @@ async function handleGetFileModel(params) {
   } catch (err) {
     importedFiles = [];
   }
+  let importDirectives = [];
+  try {
+    importDirectives = collectImportDirectives(ts, entryInfo.source, checker);
+  } catch (err) {
+    console.warn(`[clarpse] Import directives of ${filePath} could not be read: ${err && err.stack}`);
+    importDirectives = [];
+  }
   return {
     filePath: normalized,
     declarations,
     imports,
     importedFiles,
+    importDirectives,
     unresolvedBases
   };
 }
@@ -4088,6 +4102,88 @@ function collectImports(ts, source, checker) {
   }
   collectLoadedModules(ts, source, checker, results);
   return results;
+}
+
+/**
+ * The import directives a file writes, in source order, each with the manner of the import: whether the
+ * specifier is relative, the names it takes and the local names it binds, whether it binds a module as a
+ * whole, and whether it runs when its code runs. Covers `import` declarations, `import x = require()`,
+ * and `import()` and `require()` calls with a literal argument. `export ... from` is not an import.
+ * `inProject` says the specifier resolves to a file of the repository.
+ */
+function collectImportDirectives(ts, source, checker) {
+  const directives = [];
+  const resolvesToProject = (node, specifier) => !!resolveImportedFile(node, specifier, source, checker);
+  const directive = (node, specifier, fields) => Object.assign({
+    target: specifier,
+    kind: "single",
+    relative: specifier.startsWith("."),
+    names: [],
+    binds: [],
+    alias: null,
+    importsModule: false,
+    dynamic: false,
+    inProject: resolvesToProject(node, specifier)
+  }, fields);
+  function visit(node, insideFunction) {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
+      const specifier = node.moduleSpecifier.text;
+      const clause = node.importClause;
+      const fields = { names: [], binds: [] };
+      if (!clause) {
+        fields.importsModule = true;
+      } else {
+        if (clause.name) {
+          fields.names.push("default");
+          fields.binds.push(clause.name.text);
+        }
+        const bindings = clause.namedBindings;
+        if (bindings && ts.isNamedImports(bindings)) {
+          for (const element of bindings.elements) {
+            fields.names.push((element.propertyName || element.name).text);
+            fields.binds.push(element.name.text);
+          }
+        } else if (bindings && bindings.name) {
+          fields.kind = "on_demand";
+          fields.alias = bindings.name.text;
+          fields.importsModule = true;
+        }
+      }
+      directives.push(directive(node.moduleSpecifier, specifier, fields));
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)
+        && ts.isStringLiteralLike(node.moduleReference.expression)) {
+      const specifierNode = node.moduleReference.expression;
+      directives.push(directive(specifierNode, specifierNode.text,
+        { alias: node.name.text, importsModule: true }));
+    } else if (ts.isCallExpression(node) && node.arguments.length === 1
+        && ts.isStringLiteralLike(node.arguments[0]) && node.arguments[0].text) {
+      const callee = node.expression;
+      const dynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
+      if (dynamicImport || isRequireFunction(callee)) {
+        const fields = { importsModule: true, dynamic: dynamicImport || insideFunction, names: [], binds: [] };
+        const parent = node.parent;
+        if (parent && ts.isVariableDeclaration(parent) && parent.initializer === node) {
+          if (ts.isIdentifier(parent.name)) {
+            fields.alias = parent.name.text;
+          } else if (ts.isObjectBindingPattern(parent.name)) {
+            fields.importsModule = false;
+            for (const element of parent.name.elements) {
+              if (ts.isIdentifier(element.name)) {
+                fields.names.push(element.propertyName && ts.isIdentifier(element.propertyName)
+                  ? element.propertyName.text : element.name.text);
+                fields.binds.push(element.name.text);
+              }
+            }
+          }
+        }
+        directives.push(directive(node.arguments[0], node.arguments[0].text, fields));
+      }
+    }
+    const inside = insideFunction || ts.isFunctionLike(node);
+    ts.forEachChild(node, (child) => visit(child, inside));
+  }
+  visit(source, false);
+  return directives;
 }
 
 /**

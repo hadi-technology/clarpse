@@ -14,6 +14,9 @@ public class TypeScriptFileModel {
     /** Names this file imports. Empty until issue #156; the daemon did not collect them. */
     public List<TypeScriptImportModel> imports = new ArrayList<>();
 
+    /** The import directives the file writes, in source order, each with the manner of the import. */
+    public List<TypeScriptImportDirectiveModel> importDirectives = new ArrayList<>();
+
     /**
      * The repository source files this file's imports resolve to, in source order. The daemon
      * reports on-disk paths; the compiler replaces them with project file paths and drops any that
