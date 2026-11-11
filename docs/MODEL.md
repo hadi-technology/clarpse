@@ -691,6 +691,20 @@ Behaviour that legitimately differs, because the languages differ.
 - Decorators are `ANNOTATION` references to the resolved declaration. Their arguments' names
   are references of the decorated component.
 - `typeof x` in any type position references the declaration of `x`.
+- A project config (`tsconfig.json`, `tsconfig.<name>.json`, `jsconfig.json`) read from an archive,
+  a directory or `ProjectFiles.insertFile` brings the files its relative `extends` names (a string or
+  an array, written with or without `.json`, whatever the file is called), and theirs in turn, so the
+  program sees the `paths` and `compilerOptions` the compiler would. `configFiles()` and `size()`
+  include these presets. The set follows the input: a preset that is inserted again replaces the old
+  text, one that is removed is waited for again, and a preset no project config reaches any more is
+  released. A package-name `extends` and a Windows-style `..\\base` are not followed, a target the
+  input does not hold is logged and left (a target skipped for size, or for lying outside the
+  project directory, is logged as that), a cycle ends where it returns, and a chain is followed at
+  most 32 links (`clarpse.config.maxExtendsChain`). From a directory only the named targets are read,
+  after the walk, and only when their real path is inside the real project directory. From an archive
+  or `insertFile`, JSON files not yet reached are held as candidates until a config names them, up to
+  1 MiB each (`clarpse.config.maxCandidateJsonBytes`) and 16 MiB in all; they live as long as the
+  instance and are copied with it.
 - Files no `tsconfig.json` names are read with default options and no library. In such a program
   `extends Error` finds no declaration of `Error`, so it is recorded as written with `UNRESOLVED`.
   A heritage name is a library global (`EXACT`) only when the checker resolves it to a declaration
