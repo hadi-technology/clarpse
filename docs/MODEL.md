@@ -689,7 +689,19 @@ Behaviour that legitimately differs, because the languages differ.
   from the augmentation to the type it augments.
 - `declare global` is not read.
 - Decorators are `ANNOTATION` references to the resolved declaration. Their arguments' names
-  are references of the decorated component.
+  are references of the decorated component. Decorators on classes, members and parameters, and
+  decorated constructor parameter properties (`constructor(@Inject(T) private readonly x: X)`),
+  are read whatever framework writes them; the class's fields and members come from what is
+  written in its body and its constructor's parameter properties.
+- A class whose base is a call (`class A extends Mixin(Base)`, `extends Factory("name")`) names the
+  called function as its base: an `EXTENSION` reference to the repository function, or to
+  `package:Mixin` for a package's function, even when the package is not installed, and the names
+  in the call's arguments are plain references. What a package's function adds to the class is not
+  modelled, and the file is not reported as partly read. A base written as a call whose arguments
+  could themselves declare members (`Schema.Class<A>("A")({ id: ... })`, an object or arrow
+  function argument, type arguments) or whose callee is a repository function the checker cannot
+  see members through is reported as a `CompileFailure` (`UNRESOLVED_BASE_EXPRESSION`) when no
+  member is found through it.
 - `typeof x` in any type position references the declaration of `x`.
 - A project config (`tsconfig.json`, `tsconfig.<name>.json`, `jsconfig.json`) read from an archive,
   a directory or `ProjectFiles.insertFile` brings the files its relative `extends` names (a string or

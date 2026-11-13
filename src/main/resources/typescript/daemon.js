@@ -1894,6 +1894,73 @@ function libraryBaseName(typeNode, checker) {
 }
 
 /**
+ * The references a heritage entry written as a call makes: `class A extends Mixin(Base)`,
+ * `extends Factory("name")`. The function called is the base the class names, so it is recorded as
+ * the extension (a repository function as the component it is, a package's function as
+ * `package:name`), and what the arguments name (`Base`) is an ordinary reference. Empty where the
+ * entry is not a call on a plain or dotted name, or where the called name resolves to nothing the
+ * model can name; the type the checker reads through the call is used then.
+ */
+function calledBaseReferences(typeNode, checker, kind) {
+  const ts = state.ts;
+  if (!ts.isExpressionWithTypeArguments(typeNode) || !ts.isCallExpression(typeNode.expression)) {
+    return [];
+  }
+  const call = typeNode.expression;
+  let callee = call.expression;
+  let reference = null;
+  if (ts.isIdentifier(callee)) {
+    reference = buildValueReference(callee, checker, null);
+  } else if (ts.isPropertyAccessExpression(callee)) {
+    reference = buildNamespaceMemberReference(callee, checker);
+  }
+  if (!reference) {
+    return [];
+  }
+  reference.kind = kind;
+  const references = [reference];
+  for (const argument of call.arguments) {
+    references.push(...collectValueReferences(argument, checker, null));
+  }
+  for (const argument of typeNode.typeArguments || []) {
+    references.push(...buildReferenceModelsFromType(checker.getTypeAtLocation(argument), checker, "type"));
+  }
+  return references;
+}
+
+/**
+ * Whether the base a class extends is a call of a package's function (`extends Mixin(Base)`), so
+ * that what it adds to the class is the package's to say and is named by the reference to that
+ * function. It is not when the callee is a repository declaration, or when an argument or type
+ * argument could itself declare members (`Schema.Class<User>("User")({ id: ... })`).
+ */
+function baseIsPackageFunctionCall(typeNode, checker) {
+  if (!baseCallDeclaresNoMembers(typeNode)) {
+    return false;
+  }
+  const references = calledBaseReferences(typeNode, checker, "extends");
+  return references.length > 0 && references[0].external === true && !references[0].target;
+}
+
+// A call of a plain or dotted name whose arguments are names and literals, never a shape of members.
+function baseCallDeclaresNoMembers(typeNode) {
+  const ts = state.ts;
+  const call = typeNode.expression;
+  if (!call || !ts.isCallExpression(call)) {
+    return false;
+  }
+  if (!ts.isIdentifier(call.expression) && !ts.isPropertyAccessExpression(call.expression)) {
+    return false;
+  }
+  if ((typeNode.typeArguments || []).length) {
+    return false;
+  }
+  return !call.arguments.some((argument) => ts.isObjectLiteralExpression(argument)
+    || ts.isArrayLiteralExpression(argument) || ts.isArrowFunction(argument)
+    || ts.isFunctionExpression(argument));
+}
+
+/**
  * The references a heritage clause makes. Only the type named in the clause is extended or
  * implemented; the types written as its type arguments (`B<C>`) are ordinary references.
  */
@@ -1911,6 +1978,11 @@ function buildHeritageReferences(node, checker) {
         for (const argument of typeNode.typeArguments || []) {
           references.push(...buildReferenceModelsFromType(checker.getTypeAtLocation(argument), checker, "type"));
         }
+        continue;
+      }
+      const called = calledBaseReferences(typeNode, checker, kind);
+      if (called.length) {
+        references.push(...called);
         continue;
       }
       const type = checker.getTypeAtLocation(typeNode);
@@ -3345,7 +3417,7 @@ function buildClassModel(node, checker, unresolvedBases) {
     const inherited = buildBaseExpressionMembers(node, checker, declaredNames);
     if (inherited.length > 0) {
       members.push(...inherited);
-    } else if (Array.isArray(unresolvedBases)) {
+    } else if (Array.isArray(unresolvedBases) && !baseIsPackageFunctionCall(baseExpression, checker)) {
       // The base is a call and the checker could see no members through it. Saying nothing here
       // would leave the class looking like one that genuinely declares none.
       unresolvedBases.push(`${node.name.text} extends ${baseExpression.getText()}`);
