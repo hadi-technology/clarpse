@@ -4180,7 +4180,8 @@ function collectImports(ts, source, checker) {
  * The import directives a file writes, in source order, each with the manner of the import: whether the
  * specifier is relative, the names it takes and the local names it binds, whether it binds a module as a
  * whole, and whether it runs when its code runs. Covers `import` declarations, `import x = require()`,
- * and `import()` and `require()` calls with a literal argument. `export ... from` is not an import.
+ * and `import()` and `require()` calls with a literal argument. `export type ... from`, which only the type checker reads, is recorded as a type-only directive; any other
+ * `export ... from` is not an import.
  * `inProject` says the specifier resolves to a file of the repository.
  */
 function collectImportDirectives(ts, source, checker) {
@@ -4195,6 +4196,7 @@ function collectImportDirectives(ts, source, checker) {
     alias: null,
     importsModule: false,
     dynamic: false,
+    typeOnly: false,
     inProject: resolvesToProject(node, specifier)
   }, fields);
   function visit(node, insideFunction) {
@@ -4205,6 +4207,9 @@ function collectImportDirectives(ts, source, checker) {
       if (!clause) {
         fields.importsModule = true;
       } else {
+        fields.typeOnly = clause.isTypeOnly === true || (!clause.name && !!clause.namedBindings
+          && ts.isNamedImports(clause.namedBindings) && clause.namedBindings.elements.length > 0
+          && clause.namedBindings.elements.every(element => element.isTypeOnly === true));
         if (clause.name) {
           fields.names.push("default");
           fields.binds.push(clause.name.text);
@@ -4226,7 +4231,23 @@ function collectImportDirectives(ts, source, checker) {
         && ts.isStringLiteralLike(node.moduleReference.expression)) {
       const specifierNode = node.moduleReference.expression;
       directives.push(directive(specifierNode, specifierNode.text,
-        { alias: node.name.text, importsModule: true }));
+        { alias: node.name.text, importsModule: true, typeOnly: node.isTypeOnly === true }));
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)
+        && (node.isTypeOnly === true || (node.exportClause && ts.isNamedExports(node.exportClause)
+          && node.exportClause.elements.length > 0
+          && node.exportClause.elements.every(element => element.isTypeOnly === true)))) {
+      // A re-export of types only depends on the module for the type checker; a re-export of values is not an import.
+      const fields = { typeOnly: true, names: [], binds: [] };
+      if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+        for (const element of node.exportClause.elements) {
+          fields.names.push((element.propertyName || element.name).text);
+          fields.binds.push(element.name.text);
+        }
+      } else {
+        fields.kind = "on_demand";
+        fields.importsModule = false;
+      }
+      directives.push(directive(node.moduleSpecifier, node.moduleSpecifier.text, fields));
     } else if (ts.isCallExpression(node) && node.arguments.length === 1
         && ts.isStringLiteralLike(node.arguments[0]) && node.arguments[0].text) {
       const callee = node.expression;

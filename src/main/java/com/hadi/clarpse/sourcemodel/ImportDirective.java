@@ -48,6 +48,12 @@ import java.util.Objects;
  * {@code __import__} with a literal argument. Java, Kotlin and C# declare imports statically, so it
  * is always false for them.
  *
+ * <p><b>Type-only.</b> {@link #isTypeOnly()} is true for a directive that exists for the type checker:
+ * TypeScript {@code import type}, {@code export type ... from}, and an {@code import} whose every named
+ * binding is written {@code type} (and that takes no default or namespace); a Python import inside an
+ * {@code if TYPE_CHECKING:} (or {@code typing.TYPE_CHECKING}) block. It is always false for Java, Kotlin
+ * and C#.
+ *
  * <p>Equality covers every field.
  */
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY,
@@ -70,6 +76,8 @@ public final class ImportDirective implements Serializable {
     private boolean importsModule;
     @JsonInclude(Include.NON_DEFAULT)
     private boolean dynamic;
+    @JsonInclude(Include.NON_DEFAULT)
+    private boolean typeOnly;
     private StandardLibraryStatus standardLibrary = StandardLibraryStatus.UNKNOWN;
 
     /** For deserialisation. */
@@ -121,6 +129,17 @@ public final class ImportDirective implements Serializable {
     public ImportDirective loading(final boolean loadsModule, final boolean runsLater) {
         this.importsModule = loadsModule;
         this.dynamic = runsLater;
+        return this;
+    }
+
+    /**
+     * Sets whether the directive brings in names for the type checker only.
+     *
+     * @param onlyTypes Whether nothing the directive binds exists when the code runs.
+     * @return This directive.
+     */
+    public ImportDirective typeOnly(final boolean onlyTypes) {
+        this.typeOnly = onlyTypes;
         return this;
     }
 
@@ -199,6 +218,19 @@ public final class ImportDirective implements Serializable {
     }
 
     /**
+     * Whether the directive brings in names for the type checker only, so that nothing it binds
+     * exists when the code runs: TypeScript {@code import type}, {@code export type ... from}, an
+     * {@code import} whose every named binding is written {@code type}, and a Python import inside
+     * an {@code if TYPE_CHECKING:} block. Always {@code false} in Java, Kotlin and C#, whose imports
+     * are not erased by the language.
+     *
+     * @return {@code true} for a type-only import.
+     */
+    public boolean isTypeOnly() {
+        return typeOnly;
+    }
+
+    /**
      * Whether the target belongs to the language's standard library.
      *
      * @return The status; {@link StandardLibraryStatus#UNKNOWN} where the language cannot say.
@@ -214,6 +246,7 @@ public final class ImportDirective implements Serializable {
         }
         final ImportDirective other = (ImportDirective) obj;
         return relative == other.relative && importsModule == other.importsModule && dynamic == other.dynamic
+                && typeOnly == other.typeOnly
                 && kind == other.kind && standardLibrary == other.standardLibrary
                 && target.equals(other.target) && names.equals(other.names) && binds.equals(other.binds)
                 && Objects.equals(alias, other.alias);
@@ -221,7 +254,7 @@ public final class ImportDirective implements Serializable {
 
     @Override
     public int hashCode() {
-        return Objects.hash(target, kind, relative, names, binds, alias, importsModule, dynamic, standardLibrary);
+        return Objects.hash(target, kind, relative, names, binds, alias, importsModule, dynamic, typeOnly, standardLibrary);
     }
 
     @Override

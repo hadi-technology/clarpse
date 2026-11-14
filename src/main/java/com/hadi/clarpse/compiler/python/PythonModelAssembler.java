@@ -209,7 +209,7 @@ final class PythonModelAssembler {
                 kind = ImportKind.ON_DEMAND;
             }
             directives.add(new ImportDirective(raw.target, kind, raw.relative, raw.names, raw.binds, raw.alias,
-                    StandardLibraries.ofImport(Lang.PYTHON, raw.target, raw.relative, raw.inProject)).loading(raw.importsModule, raw.dynamic));
+                    StandardLibraries.ofImport(Lang.PYTHON, raw.target, raw.relative, raw.inProject)).loading(raw.importsModule, raw.dynamic).typeOnly(raw.typeOnly));
         }
         return directives;
     }

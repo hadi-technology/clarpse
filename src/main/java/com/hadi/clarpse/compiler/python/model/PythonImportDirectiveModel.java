@@ -34,6 +34,9 @@ public class PythonImportDirectiveModel {
     /** Whether the import runs when its code runs. */
     public boolean dynamic;
 
+    /** Whether the directive brings in names for the type checker only. */
+    public boolean typeOnly;
+
     /** Whether the module resolves to a file of the repository. */
     public boolean inProject;
 }

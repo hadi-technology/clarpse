@@ -879,6 +879,14 @@ function collectImportedFiles(parseTree, parseNodeType, filePath, dynamicImports
  * gives it no alias. `from a import b, c as d` takes the names `b` and `c` from `a`, even where one of them is a
  * submodule, and `from a import *` takes everything.
  */
+/** Whether an `if` test is `TYPE_CHECKING` or `typing.TYPE_CHECKING` (any alias of the typing module). */
+function isTypeCheckingTest(test, types) {
+  if (!test || !test.d) return false;
+  if (test.nodeType === types.Name) return test.d.value === 'TYPE_CHECKING';
+  if (test.nodeType === types.MemberAccess) return !!test.d.member && test.d.member.d && test.d.member.d.value === 'TYPE_CHECKING';
+  return false;
+}
+
 function collectImportDirectives(parseTree, parseNodeType, filePath, dynamicImports) {
   const types = parseNodeType || {};
   const resolution = repoImportResolution();
@@ -899,14 +907,14 @@ function collectImportDirectives(parseTree, parseNodeType, filePath, dynamicImpo
     leadingDots: moduleNode.d.leadingDots || 0,
     nameParts: (moduleNode.d.nameParts || []).map(part => nameFromNode(part))
   });
-  function visit(node, insideFunction) {
+  function visit(node, insideFunction, typeChecking) {
     if (!node || typeof node !== 'object' || !node.d) return;
     if (node.nodeType === types.ImportAs && node.d.module) {
       const { leadingDots, nameParts } = partsOf(node.d.module);
       const alias = node.d.alias ? nameFromNode(node.d.alias) : null;
       found.push({ start: node.start, directive: {
         target: '.'.repeat(leadingDots) + nameParts.join('.'), kind: 'single', relative: leadingDots > 0,
-        names: [], binds: [], alias: alias || null, importsModule: true, dynamic: insideFunction,
+        names: [], binds: [], alias: alias || null, importsModule: true, dynamic: insideFunction, typeOnly: typeChecking,
         inProject: inProject(leadingDots, nameParts) } });
     } else if (node.nodeType === types.ImportFrom && node.d.module) {
       const { leadingDots, nameParts } = partsOf(node.d.module);
@@ -924,24 +932,27 @@ function collectImportDirectives(parseTree, parseNodeType, filePath, dynamicImpo
       }
       found.push({ start: node.start, directive: {
         target: '.'.repeat(leadingDots) + nameParts.join('.'), kind: node.d.isWildcardImport ? 'on_demand' : 'single',
-        relative: leadingDots > 0, names, binds, alias: null, importsModule: false, dynamic: insideFunction,
+        relative: leadingDots > 0, names, binds, alias: null, importsModule: false, dynamic: insideFunction, typeOnly: typeChecking,
         inProject: inProject(leadingDots, nameParts) } });
     }
     const inside = insideFunction || isFunctionNode(node, types);
+    // The suite of `if TYPE_CHECKING:` runs for the type checker only; its `else` does run.
+    const guarded = node.nodeType === types.If && isTypeCheckingTest(node.d.testExpr || node.d.testExpression, types);
     for (const key of Object.keys(node.d)) {
       const child = node.d[key];
+      const under = typeChecking || (guarded && key === 'ifSuite');
       if (Array.isArray(child)) {
-        child.forEach(item => visit(item, inside));
+        child.forEach(item => visit(item, inside, under));
       } else if (child && typeof child === 'object' && child.d) {
-        visit(child, inside);
+        visit(child, inside, under);
       }
     }
   }
-  visit(parseTree, false);
+  visit(parseTree, false, false);
   for (const dynamic of dynamicImports || []) {
     found.push({ start: dynamic.start, directive: {
       target: dynamic.moduleName, kind: 'single', relative: false, names: [], binds: [], alias: null,
-      importsModule: true, dynamic: true, inProject: inProject(0, dynamic.moduleName.split('.')) } });
+      importsModule: true, dynamic: true, typeOnly: false, inProject: inProject(0, dynamic.moduleName.split('.')) } });
   }
   found.sort((a, b) => a.start - b.start);
   return found.map(entry => entry.directive);
