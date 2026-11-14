@@ -1,6 +1,9 @@
 package com.hadi.clarpse.compiler.python;
 
 import com.hadi.clarpse.compiler.CompilerSupport;
+import com.hadi.clarpse.compiler.Lang;
+import com.hadi.clarpse.compiler.StandardLibraries;
+import com.hadi.clarpse.compiler.python.model.PythonImportDirectiveModel;
 import com.hadi.clarpse.compiler.python.model.PythonClassModel;
 import com.hadi.clarpse.compiler.python.model.PythonDecoratorArgumentModel;
 import com.hadi.clarpse.compiler.python.model.PythonDecoratorValueModel;
@@ -14,12 +17,15 @@ import com.hadi.clarpse.reference.AnnotationArgument;
 import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.ConstructionReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.MemberKind;
 import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.sourcemodel.Component;
+import com.hadi.clarpse.sourcemodel.ImportDirective;
+import com.hadi.clarpse.sourcemodel.ImportKind;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 import com.hadi.clarpse.sourcemodel.Package;
@@ -165,7 +171,8 @@ final class PythonModelAssembler {
         if (fileModel.importedFiles != null) {
             fileModel.importedFiles.stream().filter(f -> f != null && !f.isEmpty()).forEach(importedFiles::add);
         }
-        if (imports.isEmpty() && importedFiles.isEmpty()) {
+        final java.util.List<ImportDirective> directives = importDirectives(fileModel);
+        if (imports.isEmpty() && importedFiles.isEmpty() && directives.isEmpty()) {
             return;
         }
         final java.util.List<Component> declared = srcModel.components()
@@ -178,12 +185,33 @@ final class PythonModelAssembler {
                 if (component.componentType().isBaseComponent()) {
                     component.setImports(imports);
                     component.setImportedFiles(importedFiles);
+                    component.setImportDirectives(directives);
                 }
             } else if (isModuleLevelDeclaration(component)) {
                 component.setImports(imports);
                 component.setImportedFiles(importedFiles);
+                component.setImportDirectives(directives);
             }
         }
+    }
+
+    private static java.util.List<ImportDirective> importDirectives(final PythonFileModel fileModel) {
+        final java.util.List<ImportDirective> directives = new java.util.ArrayList<>();
+        if (fileModel.importDirectives == null) {
+            return directives;
+        }
+        for (final PythonImportDirectiveModel raw : fileModel.importDirectives) {
+            if (raw == null || raw.target == null || raw.target.isEmpty()) {
+                continue;
+            }
+            ImportKind kind = ImportKind.SINGLE;
+            if ("on_demand".equals(raw.kind)) {
+                kind = ImportKind.ON_DEMAND;
+            }
+            directives.add(new ImportDirective(raw.target, kind, raw.relative, raw.names, raw.binds, raw.alias,
+                    StandardLibraries.ofImport(Lang.PYTHON, raw.target, raw.relative, raw.inProject)).loading(raw.importsModule, raw.dynamic).typeOnly(raw.typeOnly));
+        }
+        return directives;
     }
 
     private static boolean isModuleLevelDeclaration(final Component component) {
@@ -878,6 +906,11 @@ final class PythonModelAssembler {
             final MemberReference member = new MemberReference(invoked, ref.member, MemberKind.CALL, ref.externalUnit);
             member.setResolutionKind(kind);
             return member;
+        }
+        if (ref.construction) {
+            final ConstructionReference construction = new ConstructionReference(invoked);
+            construction.setResolutionKind(kind);
+            return construction;
         }
         final ComponentReference built;
         if (isExtends) {

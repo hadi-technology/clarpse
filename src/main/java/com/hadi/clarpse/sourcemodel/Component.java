@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.StandardLibraryStatus;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.TypeReferences;
 import org.apache.logging.log4j.LogManager;
@@ -47,6 +48,8 @@ public final class Component implements Serializable {
     @JsonInclude(Include.NON_EMPTY)
     private Set<String> importedFiles = new LinkedHashSet<>();
     @JsonInclude(Include.NON_EMPTY)
+    private List<ImportDirective> importDirectives = new ArrayList<>();
+    @JsonInclude(Include.NON_EMPTY)
     private Set<String> modifiers = new LinkedHashSet<>();
     private ComponentType type;
     @JsonIgnore
@@ -83,6 +86,7 @@ public final class Component implements Serializable {
             this.modifiers = new LinkedHashSet<>(component.modifiers);
             this.imports = new LinkedHashSet<>(component.imports);
             this.importedFiles = new LinkedHashSet<>(component.importedFiles());
+            this.importDirectives = new ArrayList<>(component.importDirectives());
             this.codeFragment = component.codeFragment;
             this.componentName = component.componentName;
             this.pkg = component.pkg;
@@ -96,6 +100,7 @@ public final class Component implements Serializable {
             this.modifiers = pool.pooledSet(component.modifiers);
             this.imports = pool.pooledSet(component.imports);
             this.importedFiles = pool.pooledSet(component.importedFiles);
+            this.importDirectives = new ArrayList<>(component.importDirectives());
             this.codeFragment = pool.pooled(component.codeFragment);
             this.componentName = pool.pooled(component.componentName);
             this.pkg = pool.pooled(component.pkg);
@@ -336,6 +341,44 @@ public final class Component implements Serializable {
             return Collections.emptySet();
         }
         return Collections.unmodifiableSet(importedFiles);
+    }
+
+    /**
+     * The import directives of this component's file, in the order they are written, with the manner
+     * of each: relative or absolute, single, on-demand or static, the names it binds, whether it imports
+     * a module as a whole, and whether it is dynamic. See {@link ImportDirective}.
+     *
+     * <p>Attached to the same components as {@link #imports()}. It describes what the file's own text
+     * writes and is not resolved against the model. An empty list is not always "no imports": a file
+     * that was not read in full (see {@link #importedFiles()}) has none recorded.
+     *
+     * <p>Per language, the directives read are: Java and Kotlin {@code import}; C# {@code using}
+     * directives written in the file, aliases and {@code using static} included, with no implicit or
+     * global usings from other files; TypeScript {@code import} declarations, {@code import x = require()},
+     * and literal {@code import()} and {@code require()} calls; Python {@code import} and
+     * {@code from ... import} statements wherever written, and literal {@code importlib.import_module}
+     * and {@code __import__} calls. TypeScript {@code export ... from} is not an import directive.
+     *
+     * @return Unmodifiable list; never {@code null}.
+     */
+    public List<ImportDirective> importDirectives() {
+        if (importDirectives == null) {
+            return Collections.emptyList();
+        }
+        return Collections.unmodifiableList(importDirectives);
+    }
+
+    /**
+     * Sets the import directives of this component's file; see {@link #importDirectives()}.
+     *
+     * @param directives The directives, in written order; {@code null} is the empty list.
+     */
+    public void setImportDirectives(final List<ImportDirective> directives) {
+        if (directives == null) {
+            importDirectives = new ArrayList<>();
+        } else {
+            importDirectives = new ArrayList<>(directives);
+        }
     }
 
     public String componentName() {
@@ -587,6 +630,9 @@ public final class Component implements Serializable {
         final ComponentReference clonedRef = cloneReference(reference);
         clonedRef.setExternal(reference.isExternal());
         clonedRef.setNotLoaded(reference.isNotLoaded());
+        if (reference.isExternal() && reference.standardLibrary() != StandardLibraryStatus.UNKNOWN) {
+            clonedRef.setStandardLibrary(reference.standardLibrary());
+        }
         if (pool != null && clonedRef instanceof AnnotationReference) {
             ((AnnotationReference) clonedRef).pool(pool);
         }

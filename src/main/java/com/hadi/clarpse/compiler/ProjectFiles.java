@@ -51,6 +51,10 @@ import java.util.zip.ZipInputStream;
  * language when needed. The class also manages temporary directories for
  * extracted archives and ensures proper cleanup via {@link AutoCloseable}.
  *
+ * <p>Resources: JSON files that are not configs are held, up to 1 MiB each and 16 MiB in all, from
+ * an archive or {@link #insertFile} until a project config's relative {@code extends} names one (see
+ * {@link ExtendedConfigs}); they live as long as the instance and are copied with it.
+ *
  * <p>Usage example:
  * <pre>{@code
  * try (ProjectFiles files = new ProjectFiles("/path/to/project")) {
@@ -78,6 +82,7 @@ public class ProjectFiles implements AutoCloseable {
     /** The absolute directory this instance was read from, or null when it was not read from one. */
     private String loadedDirectory;
     private final Map<String, String> configFiles = new HashMap<>();
+    private ExtendedConfigs extended = new ExtendedConfigs(configFiles);
     private final Set<String> unreadSourcePaths = new LinkedHashSet<>();
     private boolean unreadSourcePathsComplete = true;
 
@@ -169,6 +174,7 @@ public class ProjectFiles implements AutoCloseable {
         });
         // Deep copy configFiles
         this.configFiles.putAll(other.configFiles);
+        this.extended = other.extended.copyOver(this.configFiles);
         this.unreadSourcePaths.addAll(other.unreadSourcePaths);
         this.unreadSourcePathsComplete = other.unreadSourcePathsComplete;
     }
@@ -213,6 +219,7 @@ public class ProjectFiles implements AutoCloseable {
         this.configFiles.forEach((path, content) -> shiftedConfigFiles.put(shiftConfigPath(path), content));
         this.configFiles.clear();
         this.configFiles.putAll(shiftedConfigFiles);
+        this.extended.shift(this::shiftConfigPath);
         shiftUnreadSourcePaths();
         deleteTempDir();
     }
@@ -238,6 +245,8 @@ public class ProjectFiles implements AutoCloseable {
                 }
             }
         }
+        readExtendedConfigs(projectFiles);
+        this.extended.logUnresolved();
         LOGGER.info("Read " + this.size + " files.");
     }
 
@@ -270,8 +279,9 @@ public class ProjectFiles implements AutoCloseable {
                             recordUnreadSourceFile(File.separator + safeName.replace(" ", "_"));
                         }
                         boolean observed = !kept && observer != null && observesPath(observer, entryPath);
+                        boolean jsonCandidate = !kept && entryPath.toLowerCase(Locale.ROOT).endsWith(".json");
                         byte[] content = null;
-                        if (kept || observed) {
+                        if (kept || observed || jsonCandidate) {
                             content = readEntryBytes(zis, MAX_ENTRY_UNCOMPRESSED_BYTES, entryPath);
                             totalBytes += content.length;
                         } else {
@@ -295,8 +305,14 @@ public class ProjectFiles implements AutoCloseable {
                                 this.insertFile(newFile);
                                 filesCounter += 1;
                             }
-                        } else if (observed) {
-                            observe(observer, entryPath, content, entry);
+                        } else {
+                            if (jsonCandidate) {
+                                this.size += this.extended.offer(normalizeConfigPath(entryPath),
+                                        new String(content, StandardCharsets.UTF_8));
+                            }
+                            if (observed) {
+                                observe(observer, entryPath, content, entry);
+                            }
                         }
                     }
                 } catch (final SkippedEntryException e) {
@@ -319,6 +335,7 @@ public class ProjectFiles implements AutoCloseable {
         } catch (final Exception e) {
             throw new Exception("Error while  reading  files from zip!", e);
         }
+        this.extended.logUnresolved();
         LOGGER.info("Extracted " + filesCounter + " files.");
     }
 
@@ -481,6 +498,8 @@ public class ProjectFiles implements AutoCloseable {
             this.insertFile(file, fileLang);
         } else if (isConfigFile(file.path())) {
             this.insertConfigFile(file);
+        } else if (file.path() != null && file.path().toLowerCase(Locale.ROOT).endsWith(".json")) {
+            this.size += this.extended.offer(normalizeConfigPath(file.path()), file.content());
         } else {
             recordUnreadSourceFile(file.path());
             LOGGER.debug("Skipping file: " + file.path() + ".");
@@ -499,9 +518,54 @@ public class ProjectFiles implements AutoCloseable {
     }
 
     private void insertConfigFile(final ProjectFile file) {
-        this.configFiles.put(normalizeConfigPath(file.path()), file.content());
-        this.size += 1;
+        final String path = normalizeConfigPath(file.path());
+        if (this.configFiles.put(path, file.content()) == null) {
+            this.size += 1;
+        }
         LOGGER.debug("Inserted config file " + file + ".");
+        this.size += this.extended.configChanged(path);
+    }
+
+    /**
+     * After a directory walk, reads the files the kept configs extend that the walk did not hold,
+     * transitively. Only a file whose real path lies inside the real project directory is read, so a
+     * symlink or a {@code ..} cannot reach outside it; any other target is logged with that reason.
+     */
+    private void readExtendedConfigs(final File root) throws IOException {
+        final Path realRoot = root.toPath().toRealPath();
+        final Set<String> tried = new HashSet<>();
+        for (int round = 0; round <= ExtendedConfigs.MAX_CHAIN; round++) {
+            final List<String> todo = new ArrayList<>();
+            for (final String target : this.extended.missingTargets()) {
+                if (tried.add(target)) {
+                    todo.add(target);
+                }
+            }
+            if (todo.isEmpty()) {
+                return;
+            }
+            for (final String target : todo) {
+                readExtendedConfig(realRoot, target);
+            }
+        }
+    }
+
+    private void readExtendedConfig(final Path realRoot, final String target) throws IOException {
+        final Path path = Paths.get(File.separator + target);
+        if (!Files.isRegularFile(path)) {
+            return;
+        }
+        final Path real = path.toRealPath();
+        if (!real.startsWith(realRoot)) {
+            this.extended.noteNotHeld(target, "its real path " + real + " is outside the project directory");
+            return;
+        }
+        if (Files.size(real) > ExtendedConfigs.MAX_FILE_BYTES) {
+            this.extended.noteNotHeld(target, "it is over the size bound of " + ExtendedConfigs.MAX_FILE_BYTES
+                    + " bytes");
+            return;
+        }
+        this.insertFile(new ProjectFile(File.separator + target, Files.readString(real, StandardCharsets.UTF_8)));
     }
 
     /**
@@ -528,9 +592,11 @@ public class ProjectFiles implements AutoCloseable {
         String normalizedConfigPath = normalizeConfigPath(path);
         if (this.configFiles.remove(normalizedConfigPath) != null) {
             this.size -= 1;
+            this.size += this.extended.removed(normalizedConfigPath);
             LOGGER.debug("Removed config file at path: " + normalizedConfigPath + ".");
             return true;
         }
+        this.extended.forgetCandidate(normalizedConfigPath);
         return false;
     }
 

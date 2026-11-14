@@ -869,6 +869,95 @@ function collectImportedFiles(parseTree, parseNodeType, filePath, dynamicImports
   return files;
 }
 
+/**
+ * The import directives a file writes, in source order, each with the manner of the import. Covers `import`
+ * and `from ... import` statements wherever they are written, and the literal-argument `importlib.import_module`,
+ * `import_module` and `__import__` loads. A statement inside a function body, and a load by call, is dynamic.
+ * `inProject` says the module resolves to a file of the repository, which shadows a library of the same name.
+ *
+ * `import a.b as c` binds the module `a.b` to `c`; `import a.b` binds the module under its dotted name and
+ * gives it no alias. `from a import b, c as d` takes the names `b` and `c` from `a`, even where one of them is a
+ * submodule, and `from a import *` takes everything.
+ */
+/** Whether an `if` test is `TYPE_CHECKING` or `typing.TYPE_CHECKING` (any alias of the typing module). */
+function isTypeCheckingTest(test, types) {
+  if (!test || !test.d) return false;
+  if (test.nodeType === types.Name) return test.d.value === 'TYPE_CHECKING';
+  if (test.nodeType === types.MemberAccess) return !!test.d.member && test.d.member.d && test.d.member.d.value === 'TYPE_CHECKING';
+  return false;
+}
+
+function collectImportDirectives(parseTree, parseNodeType, filePath, dynamicImports) {
+  const types = parseNodeType || {};
+  const resolution = repoImportResolution();
+  const found = [];
+  const inProject = (leadingDots, nameParts) => {
+    if (!resolution) return false;
+    try {
+      const result = resolution.resolver.resolveImport(resolution.toUri(filePath), resolution.execEnv,
+        { leadingDots, nameParts, importedSymbols: undefined });
+      if (!result || !result.isImportFound) return false;
+      const uris = result.resolvedUris || [];
+      return !!repoFileOf(uris[uris.length - 1], filePath);
+    } catch (err) {
+      return false;
+    }
+  };
+  const partsOf = moduleNode => ({
+    leadingDots: moduleNode.d.leadingDots || 0,
+    nameParts: (moduleNode.d.nameParts || []).map(part => nameFromNode(part))
+  });
+  function visit(node, insideFunction, typeChecking) {
+    if (!node || typeof node !== 'object' || !node.d) return;
+    if (node.nodeType === types.ImportAs && node.d.module) {
+      const { leadingDots, nameParts } = partsOf(node.d.module);
+      const alias = node.d.alias ? nameFromNode(node.d.alias) : null;
+      found.push({ start: node.start, directive: {
+        target: '.'.repeat(leadingDots) + nameParts.join('.'), kind: 'single', relative: leadingDots > 0,
+        names: [], binds: [], alias: alias || null, importsModule: true, dynamic: insideFunction, typeOnly: typeChecking,
+        inProject: inProject(leadingDots, nameParts) } });
+    } else if (node.nodeType === types.ImportFrom && node.d.module) {
+      const { leadingDots, nameParts } = partsOf(node.d.module);
+      const names = [];
+      const binds = [];
+      if (!node.d.isWildcardImport) {
+        for (const imported of node.d.imports || []) {
+          const name = nameFromNode(imported.d.name);
+          const bound = imported.d.alias ? nameFromNode(imported.d.alias) : name;
+          if (name) {
+            names.push(name);
+            binds.push(bound || name);
+          }
+        }
+      }
+      found.push({ start: node.start, directive: {
+        target: '.'.repeat(leadingDots) + nameParts.join('.'), kind: node.d.isWildcardImport ? 'on_demand' : 'single',
+        relative: leadingDots > 0, names, binds, alias: null, importsModule: false, dynamic: insideFunction, typeOnly: typeChecking,
+        inProject: inProject(leadingDots, nameParts) } });
+    }
+    const inside = insideFunction || isFunctionNode(node, types);
+    // The suite of `if TYPE_CHECKING:` runs for the type checker only; its `else` does run.
+    const guarded = node.nodeType === types.If && isTypeCheckingTest(node.d.testExpr || node.d.testExpression, types);
+    for (const key of Object.keys(node.d)) {
+      const child = node.d[key];
+      const under = typeChecking || (guarded && key === 'ifSuite');
+      if (Array.isArray(child)) {
+        child.forEach(item => visit(item, inside, under));
+      } else if (child && typeof child === 'object' && child.d) {
+        visit(child, inside, under);
+      }
+    }
+  }
+  visit(parseTree, false, false);
+  for (const dynamic of dynamicImports || []) {
+    found.push({ start: dynamic.start, directive: {
+      target: dynamic.moduleName, kind: 'single', relative: false, names: [], binds: [], alias: null,
+      importsModule: true, dynamic: true, typeOnly: false, inProject: inProject(0, dynamic.moduleName.split('.')) } });
+  }
+  found.sort((a, b) => a.start - b.start);
+  return found.map(entry => entry.directive);
+}
+
 function collectImports(fileText, ctx) {
   return resolveImportStatements(collectImportStatements(fileText), ctx);
 }
@@ -3593,6 +3682,10 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
   const moduleMemberTargets = new Set();
   const calleeNames = new Set();
   const memberCalls = new Set();
+  // The type the callee of the call being read names, set wherever a callee is settled to one, whether
+  // or not a reference for it was already recorded.
+  let calleeTarget = null;
+  const constructions = new Set();
 
   /**
    * A dotted name whose first segment is a module binding the function does not shadow resolves the
@@ -3712,10 +3805,32 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
   }
 
   function pushTarget(raw, target) {
+    calleeTarget = { targetUniqueName: target, externalLabel: target };
     if (!moduleMemberTargets.has(target)) {
       moduleMemberTargets.add(target);
       refs.push({ raw, targetUniqueName: target, externalLabel: target });
     }
+  }
+
+  /**
+   * A call whose callee names a class constructs it. The callee has to be a plain or dotted name that the
+   * reference above settled to a type, and Pyright has to resolve it to a class: a name Pyright resolves to a
+   * function, or cannot resolve, constructs nothing known.
+   */
+  function addConstruction(calleeNode) {
+    const target = calleeTarget;
+    calleeTarget = null;
+    if (!target || !calleeNode || !dottedNameOf(calleeNode, parseNodeType) || !ctx.inferType
+      || !ctx.inferType.calleeKind || ctx.inferType.calleeKind(calleeNode) !== 'class') {
+      return;
+    }
+    const key = target.targetUniqueName || target.externalLabel;
+    if (constructions.has(key)) {
+      return;
+    }
+    constructions.add(key);
+    refs.push({ raw: textForNode(calleeNode, ctx.fileText), targetUniqueName: target.targetUniqueName,
+      externalLabel: target.externalLabel, construction: true, alternates: [] });
   }
 
   function isKnownImport(baseName) {
@@ -3727,7 +3842,10 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
   }
 
   function addRef(calleeText, calleeNode) {
-    if (!calleeText || seen.has(calleeText)) return;
+    if (!calleeText) return;
+    if (seen.has(calleeText)) {
+      return;
+    }
     seen.add(calleeText);
     const dotIdx = calleeText.indexOf('.');
     if (dotIdx > 0) {
@@ -3738,6 +3856,7 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
       if (isKnownImport(base)) {
         const resolved = resolveTypeFromRaw(base, ctx);
         if (resolved) {
+          calleeTarget = { targetUniqueName: null, externalLabel: resolved + calleeText.substring(dotIdx) };
           refs.push({ raw: calleeText, targetUniqueName: null, externalLabel: resolved + calleeText.substring(dotIdx) });
         } else {
           addExternalModuleCall(calleeText, calleeNode);
@@ -3746,6 +3865,7 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     } else if (!isLocal(calleeText)) {
       const resolved = resolveTypeFromRaw(calleeText, ctx);
       if (resolved) {
+        calleeTarget = { targetUniqueName: resolved, externalLabel: resolved };
         if (!moduleMemberTargets.has(resolved)) {
           moduleMemberTargets.add(resolved);
           refs.push({ raw: calleeText, targetUniqueName: resolved, externalLabel: resolved });
@@ -3795,6 +3915,7 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     }
     const kind = ctx.inferType.calleeKind(calleeNode);
     if (kind === 'class') {
+      calleeTarget = { targetUniqueName: null, externalLabel: imported.moduleName + '.' + imported.symbolName };
       refs.push({ raw: name, targetUniqueName: null, externalLabel: imported.moduleName + '.' + imported.symbolName });
     } else if (kind === 'unresolved') {
       refs.push({ raw: name, targetUniqueName: null, externalLabel: imported.moduleName + '.' + imported.symbolName,
@@ -3844,9 +3965,11 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     if (parseNodeType && parseNodeType.Call !== undefined && node.nodeType === parseNodeType.Call) {
       addTypeVariableStringBounds(node);
       const calleeNode = node.d.leftExpr;
+      calleeTarget = null;
       if (calleeNode && !addModuleMemberRef(dottedNameOf(calleeNode, parseNodeType))) {
         addRef(textForNode(calleeNode, ctx.fileText), calleeNode);
       }
+      addConstruction(calleeNode);
       if (calleeNode && calleeNode.nodeType === parseNodeType.Name) {
         // `User()` is recorded by addRef above, as it always has been.
         calleeNames.add(calleeNode);
@@ -4750,6 +4873,15 @@ function importedFilesOf(parseTree, parseNodeType, filePath, dynamicImports) {
   }
 }
 
+/** The import directives the file writes; none when they cannot be read, never an error. */
+function importDirectivesOf(parseTree, parseNodeType, filePath, dynamicImports) {
+  try {
+    return collectImportDirectives(parseTree, parseNodeType, filePath, dynamicImports);
+  } catch (err) {
+    return [];
+  }
+}
+
 async function handleGetFileModel(params) {
   const filePath = params && params.filePath ? params.filePath : null;
   if (!filePath) {
@@ -4880,6 +5012,7 @@ async function handleGetFileModel(params) {
       moduleFields,
       imports: Array.from(new Set(importList)),
       importedFiles: importedFilesOf(parseTree, parseNodeType, normalized, dynamicImports),
+      importDirectives: importDirectivesOf(parseTree, parseNodeType, normalized, dynamicImports),
       warnings: []
     }
   };

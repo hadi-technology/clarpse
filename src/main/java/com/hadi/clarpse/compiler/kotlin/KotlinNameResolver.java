@@ -218,7 +218,7 @@ final class KotlinNameResolver {
         return found;
     }
 
-    private static boolean isPlatformType(final String qualifiedName) {
+    static boolean isPlatformType(final String qualifiedName) {
         return PLATFORM_TYPES.computeIfAbsent(qualifiedName, name -> {
             try {
                 final Class<?> type = Class.forName(name, false, ClassLoader.getPlatformClassLoader());

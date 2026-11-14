@@ -22,7 +22,8 @@ import java.io.Serializable;
         @Type(value = TypeExtensionReference.class, name = "extension"),
         @Type(value = TypeImplementationReference.class, name = "implementation"),
         @Type(value = AnnotationReference.class, name = "annotation"),
-        @Type(value = MemberReference.class, name = "member")})
+        @Type(value = MemberReference.class, name = "member"),
+        @Type(value = ConstructionReference.class, name = "construction")})
 public abstract class ComponentReference implements Serializable, Cloneable {
 
     private static final long serialVersionUID = -242718695900611890L;
@@ -31,6 +32,8 @@ public abstract class ComponentReference implements Serializable, Cloneable {
     @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     private boolean notLoaded = false;
     private ResolutionKind resolutionKind = ResolutionKind.UNSPECIFIED;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private StandardLibraryStatus standardLibrary;
 
     public ComponentReference(final String invocationComponentName) {
         invokedComponent = pooled(named(invocationComponentName));
@@ -190,6 +193,38 @@ public abstract class ComponentReference implements Serializable, Cloneable {
         } else {
             this.resolutionKind = resolutionKind;
         }
+    }
+
+    /**
+     * Whether the target of this reference belongs to the language's standard library.
+     *
+     * <p>A target the model holds a component for, or that is declared in the repository and not
+     * loaded, is {@link StandardLibraryStatus#NOT_STANDARD}. For any other target the status comes
+     * from the name alone, by the rules of the referencing file's language (see
+     * {@code docs/MODEL.md}); it is {@link StandardLibraryStatus#UNKNOWN} where the name does not
+     * settle it, and for a name kept as written because nothing in scope declared it. Not part of
+     * {@link #equals}.
+     *
+     * @return The status of the target.
+     */
+    public StandardLibraryStatus standardLibrary() {
+        if (standardLibrary != null) {
+            return standardLibrary;
+        }
+        if (external) {
+            return StandardLibraryStatus.UNKNOWN;
+        }
+        return StandardLibraryStatus.NOT_STANDARD;
+    }
+
+    /**
+     * Records whether the target belongs to the language's standard library.
+     *
+     * @param status The status, or {@code null} to leave it to the default described at
+     *               {@link #standardLibrary()}.
+     */
+    public void setStandardLibrary(final StandardLibraryStatus status) {
+        this.standardLibrary = status;
     }
 
     @Override

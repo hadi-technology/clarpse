@@ -1894,6 +1894,73 @@ function libraryBaseName(typeNode, checker) {
 }
 
 /**
+ * The references a heritage entry written as a call makes: `class A extends Mixin(Base)`,
+ * `extends Factory("name")`. The function called is the base the class names, so it is recorded as
+ * the extension (a repository function as the component it is, a package's function as
+ * `package:name`), and what the arguments name (`Base`) is an ordinary reference. Empty where the
+ * entry is not a call on a plain or dotted name, or where the called name resolves to nothing the
+ * model can name; the type the checker reads through the call is used then.
+ */
+function calledBaseReferences(typeNode, checker, kind) {
+  const ts = state.ts;
+  if (!ts.isExpressionWithTypeArguments(typeNode) || !ts.isCallExpression(typeNode.expression)) {
+    return [];
+  }
+  const call = typeNode.expression;
+  let callee = call.expression;
+  let reference = null;
+  if (ts.isIdentifier(callee)) {
+    reference = buildValueReference(callee, checker, null);
+  } else if (ts.isPropertyAccessExpression(callee)) {
+    reference = buildNamespaceMemberReference(callee, checker);
+  }
+  if (!reference) {
+    return [];
+  }
+  reference.kind = kind;
+  const references = [reference];
+  for (const argument of call.arguments) {
+    references.push(...collectValueReferences(argument, checker, null));
+  }
+  for (const argument of typeNode.typeArguments || []) {
+    references.push(...buildReferenceModelsFromType(checker.getTypeAtLocation(argument), checker, "type"));
+  }
+  return references;
+}
+
+/**
+ * Whether the base a class extends is a call of a package's function (`extends Mixin(Base)`), so
+ * that what it adds to the class is the package's to say and is named by the reference to that
+ * function. It is not when the callee is a repository declaration, or when an argument or type
+ * argument could itself declare members (`Schema.Class<User>("User")({ id: ... })`).
+ */
+function baseIsPackageFunctionCall(typeNode, checker) {
+  if (!baseCallDeclaresNoMembers(typeNode)) {
+    return false;
+  }
+  const references = calledBaseReferences(typeNode, checker, "extends");
+  return references.length > 0 && references[0].external === true && !references[0].target;
+}
+
+// A call of a plain or dotted name whose arguments are names and literals, never a shape of members.
+function baseCallDeclaresNoMembers(typeNode) {
+  const ts = state.ts;
+  const call = typeNode.expression;
+  if (!call || !ts.isCallExpression(call)) {
+    return false;
+  }
+  if (!ts.isIdentifier(call.expression) && !ts.isPropertyAccessExpression(call.expression)) {
+    return false;
+  }
+  if ((typeNode.typeArguments || []).length) {
+    return false;
+  }
+  return !call.arguments.some((argument) => ts.isObjectLiteralExpression(argument)
+    || ts.isArrayLiteralExpression(argument) || ts.isArrowFunction(argument)
+    || ts.isFunctionExpression(argument));
+}
+
+/**
  * The references a heritage clause makes. Only the type named in the clause is extended or
  * implemented; the types written as its type arguments (`B<C>`) are ordinary references.
  */
@@ -1911,6 +1978,11 @@ function buildHeritageReferences(node, checker) {
         for (const argument of typeNode.typeArguments || []) {
           references.push(...buildReferenceModelsFromType(checker.getTypeAtLocation(argument), checker, "type"));
         }
+        continue;
+      }
+      const called = calledBaseReferences(typeNode, checker, kind);
+      if (called.length) {
+        references.push(...called);
         continue;
       }
       const type = checker.getTypeAtLocation(typeNode);
@@ -2906,6 +2978,12 @@ function collectBodyDetails(body, checker, owner) {
     if (state.ts.isNewExpression(node)) {
       const newType = checker.getTypeAtLocation(node);
       references.push(...buildReferenceModelsFromType(newType, checker, "type"));
+      // The constructed type itself, without its type arguments; a creation the checker cannot
+      // type (`any`, `unknown`, an unresolved class) records no construction.
+      if (newType && !(newType.flags & (state.ts.TypeFlags.Any | state.ts.TypeFlags.Unknown))) {
+        references.push(...buildReferenceModelsFromType(newType, checker, "construction", true)
+          .filter((entry) => !entry.lost));
+      }
     }
     if (nested) {
       nestedDepth += 1;
@@ -3339,7 +3417,7 @@ function buildClassModel(node, checker, unresolvedBases) {
     const inherited = buildBaseExpressionMembers(node, checker, declaredNames);
     if (inherited.length > 0) {
       members.push(...inherited);
-    } else if (Array.isArray(unresolvedBases)) {
+    } else if (Array.isArray(unresolvedBases) && !baseIsPackageFunctionCall(baseExpression, checker)) {
       // The base is a call and the checker could see no members through it. Saying nothing here
       // would leave the class looking like one that genuinely declares none.
       unresolvedBases.push(`${node.name.text} extends ${baseExpression.getText()}`);
@@ -3999,11 +4077,19 @@ async function handleGetFileModel(params) {
   } catch (err) {
     importedFiles = [];
   }
+  let importDirectives = [];
+  try {
+    importDirectives = collectImportDirectives(ts, entryInfo.source, checker);
+  } catch (err) {
+    console.warn(`[clarpse] Import directives of ${filePath} could not be read: ${err && err.stack}`);
+    importDirectives = [];
+  }
   return {
     filePath: normalized,
     declarations,
     imports,
     importedFiles,
+    importDirectives,
     unresolvedBases
   };
 }
@@ -4088,6 +4174,109 @@ function collectImports(ts, source, checker) {
   }
   collectLoadedModules(ts, source, checker, results);
   return results;
+}
+
+/**
+ * The import directives a file writes, in source order, each with the manner of the import: whether the
+ * specifier is relative, the names it takes and the local names it binds, whether it binds a module as a
+ * whole, and whether it runs when its code runs. Covers `import` declarations, `import x = require()`,
+ * and `import()` and `require()` calls with a literal argument. `export type ... from`, which only the type checker reads, is recorded as a type-only directive; any other
+ * `export ... from` is not an import.
+ * `inProject` says the specifier resolves to a file of the repository.
+ */
+function collectImportDirectives(ts, source, checker) {
+  const directives = [];
+  const resolvesToProject = (node, specifier) => !!resolveImportedFile(node, specifier, source, checker);
+  const directive = (node, specifier, fields) => Object.assign({
+    target: specifier,
+    kind: "single",
+    relative: specifier.startsWith("."),
+    names: [],
+    binds: [],
+    alias: null,
+    importsModule: false,
+    dynamic: false,
+    typeOnly: false,
+    inProject: resolvesToProject(node, specifier)
+  }, fields);
+  function visit(node, insideFunction) {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
+      const specifier = node.moduleSpecifier.text;
+      const clause = node.importClause;
+      const fields = { names: [], binds: [] };
+      if (!clause) {
+        fields.importsModule = true;
+      } else {
+        fields.typeOnly = clause.isTypeOnly === true || (!clause.name && !!clause.namedBindings
+          && ts.isNamedImports(clause.namedBindings) && clause.namedBindings.elements.length > 0
+          && clause.namedBindings.elements.every(element => element.isTypeOnly === true));
+        if (clause.name) {
+          fields.names.push("default");
+          fields.binds.push(clause.name.text);
+        }
+        const bindings = clause.namedBindings;
+        if (bindings && ts.isNamedImports(bindings)) {
+          for (const element of bindings.elements) {
+            fields.names.push((element.propertyName || element.name).text);
+            fields.binds.push(element.name.text);
+          }
+        } else if (bindings && bindings.name) {
+          fields.kind = "on_demand";
+          fields.alias = bindings.name.text;
+          fields.importsModule = true;
+        }
+      }
+      directives.push(directive(node.moduleSpecifier, specifier, fields));
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)
+        && ts.isStringLiteralLike(node.moduleReference.expression)) {
+      const specifierNode = node.moduleReference.expression;
+      directives.push(directive(specifierNode, specifierNode.text,
+        { alias: node.name.text, importsModule: true, typeOnly: node.isTypeOnly === true }));
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)
+        && (node.isTypeOnly === true || (node.exportClause && ts.isNamedExports(node.exportClause)
+          && node.exportClause.elements.length > 0
+          && node.exportClause.elements.every(element => element.isTypeOnly === true)))) {
+      // A re-export of types only depends on the module for the type checker; a re-export of values is not an import.
+      const fields = { typeOnly: true, names: [], binds: [] };
+      if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+        for (const element of node.exportClause.elements) {
+          fields.names.push((element.propertyName || element.name).text);
+          fields.binds.push(element.name.text);
+        }
+      } else {
+        fields.kind = "on_demand";
+        fields.importsModule = false;
+      }
+      directives.push(directive(node.moduleSpecifier, node.moduleSpecifier.text, fields));
+    } else if (ts.isCallExpression(node) && node.arguments.length === 1
+        && ts.isStringLiteralLike(node.arguments[0]) && node.arguments[0].text) {
+      const callee = node.expression;
+      const dynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
+      if (dynamicImport || isRequireFunction(callee)) {
+        const fields = { importsModule: true, dynamic: dynamicImport || insideFunction, names: [], binds: [] };
+        const parent = node.parent;
+        if (parent && ts.isVariableDeclaration(parent) && parent.initializer === node) {
+          if (ts.isIdentifier(parent.name)) {
+            fields.alias = parent.name.text;
+          } else if (ts.isObjectBindingPattern(parent.name)) {
+            fields.importsModule = false;
+            for (const element of parent.name.elements) {
+              if (ts.isIdentifier(element.name)) {
+                fields.names.push(element.propertyName && ts.isIdentifier(element.propertyName)
+                  ? element.propertyName.text : element.name.text);
+                fields.binds.push(element.name.text);
+              }
+            }
+          }
+        }
+        directives.push(directive(node.arguments[0], node.arguments[0].text, fields));
+      }
+    }
+    const inside = insideFunction || ts.isFunctionLike(node);
+    ts.forEachChild(node, (child) => visit(child, inside));
+  }
+  visit(source, false);
+  return directives;
 }
 
 /**

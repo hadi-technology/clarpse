@@ -19,12 +19,18 @@ import com.hadi.clarpse.reference.AnnotationArgument;
 import com.hadi.clarpse.reference.AnnotationArguments;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.ConstructionReference;
 import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
+import com.hadi.clarpse.reference.StandardLibraryStatus;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
+import com.hadi.clarpse.compiler.Lang;
+import com.hadi.clarpse.compiler.StandardLibraries;
 import com.hadi.clarpse.sourcemodel.Component;
+import com.hadi.clarpse.sourcemodel.ImportDirective;
+import com.hadi.clarpse.sourcemodel.ImportKind;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType;
 import com.hadi.clarpse.sourcemodel.Package;
@@ -122,6 +128,7 @@ final class KotlinModelAssembler {
         component.setComment(nullToEmpty(type.comment));
         component.setImports(importStatements(file));
         component.setImportedFiles(importedFiles(file));
+        component.setImportDirectives(importDirectives(file));
         component.setAccessModifiers(withVisibility(type.modifiers));
         component.setCodeFragment(type.codeFragment);
         component.setCodeHash(nonZeroHash(type.implementationHash, component.componentName()));
@@ -183,6 +190,7 @@ final class KotlinModelAssembler {
         component.setComment("");
         component.setImports(importStatements(file));
         component.setImportedFiles(importedFiles(file));
+        component.setImportDirectives(importDirectives(file));
         component.setAccessModifiers(List.of("public", "final"));
         component.setCodeFragment("class " + simpleName);
         int hash = 0;
@@ -557,6 +565,19 @@ final class KotlinModelAssembler {
         final SimpleTypeReference reference = new SimpleTypeReference(resolved.name());
         reference.setResolutionKind(resolved.kind());
         ParseUtil.insertCmpRef(component, reference, stack);
+        if (usage.call() && resolved.kind() == ResolutionKind.EXACT && namesAClass(resolved.name())) {
+            final ConstructionReference construction = new ConstructionReference(resolved.name());
+            construction.setResolutionKind(resolved.kind());
+            ParseUtil.insertCmpRef(component, construction, stack);
+        }
+    }
+
+    /**
+     * Whether a called name is known to be a type, so that calling it constructs: a type of the
+     * repository, or a class of the Java platform. A call of any other name may be a function.
+     */
+    private boolean namesAClass(final String name) {
+        return resolver.index().isType(name) || KotlinNameResolver.isPlatformType(name);
     }
 
     /** The names closer in scope than a type for code in a member: its parameters, locals and fellow members. */
@@ -637,6 +658,28 @@ final class KotlinModelAssembler {
             files.remove(path);
             return files;
         });
+    }
+
+    /**
+     * The import directives of a file. A Kotlin import names a type, function or property, or every
+     * member of a package or type with a star; it has no static form, no relative form and no module value.
+     */
+    private static List<ImportDirective> importDirectives(final KotlinFileModel file) {
+        final List<ImportDirective> directives = new ArrayList<>();
+        for (final KotlinImport kotlinImport : file.imports) {
+            final String target = kotlinImport.target();
+            final StandardLibraryStatus library = StandardLibraries.ofImport(Lang.KOTLIN, target, false, false);
+            if (kotlinImport.star()) {
+                directives.add(new ImportDirective(target, ImportKind.ON_DEMAND, false, List.of(), List.of(),
+                        null, library));
+                continue;
+            }
+            final String name = target.substring(target.lastIndexOf('.') + 1);
+            final String bound = kotlinImport.visibleName();
+            directives.add(new ImportDirective(target, ImportKind.SINGLE, false, List.of(name), List.of(bound),
+                    null, library));
+        }
+        return directives;
     }
 
     private static Set<String> importStatements(final KotlinFileModel file) {

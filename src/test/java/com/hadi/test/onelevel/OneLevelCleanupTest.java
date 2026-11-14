@@ -46,7 +46,7 @@ public class OneLevelCleanupTest {
     }
 
     private static Set<Path> clarpseDirs() throws IOException {
-        return dirs("clarpse-src-*");
+        return dirs("clarpse-src-" + ProcessHandle.current().pid() + "-*");
     }
 
     private static Set<Path> dirs(final String glob) throws IOException {
@@ -87,7 +87,7 @@ public class OneLevelCleanupTest {
         assertFalse(files.isTempProjectDir());
         assertEquals(before, clarpseDirs());
         assertTrue(liveDaemons().toString(), liveDaemons().isEmpty());
-        assertTrue("a TypeScript daemon's extraction ends with its session", dirs("clarpse-ts-daemon-*").isEmpty());
+        assertTrue("a TypeScript daemon's extraction ends with its session", dirs("clarpse-ts-daemon-" + ProcessHandle.current().pid() + "-*").isEmpty());
         assertTrue(dirs("clarpse-clarpse-*").isEmpty());
     }
 

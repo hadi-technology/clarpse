@@ -2,6 +2,9 @@ package com.hadi.clarpse.compiler;
 
 import com.hadi.clarpse.listener.ParseUtil;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.ResolutionKind;
+import com.hadi.clarpse.reference.StandardLibraryStatus;
+import com.hadi.clarpse.sourcemodel.Component;
 import com.hadi.clarpse.sourcemodel.OOPSourceCodeModel;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants;
 
@@ -56,7 +59,39 @@ public final class CompilerSupport {
             });
             component.setReferenceClassification(internalReferences, externalReferences,
                     notLoadedReferences);
+            markStandardLibrary(component);
         });
+    }
+
+    /**
+     * Records on each external reference of the component whether its target belongs to the standard
+     * library of the language the component is written in. A name the resolution only kept as written
+     * is left {@code UNKNOWN}, since it may name something else.
+     */
+    private static void markStandardLibrary(final Component component) {
+        final String path = component.sourceFile();
+        if (path == null) {
+            return;
+        }
+        final int dot = path.lastIndexOf('.');
+        if (dot < 0) {
+            return;
+        }
+        final Lang lang = Lang.langFromExtn(path.substring(dot + 1));
+        if (lang == null) {
+            return;
+        }
+        for (final ComponentReference reference : component.externalDependencies()) {
+            if (reference.resolutionKind() == ResolutionKind.UNRESOLVED
+                    || reference.resolutionKind() == ResolutionKind.AMBIGUOUS) {
+                continue;
+            }
+            final StandardLibraryStatus status =
+                    StandardLibraries.ofExternalName(lang, reference.invokedComponent());
+            if (status != StandardLibraryStatus.UNKNOWN) {
+                reference.setStandardLibrary(status);
+            }
+        }
     }
 
     /**

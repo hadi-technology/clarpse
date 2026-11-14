@@ -162,6 +162,7 @@ the target.
 | `IMPLEMENTATION` | `TypeImplementationReference` | `implementation` | interface implementation |
 | `ANNOTATION` | `AnnotationReference` | `annotation` | an annotation, attribute or decorator applied to this declaration, with literal arguments where read. Not a use dependency. |
 | `MEMBER` | `MemberReference` | `member` | a call of one named member of a type (§2.3). Its target is the owning type, so it is also a use of that type. |
+| `CONSTRUCTION` | `ConstructionReference` | `construction` | the construction of an instance of a type (§2.5). Its target is the constructed type, so it is also a use of that type. |
 
 Rules that hold for every kind:
 - **Identity.** Two references are equal when they have the same class and the same target name.
@@ -237,6 +238,28 @@ the parse cannot read that could supply the name, or `this`/`self`.
 recorded, as before, as a `SimpleTypeReference` whose target is the string `<package>:<Type>.<member>`.
 That form is **deprecated and is removed in 12.0**: it cannot be told from a nested type name, and its
 split is ambiguous for nested types and Node built-ins. Use the `MemberReference` instead.
+
+### 2.5 Construction references
+
+*Migration:* a consumer that serialises every reference of a component (for example by `toString`) now gets
+one more per construction, beside the `SIMPLE` reference to the same type.
+
+A `ConstructionReference` (`CONSTRUCTION`) records that a component **constructs an instance of a type**.
+It is the finer companion of the `SIMPLE` reference to the same type, never a replacement: the
+`SIMPLE` reference stays, and a consumer that ignores this kind sees the graph it would see without it.
+Its target is the constructed type, written and classified as a type reference to it is; type arguments are
+not part of it. Equality is the class and the target.
+
+**When it is recorded.** Only where the construction is explicit in the source and the called name is
+known to be a type. Not recording one means *unknown*, never *absent*.
+
+| language | recorded | not recorded |
+|---|---|---|
+| Java | `new T(...)`, qualified or not, diamond included | a creation with a class body (an anonymous subtype), array creation |
+| Kotlin | a call `T(...)` whose name resolves to a type of the repository or to a class of the Java platform, aliases included | a call of a library name the parse cannot tell from a function, a qualified call |
+| C# | `new T(...)` | `new()` (target-typed), anonymous types, array creation |
+| TypeScript | `new T(...)`, `T` being the checker's type of the expression | a creation the checker types as `any` or `unknown` |
+| Python | a call `T(...)` or `m.T(...)` whose callee Pyright resolves to a class | a callee Pyright cannot resolve, or resolves to a function; `super()` and calls on an expression |
 
 ### 2.4 Extension edges
 
@@ -378,6 +401,50 @@ attached to the file's types and, in TS and Python, to its module-level declarat
 `imports()` is descriptive. It is not resolved against the model and makes no claim that the
 imported thing exists.
 
+### 5.1.1 `importDirectives()`
+
+`Component.importDirectives()` is the structured companion of `imports()`: one `ImportDirective` per
+import directive the file writes, in written order, attached to the same components. It describes the
+file's own text and is not resolved against the model. A directive has:
+
+- `target()`: what it names, as written, without a trailing wildcard (`java.util.List`, `java.util` for
+  `java.util.*`, `./m`, `.util` for `from .util import x`, `System.Text`);
+- `kind()`: `SINGLE` (names what it takes), `ON_DEMAND` (a wildcard: `a.*`, `using Ns;`, `from m import *`,
+  `import * as ns`), `STATIC`, `STATIC_ON_DEMAND` (Java `import static`, C# `using static`);
+- `isRelative()`: written relative to the importing file;
+- `names()` and `binds()`: the members taken by name as the target exports them, and the local names they
+  are bound to (`from m import a as b` gives `[a]` and `[b]`; TypeScript's default import is `default`).
+  Both are empty for a whole-module import and for a wildcard. Java and Kotlin write the member into the
+  target, so `names` holds its last segment;
+- `alias()`: the local name given to the target as a whole (`import numpy as np`, `import * as ns`,
+  `using Io = System.IO`);
+- `importsModule()`: the directive binds or loads a module as a value (Python `import m`, TypeScript
+  `import * as ns`, side-effect import, `import x = require()`, `require()` and `import()` without
+  destructuring). A `from` import and a named import take names and are false;
+- `isDynamic()`: the import runs when its code runs: TypeScript `import()` and a `require()` inside a
+  function; Python an import statement inside a function body, and `importlib.import_module` and
+  `__import__` with a literal argument;
+- `isTypeOnly()`: nothing the directive binds exists when the code runs: TypeScript `import type`, an
+  import whose every named binding is written `type` (and that takes no default or namespace), `export
+  type ... from` and an `export { type A } from` of types only; Python an import under `if
+  TYPE_CHECKING:` or `if typing.TYPE_CHECKING:` (its `else` branch is not type-only). Always false in
+  Java, Kotlin and C#, whose imports are not erased by the language;
+- `standardLibrary()`: see §5.3.
+
+| language | read | `isRelative` | `importsModule` | `isDynamic` |
+|---|---|---|---|---|
+| Java | `import`, single, on-demand, static | always false (no relative form) | always false (no module value) | always false (static) |
+| Kotlin | `import`, aliases and stars | always false | always false | always false |
+| C# | `using` written in the file: namespaces, `using static`, aliases. Implicit usings and the global usings of other files are not directives of the file | always false | always false | always false |
+| TypeScript | `import` declarations, `import x = require()`, literal `import()` and `require()`; `export type ... from` is a type-only directive, any other `export ... from` is **not** an import | specifier starts with `.` | per the list above | per the list above |
+| Python | `import`, `from ... import` wherever written, literal `importlib.import_module` / `__import__` | leading dots | per the list above | per the list above |
+
+"Always false" means the concept does not exist in the language, not that it was not looked for. An empty
+list has the same ambiguity as an empty `imports()` (§5.2): a file that was not read in full has none recorded.
+A `from m import name` where `name` is a submodule is a names import; the directive does not say which.
+A `require()` whose result is used another way than a plain binding or object destructuring is
+`importsModule() == true` with no alias.
+
 ### 5.2 `importedFiles()`
 
 `Component.importedFiles()` is the set of **project files that declare what the declaring file's
@@ -418,6 +485,28 @@ Intended: a flag such as `importedFilesComplete()`, false when the file has an i
 whose targets were not expanded (wildcard, namespace, unresolved, non-literal dynamic). Or a
 structured import record (written text, kind, resolved files, status) that subsumes `imports()`
 and `importedFiles()`.
+
+### 5.3 Standard library
+
+`ComponentReference.standardLibrary()` and `ImportDirective.standardLibrary()` say whether the target belongs to
+the language's standard library: `STANDARD`, `NOT_STANDARD`, or `UNKNOWN`. `NOT_STANDARD` is claimed only where
+the language settles it; a name kept as written because nothing in scope declared it (`UNRESOLVED`,
+`AMBIGUOUS`) is `UNKNOWN`. A reference to a type of the codebase is `NOT_STANDARD`. The rules read the name only:
+
+| language | standard | not standard | unknown |
+|---|---|---|---|
+| Java | `java.*` (reserved by the platform), and every package in `stdlib/java-packages.txt`, the packages the Java SE 17 platform (OpenJDK 17.0.21) exports (`javax.swing`, `org.w3c.dom`) | other packages, including `javax.*` packages the platform does not export | a name with no package |
+| Kotlin | `kotlin`, `kotlin.*`, and the Java rule for the JVM platform | `kotlinx.*`, other packages | `kotlin.reflect.full`, `kotlin.reflect.jvm`, `kotlin.test` (separate artifacts), a name with no package |
+| C# | a namespace in `stdlib/dotnet-namespaces.txt`, a type in `stdlib/dotnet-types.txt`, or a nested type of one: the public API of the Microsoft.NETCore.App.Ref 8.0.34 reference pack (nuget.org package SHA-512 in each list header) | a qualified name under any other root (`Newtonsoft.Json.JsonConvert`) | any name under `System`, `Microsoft` or `Windows` that the lists do not hold (`System.CommandLine`, `System.Reactive`, ASP.NET Core and Windows Desktop frameworks, NuGet packages), a name with no namespace |
+| TypeScript | a `node:` specifier or the specifier of a Node.js 22 built-in module (`fs`, `fs/promises`), from `stdlib/node-modules.txt` | every other specifier or package; a relative specifier; a specifier that resolves to a file of the project | a bare global (`Error`) |
+| Python | a module whose top-level package is in `stdlib/python-modules.txt`, the typeshed bundled with pyright | any other module; a relative import; a module that resolves to a file of the project (it shadows the library) | a bare name |
+
+The lists are fixed resources, each starting with a comment line that names its source and version, so an answer
+never depends on the runtime clarpse runs on. The Python list is the union over the Python versions typeshed
+covers (`distutils` is listed though later versions drop it). The C# type list drops generic arity, so
+`List<T>` is `List`. Each language supplies its rule as a small strategy (`LanguageStandardLibrary`) with its
+own list.
+
 
 ---
 
@@ -605,8 +694,34 @@ Behaviour that legitimately differs, because the languages differ.
   from the augmentation to the type it augments.
 - `declare global` is not read.
 - Decorators are `ANNOTATION` references to the resolved declaration. Their arguments' names
-  are references of the decorated component.
+  are references of the decorated component. Decorators on classes, members and parameters, and
+  decorated constructor parameter properties (`constructor(@Inject(T) private readonly x: X)`),
+  are read whatever framework writes them; the class's fields and members come from what is
+  written in its body and its constructor's parameter properties.
+- A class whose base is a call (`class A extends Mixin(Base)`, `extends Factory("name")`) names the
+  called function as its base: an `EXTENSION` reference to the repository function, or to
+  `package:Mixin` for a package's function, even when the package is not installed, and the names
+  in the call's arguments are plain references. What a package's function adds to the class is not
+  modelled, and the file is not reported as partly read. A base written as a call whose arguments
+  could themselves declare members (`Schema.Class<A>("A")({ id: ... })`, an object or arrow
+  function argument, type arguments) or whose callee is a repository function the checker cannot
+  see members through is reported as a `CompileFailure` (`UNRESOLVED_BASE_EXPRESSION`) when no
+  member is found through it.
 - `typeof x` in any type position references the declaration of `x`.
+- A project config (`tsconfig.json`, `tsconfig.<name>.json`, `jsconfig.json`) read from an archive,
+  a directory or `ProjectFiles.insertFile` brings the files its relative `extends` names (a string or
+  an array, written with or without `.json`, whatever the file is called), and theirs in turn, so the
+  program sees the `paths` and `compilerOptions` the compiler would. `configFiles()` and `size()`
+  include these presets. The set follows the input: a preset that is inserted again replaces the old
+  text, one that is removed is waited for again, and a preset no project config reaches any more is
+  released. A package-name `extends` and a Windows-style `..\\base` are not followed, a target the
+  input does not hold is logged and left (a target skipped for size, or for lying outside the
+  project directory, is logged as that), a cycle ends where it returns, and a chain is followed at
+  most 32 links (`clarpse.config.maxExtendsChain`). From a directory only the named targets are read,
+  after the walk, and only when their real path is inside the real project directory. From an archive
+  or `insertFile`, JSON files not yet reached are held as candidates until a config names them, up to
+  1 MiB each (`clarpse.config.maxCandidateJsonBytes`) and 16 MiB in all; they live as long as the
+  instance and are copied with it.
 - Files no `tsconfig.json` names are read with default options and no library. In such a program
   `extends Error` finds no declaration of `Error`, so it is recorded as written with `UNRESOLVED`.
   A heritage name is a library global (`EXACT`) only when the checker resolves it to a declaration
@@ -707,3 +822,32 @@ User-visible changes in this release.
   daemons load, and the sources jar leaves the runtime bundles out.
 - **Dependency updates.** `jackson-databind` 2.22.0 to 2.22.3; `log4j-api` and `log4j-core` to
   2.25.5.
+
+---
+
+## 12. Changes in 11.18.0
+
+User-visible changes in this release.
+
+- **New: `Component.importDirectives()`** (§5.1.1). One `ImportDirective` per import the file writes,
+  in all five languages: target, kind (`SINGLE`, `ON_DEMAND`, `STATIC`, `STATIC_ON_DEMAND`), whether
+  it is relative, the names it takes and binds, its alias, whether it imports a module as a value,
+  whether it is dynamic, whether it is type-only (`isTypeOnly()`) and whether its target is in the
+  standard library.
+- **New: `ConstructionReference`** (§2.5), kind `CONSTRUCTION`. An explicit construction of a type is
+  recorded beside the `SIMPLE` reference to the same type, which stays. A consumer that serialises or
+  counts every reference of a component sees one more per construction; a consumer that ignores the
+  new kind sees the graph of 11.17.0. `TypeReferences` gains `CONSTRUCTION`, so a `switch` over it with
+  no default branch no longer compiles, and a reader built against an older version meets the new
+  value in serialised JSON.
+- **New: `standardLibrary()`** (§5.3), a `StandardLibraryStatus` of `STANDARD`, `NOT_STANDARD` or
+  `UNKNOWN` on references and import directives, decided per language from fixed, versioned lists.
+  It is written to JSON on external references only when it is not `UNKNOWN`.
+- **TypeScript:** a project config (`tsconfig.json`, `tsconfig.<name>.json`, `jsconfig.json`) read
+  from an archive, a directory or `ProjectFiles.insertFile` keeps the files its relative `extends`
+  names, so `paths` and `compilerOptions` are the ones the compiler would see (§9). A class whose
+  base is a call (`extends Mixin(Base)`) names the called function as its base instead of the type
+  read through the call, and is not reported as partly read when the call's arguments cannot declare
+  members. Decorators on parameters and constructor parameter properties are read whatever framework
+  writes them.
+- **Internal:** the C# type index is its own class; the model it builds is unchanged.
