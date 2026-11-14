@@ -424,6 +424,11 @@ file's own text and is not resolved against the model. A directive has:
 - `isDynamic()`: the import runs when its code runs: TypeScript `import()` and a `require()` inside a
   function; Python an import statement inside a function body, and `importlib.import_module` and
   `__import__` with a literal argument;
+- `isTypeOnly()`: nothing the directive binds exists when the code runs: TypeScript `import type`, an
+  import whose every named binding is written `type` (and that takes no default or namespace), `export
+  type ... from` and an `export { type A } from` of types only; Python an import under `if
+  TYPE_CHECKING:` or `if typing.TYPE_CHECKING:` (its `else` branch is not type-only). Always false in
+  Java, Kotlin and C#, whose imports are not erased by the language;
 - `standardLibrary()`: see §5.3.
 
 | language | read | `isRelative` | `importsModule` | `isDynamic` |
@@ -431,7 +436,7 @@ file's own text and is not resolved against the model. A directive has:
 | Java | `import`, single, on-demand, static | always false (no relative form) | always false (no module value) | always false (static) |
 | Kotlin | `import`, aliases and stars | always false | always false | always false |
 | C# | `using` written in the file: namespaces, `using static`, aliases. Implicit usings and the global usings of other files are not directives of the file | always false | always false | always false |
-| TypeScript | `import` declarations, `import x = require()`, literal `import()` and `require()`; `export ... from` is **not** an import | specifier starts with `.` | per the list above | per the list above |
+| TypeScript | `import` declarations, `import x = require()`, literal `import()` and `require()`; `export type ... from` is a type-only directive, any other `export ... from` is **not** an import | specifier starts with `.` | per the list above | per the list above |
 | Python | `import`, `from ... import` wherever written, literal `importlib.import_module` / `__import__` | leading dots | per the list above | per the list above |
 
 "Always false" means the concept does not exist in the language, not that it was not looked for. An empty
@@ -817,3 +822,32 @@ User-visible changes in this release.
   daemons load, and the sources jar leaves the runtime bundles out.
 - **Dependency updates.** `jackson-databind` 2.22.0 to 2.22.3; `log4j-api` and `log4j-core` to
   2.25.5.
+
+---
+
+## 12. Changes in 11.18.0
+
+User-visible changes in this release.
+
+- **New: `Component.importDirectives()`** (§5.1.1). One `ImportDirective` per import the file writes,
+  in all five languages: target, kind (`SINGLE`, `ON_DEMAND`, `STATIC`, `STATIC_ON_DEMAND`), whether
+  it is relative, the names it takes and binds, its alias, whether it imports a module as a value,
+  whether it is dynamic, whether it is type-only (`isTypeOnly()`) and whether its target is in the
+  standard library.
+- **New: `ConstructionReference`** (§2.5), kind `CONSTRUCTION`. An explicit construction of a type is
+  recorded beside the `SIMPLE` reference to the same type, which stays. A consumer that serialises or
+  counts every reference of a component sees one more per construction; a consumer that ignores the
+  new kind sees the graph of 11.17.0. `TypeReferences` gains `CONSTRUCTION`, so a `switch` over it with
+  no default branch no longer compiles, and a reader built against an older version meets the new
+  value in serialised JSON.
+- **New: `standardLibrary()`** (§5.3), a `StandardLibraryStatus` of `STANDARD`, `NOT_STANDARD` or
+  `UNKNOWN` on references and import directives, decided per language from fixed, versioned lists.
+  It is written to JSON on external references only when it is not `UNKNOWN`.
+- **TypeScript:** a project config (`tsconfig.json`, `tsconfig.<name>.json`, `jsconfig.json`) read
+  from an archive, a directory or `ProjectFiles.insertFile` keeps the files its relative `extends`
+  names, so `paths` and `compilerOptions` are the ones the compiler would see (§9). A class whose
+  base is a call (`extends Mixin(Base)`) names the called function as its base instead of the type
+  read through the call, and is not reported as partly read when the call's arguments cannot declare
+  members. Decorators on parameters and constructor parameter properties are read whatever framework
+  writes them.
+- **Internal:** the C# type index is its own class; the model it builds is unchanged.
