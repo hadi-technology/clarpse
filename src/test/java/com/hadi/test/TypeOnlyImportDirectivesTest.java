@@ -90,7 +90,8 @@ public class TypeOnlyImportDirectivesTest {
         assertTrue(of(all, "d").isTypeOnly());
         assertFalse("another condition is not the guard", of(all, "e").isTypeOnly());
         assertFalse(of(all, "os").isTypeOnly());
-        assertFalse(of(all, "typing").isTypeOnly());
+        assertTrue("both typing imports run", all.stream().filter(d -> d.target().equals("typing"))
+                .noneMatch(ImportDirective::isTypeOnly));
     }
 
     @Test
