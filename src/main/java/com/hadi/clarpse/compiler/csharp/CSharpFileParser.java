@@ -664,7 +664,7 @@ final class CSharpFileParser {
         typeModel.modifiers = parseModifiers(node.text);
         typeModel.annotations = precedingAttributes(node);
         if (Pattern.compile("(?<![\\w@])ref\\s+(?:readonly\\s+)?(?:record\\s+)?struct\\b")
-                .matcher(CSharpBodyText.withoutCommentsAndStrings(headerOf(node, fileModel.sourceText))).find()) {
+                .matcher(CSharpBodyText.withoutCommentsAndStrings(headerBeforeConstraints(node, fileModel.sourceText))).find()) {
             typeModel.modifiers.add("ref");
         }
         typeModel.partial = typeModel.modifiers.contains("partial");
@@ -1312,6 +1312,15 @@ final class CSharpFileParser {
             }
         }
         return names;
+    }
+
+    /** The text of a type declaration before its {@code where} constraint clauses. */
+    private static String headerBeforeConstraints(final SyntaxNode node, final String sourceText) {
+        final int end = constraintClauseStart(node, sourceText);
+        if (sourceText == null || end > sourceText.length() || node.startOffset >= end) {
+            return node.text;
+        }
+        return sourceText.substring(node.startOffset, end);
     }
 
     /** The text of a type declaration up to its body. */
