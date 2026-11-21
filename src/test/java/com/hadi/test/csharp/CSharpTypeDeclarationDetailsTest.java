@@ -78,6 +78,73 @@ public class CSharpTypeDeclarationDetailsTest {
         assertFalse(model.copyOfComponent("Demo.Plain").orElseThrow().modifiers().contains("ref"));
     }
 
+    @Test
+    public void allowsRefStructConstraintDoesNotMakeAStructRef() throws Exception {
+        final OOPSourceCodeModel model = CSharpTestUtil.compileInline(new ProjectFile("/A.cs", """
+                namespace Demo;
+                public struct Box<T> where T : allows ref struct { }
+                public readonly struct RoBox<T> where T : allows ref struct { }
+                public struct Bodiless<T> where T : allows ref struct;
+                """)).model();
+        assertTrue(model.copyOfComponent("Demo.Box").orElseThrow().modifiers().contains("public"));
+        assertFalse(model.copyOfComponent("Demo.Box").orElseThrow().modifiers().contains("ref"));
+        assertTrue(model.copyOfComponent("Demo.RoBox").orElseThrow().modifiers().contains("readonly"));
+        assertFalse(model.copyOfComponent("Demo.RoBox").orElseThrow().modifiers().contains("ref"));
+        assertFalse(model.copyOfComponent("Demo.Bodiless").orElseThrow().modifiers().contains("ref"));
+    }
+
+    @Test
+    public void refStructWithAllowsRefStructConstraintStaysRef() throws Exception {
+        final OOPSourceCodeModel model = CSharpTestUtil.compileInline(new ProjectFile("/A.cs", """
+                namespace Demo;
+                public ref struct R<T> where T : allows ref struct { }
+                public readonly ref struct Q<T> where T : allows ref struct { }
+                """)).model();
+        assertTrue(model.copyOfComponent("Demo.R").orElseThrow().modifiers().contains("ref"));
+        assertTrue(model.copyOfComponent("Demo.Q").orElseThrow().modifiers().contains("ref"));
+        assertTrue(model.copyOfComponent("Demo.Q").orElseThrow().modifiers().contains("readonly"));
+    }
+
+    @Test
+    public void allowsRefStructConstraintDoesNotMakeOtherKindsRef() throws Exception {
+        final OOPSourceCodeModel model = CSharpTestUtil.compileInline(new ProjectFile("/A.cs", """
+                namespace Demo;
+                public record struct RS<T> where T : allows ref struct { }
+                public record RC<T> where T : allows ref struct;
+                public class C<T> where T : allows ref struct { }
+                public interface I<T> where T : allows ref struct { }
+                public delegate void D<T>(T t) where T : allows ref struct;
+                """)).model();
+        assertFalse(model.copyOfComponent("Demo.RS").orElseThrow().modifiers().contains("ref"));
+        assertFalse(model.copyOfComponent("Demo.RC").orElseThrow().modifiers().contains("ref"));
+        assertFalse(model.copyOfComponent("Demo.C").orElseThrow().modifiers().contains("ref"));
+        assertFalse(model.copyOfComponent("Demo.I").orElseThrow().modifiers().contains("ref"));
+        assertFalse(model.copyOfComponent("Demo.D").orElseThrow().modifiers().contains("ref"));
+    }
+
+    @Test
+    public void allowsRefStructConstraintOnItsOwnLineDoesNotMakeATypeRef() throws Exception {
+        final OOPSourceCodeModel model = CSharpTestUtil.compileInline(new ProjectFile("/A.cs", """
+                namespace Demo;
+                public struct N<T>
+                    where T : allows ref struct { }
+                public struct M<T, U> where T : class, allows ref struct where U : new() { }
+                """)).model();
+        assertFalse(model.copyOfComponent("Demo.N").orElseThrow().modifiers().contains("ref"));
+        assertFalse(model.copyOfComponent("Demo.M").orElseThrow().modifiers().contains("ref"));
+    }
+
+    @Test
+    public void plainRefStructIsUnchanged() throws Exception {
+        final OOPSourceCodeModel model = CSharpTestUtil.compileInline(new ProjectFile("/A.cs", """
+                namespace Demo;
+                public ref struct P { }
+                public struct S { }
+                """)).model();
+        assertTrue(model.copyOfComponent("Demo.P").orElseThrow().modifiers().contains("ref"));
+        assertFalse(model.copyOfComponent("Demo.S").orElseThrow().modifiers().contains("ref"));
+    }
+
     private static java.util.Set<String> imports(final OOPSourceCodeModel model, final String type) {
         return model.copyOfComponent(type).orElseThrow().imports();
     }
