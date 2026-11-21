@@ -1316,13 +1316,14 @@ final class CSharpFileParser {
 
     /** The text of a type declaration before its {@code where} constraint clauses. */
     private static String headerBeforeConstraints(final SyntaxNode node, final String sourceText) {
-        final String header = headerOf(node, sourceText);
-        final Matcher where = Pattern.compile("(?<![\\w@])where\\s+[A-Za-z_@]")
-                .matcher(CSharpBodyText.withoutCommentsAndStrings(header));
-        if (where.find()) {
-            return header.substring(0, where.start());
+        if (sourceText == null) {
+            return node.text;
         }
-        return header;
+        final int end = constraintClauseStart(node, sourceText);
+        if (end > sourceText.length() || node.startOffset >= end) {
+            return node.text;
+        }
+        return sourceText.substring(node.startOffset, end);
     }
 
     /** The text of a type declaration up to its body. */
