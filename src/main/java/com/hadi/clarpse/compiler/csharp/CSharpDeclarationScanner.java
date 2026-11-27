@@ -47,7 +47,7 @@ final class CSharpDeclarationScanner {
     }
 
     private static final Set<String> TYPE_KEYWORDS = Set.of("class", "struct", "interface", "enum", "record");
-    private static final Set<String> MODIFIERS = Set.of("public", "private", "protected", "internal", "static",
+    static final Set<String> MODIFIERS = Set.of("public", "private", "protected", "internal", "static",
             "sealed", "abstract", "partial", "readonly", "ref", "unsafe", "new", "file", "extern");
 
     private enum ScopeKind { OTHER, NAMESPACE, TYPE }
