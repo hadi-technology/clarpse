@@ -1046,12 +1046,17 @@ final class CSharpFileParser {
                 null,
                 returnType
         );
+        final SyntaxNode parentList = firstChild(call, "cs:parent-list");
+        final SyntaxNode parameterList = parameterListWithParsedChildren(parentList);
+        if (parentList != null && parameterList == null) {
+            return null;
+        }
         populateCallable(
                 member,
                 method,
                 fileModel,
                 ownerType,
-                parameterListWithParsedChildren(firstChild(call, "cs:parent-list")),
+                parameterList,
                 block,
                 preprocessor.startOffset
         );
@@ -1065,6 +1070,7 @@ final class CSharpFileParser {
     /**
      * A call's parameter list with its parameter declarations. The syntax parser emits the list's
      * text but no declarations for a statement it wraps, so the text is parsed as a method's list.
+     * Null is returned when the text cannot be parsed.
      */
     private static SyntaxNode parameterListWithParsedChildren(final SyntaxNode parentList) {
         if (parentList == null) {
@@ -1079,27 +1085,28 @@ final class CSharpFileParser {
         if (parameters == null || parameters.isBlank()) {
             return parentList;
         }
+        final SyntaxTree tree;
         try {
             final String source = "class __Parameters { void __Method" + parameters + " { } }";
-            final SyntaxTree tree = parseSyntaxTree(source, validateBalancedDelimiters(source));
-            final SyntaxNode method = firstDescendant(tree.root(), "cs:method-declaration");
-            final SyntaxNode parsed = method == null ? null : firstChild(method, "cs:parent-list");
-            if (parsed == null) {
-                return parentList;
-            }
-            final SyntaxNode list =
-                    new SyntaxNode("cs:parent-list", parentList.startOffset, parentList.endOffset);
-            list.text = parentList.text;
-            for (final SyntaxNode child : parsed.children) {
-                if ("cs:parameter-declaration".equals(child.type)) {
-                    child.parent = list;
-                    list.children.add(child);
-                }
-            }
-            return list;
-        } catch (final RuntimeException ignored) {
-            return parentList;
+            tree = parseSyntaxTree(source, validateBalancedDelimiters(source));
+        } catch (final IllegalStateException e) {
+            return null;
         }
+        final SyntaxNode method = firstDescendant(tree.root(), "cs:method-declaration");
+        final SyntaxNode parsed = method == null ? null : firstChild(method, "cs:parent-list");
+        if (parsed == null) {
+            return null;
+        }
+        final SyntaxNode list =
+                new SyntaxNode("cs:parent-list", parentList.startOffset, parentList.endOffset);
+        list.text = parentList.text;
+        for (final SyntaxNode child : parsed.children) {
+            if ("cs:parameter-declaration".equals(child.type)) {
+                child.parent = list;
+                list.children.add(child);
+            }
+        }
+        return list;
     }
 
     private static String methodName(final SyntaxNode call) {
