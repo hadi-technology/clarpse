@@ -700,6 +700,8 @@ final class CSharpFileParser {
                     typeModel.nestedTypes.add(parseType(child, fileModel, namespaceName, typeModel.componentName));
                 } else if (isExtensionBlock(child, typeModel)) {
                     typeModel.members.addAll(parseExtensionBlock(child, fileModel, typeModel));
+                } else if (isPreprocessorSplitMethod(child)) {
+                    typeModel.members.add(parsePreprocessorSplitMethod(child, fileModel, typeModel));
                 } else if (MEMBER_DECLARATIONS.contains(child.type)) {
                     typeModel.members.addAll(parseMember(child, fileModel, typeModel));
                 }
@@ -922,7 +924,25 @@ final class CSharpFileParser {
                 null,
                 firstDirectChildText(node, "cs:type-usage-role")
         );
-        final SyntaxNode parentList = firstChild(node, "cs:parent-list");
+        populateCallable(
+                member,
+                node,
+                fileModel,
+                ownerType,
+                firstChild(node, "cs:parent-list"),
+                firstChild(node, "cs:block-list"),
+                node.endOffset
+        );
+        return member;
+    }
+
+    private static void populateCallable(final CSharpModel.CSharpMemberModel member,
+                                         final SyntaxNode node,
+                                         final CSharpModel.CSharpFileModel fileModel,
+                                         final CSharpModel.CSharpTypeModel ownerType,
+                                         final SyntaxNode parentList,
+                                         final SyntaxNode block,
+                                         final int constraintsEnd) {
         if (parentList != null) {
             for (final SyntaxNode child : parentList.children) {
                 if ("cs:parameter-declaration".equals(child.type)) {
@@ -940,9 +960,8 @@ final class CSharpFileParser {
                     member.parameters.add(parameter);
                 }
             }
-            member.constraintTypes.addAll(constraintsAfter(parentList, node, fileModel.sourceText));
+            member.constraintTypes.addAll(constraintsAfter(parentList, node, fileModel.sourceText, constraintsEnd));
         }
-        final SyntaxNode block = firstChild(node, "cs:block-list");
         if (block != null) {
             member.cyclo = calculateCyclo(block.text);
             member.locals.addAll(parseLocals(block, fileModel, ownerType));
@@ -954,20 +973,113 @@ final class CSharpFileParser {
                 collectBodyRefs(node, member, fileModel.sourceText, bodyStart);
             }
         }
+    }
+
+    /**
+     * Whether a type-body statement is a method whose signature and body a preprocessor directive
+     * separates. The parser emits a call-shaped statement for that shape rather than a method
+     * declaration.
+     */
+    private static boolean isPreprocessorSplitMethod(final SyntaxNode node) {
+        if (!"cs:kops-statement".equals(node.type)) {
+            return false;
+        }
+        final SyntaxNode call = firstChild(node, "cs:fun-call-role");
+        final SyntaxNode preprocessor = firstChild(node, "cs:preprocessor");
+        final SyntaxNode block = firstChild(node, "cs:block-list");
+        return call != null && preprocessor != null && block != null
+                && call.startOffset < preprocessor.startOffset
+                && preprocessor.startOffset <= block.startOffset;
+    }
+
+    /**
+     * Rebuilds a method from the statement the parser emits when a preprocessor directive separates
+     * its signature from its body. The name and parameters come from the call node; the return type
+     * and modifiers precede it in the source text.
+     */
+    private static CSharpModel.CSharpMemberModel parsePreprocessorSplitMethod(
+            final SyntaxNode statement,
+            final CSharpModel.CSharpFileModel fileModel,
+            final CSharpModel.CSharpTypeModel ownerType) {
+        final SyntaxNode call = firstChild(statement, "cs:fun-call-role");
+        final SyntaxNode preprocessor = firstChild(statement, "cs:preprocessor");
+        final SyntaxNode block = firstChild(statement, "cs:block-list");
+        final String sourceText = fileModel.sourceText;
+        if (sourceText == null || statement.startOffset < 0 || statement.endOffset > sourceText.length()
+                || call.startOffset < statement.startOffset || preprocessor.startOffset < call.startOffset
+                || preprocessor.startOffset > statement.endOffset) {
+            throw new IllegalStateException("Cannot read a method split by a preprocessor directive.");
+        }
+        final String name = methodName(call);
+        final String returnType = methodReturnType(sourceText.substring(statement.startOffset, call.startOffset));
+        if (name.isEmpty() || returnType.isEmpty()) {
+            throw new IllegalStateException("Cannot read a method split by a preprocessor directive.");
+        }
+        final String signature = sourceText.substring(statement.startOffset, preprocessor.startOffset);
+        final SyntaxNode method = new SyntaxNode("cs:method-declaration", statement.startOffset, statement.endOffset);
+        method.text = signature + " " + block.text;
+        method.parent = statement.parent;
+        final CSharpModel.CSharpMemberModel member = buildSingleMember(
+                method,
+                fileModel,
+                ownerType,
+                "method",
+                name,
+                null,
+                returnType
+        );
+        populateCallable(
+                member,
+                method,
+                fileModel,
+                ownerType,
+                firstChild(call, "cs:parent-list"),
+                block,
+                preprocessor.startOffset
+        );
+        final List<CSharpModel.CSharpAttribute> attributes = precedingAttributes(statement);
+        if (!attributes.isEmpty()) {
+            member.annotations = new ArrayList<>(attributes);
+        }
         return member;
+    }
+
+    private static String methodName(final SyntaxNode call) {
+        final String identifier = firstDirectChildText(call, "cs:id-role");
+        if (identifier != null && !identifier.isEmpty()) {
+            return identifier;
+        }
+        final String text = normalizeWhitespace(call.text);
+        final int parameters = text.indexOf('(');
+        return (parameters >= 0 ? text.substring(0, parameters) : text).trim();
+    }
+
+    private static String methodReturnType(final String prefix) {
+        final String code = normalizeWhitespace(CSharpBodyText.withoutCommentsAndStrings(prefix));
+        return METHOD_MODIFIER_PREFIX.matcher(code).replaceFirst("").trim();
     }
 
     /** The types the {@code where} clauses after a parameter list constrain the type parameters to. */
     private static List<String> constraintsAfter(final SyntaxNode parameterList, final SyntaxNode node,
                                                  final String sourceText) {
-        if (sourceText == null || node.endOffset > sourceText.length()
-                || parameterList.endOffset > node.endOffset) {
+        return constraintsAfter(parameterList, node, sourceText, node.endOffset);
+    }
+
+    private static List<String> constraintsAfter(final SyntaxNode parameterList, final SyntaxNode node,
+                                                 final String sourceText, final int endOffset) {
+        if (sourceText == null || endOffset > sourceText.length()
+                || parameterList.endOffset > endOffset) {
             return new ArrayList<>();
         }
-        return CSharpConstraintText.constraintTypes(sourceText.substring(parameterList.endOffset, node.endOffset));
+        return CSharpConstraintText.constraintTypes(sourceText.substring(parameterList.endOffset, endOffset));
     }
 
     private static final Pattern PARAMS_MODIFIER = Pattern.compile("(?:^|\\s)params\\s");
+
+    /** Modifiers that can precede a method's return type. */
+    private static final Pattern METHOD_MODIFIER_PREFIX = Pattern.compile(
+            "^(?:(?:public|private|protected|internal|static|abstract|sealed|readonly|partial|virtual|"
+                    + "override|async|unsafe|required|new|extern)\\s+)+");
 
     /**
      * The offset just past the {@code =>} of an expression-bodied callable, or -1 when it has none.
