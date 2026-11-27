@@ -189,7 +189,7 @@ final class CSharpFileParser {
         return content;
     }
 
-    private static SyntaxTree parseSyntaxTree(final String sourceText, final Map<Integer, Integer> braceMatches) {
+    static SyntaxTree parseSyntaxTree(final String sourceText, final Map<Integer, Integer> braceMatches) {
         final FleetPsiParser parser = new CSharpFleetParser();
         final Lexer lexer = parser.getLexer();
         final ArrayTokenSequence tokens = new ArrayTokenSequence.Builder(sourceText, lexer).performLexing();
@@ -357,7 +357,7 @@ final class CSharpFileParser {
      * @param sourceText The file's source.
      * @return The offset of every closing brace, keyed by the offset of the opening brace it closes.
      */
-    private static Map<Integer, Integer> validateBalancedDelimiters(final String sourceText) {
+    static Map<Integer, Integer> validateBalancedDelimiters(final String sourceText) {
         final Map<Integer, Integer> matches = new HashMap<>();
         final Deque<Integer> openBraces = new ArrayDeque<>();
         int braces = 0;
@@ -700,6 +700,12 @@ final class CSharpFileParser {
                     typeModel.nestedTypes.add(parseType(child, fileModel, namespaceName, typeModel.componentName));
                 } else if (isExtensionBlock(child, typeModel)) {
                     typeModel.members.addAll(parseExtensionBlock(child, fileModel, typeModel));
+                } else if (CSharpPreprocessorSplitMethod.isSplitMethod(child)) {
+                    final CSharpModel.CSharpMemberModel member =
+                            CSharpPreprocessorSplitMethod.parse(child, fileModel, typeModel);
+                    if (member != null) {
+                        typeModel.members.add(member);
+                    }
                 } else if (MEMBER_DECLARATIONS.contains(child.type)) {
                     typeModel.members.addAll(parseMember(child, fileModel, typeModel));
                 }
@@ -922,7 +928,25 @@ final class CSharpFileParser {
                 null,
                 firstDirectChildText(node, "cs:type-usage-role")
         );
-        final SyntaxNode parentList = firstChild(node, "cs:parent-list");
+        populateCallable(
+                member,
+                node,
+                fileModel,
+                ownerType,
+                firstChild(node, "cs:parent-list"),
+                firstChild(node, "cs:block-list"),
+                node.endOffset
+        );
+        return member;
+    }
+
+    static void populateCallable(final CSharpModel.CSharpMemberModel member,
+                                 final SyntaxNode node,
+                                 final CSharpModel.CSharpFileModel fileModel,
+                                 final CSharpModel.CSharpTypeModel ownerType,
+                                 final SyntaxNode parentList,
+                                 final SyntaxNode block,
+                                 final int constraintsEnd) {
         if (parentList != null) {
             for (final SyntaxNode child : parentList.children) {
                 if ("cs:parameter-declaration".equals(child.type)) {
@@ -940,9 +964,8 @@ final class CSharpFileParser {
                     member.parameters.add(parameter);
                 }
             }
-            member.constraintTypes.addAll(constraintsAfter(parentList, node, fileModel.sourceText));
+            member.constraintTypes.addAll(constraintsAfter(parentList, node, fileModel.sourceText, constraintsEnd));
         }
-        final SyntaxNode block = firstChild(node, "cs:block-list");
         if (block != null) {
             member.cyclo = calculateCyclo(block.text);
             member.locals.addAll(parseLocals(block, fileModel, ownerType));
@@ -954,17 +977,22 @@ final class CSharpFileParser {
                 collectBodyRefs(node, member, fileModel.sourceText, bodyStart);
             }
         }
-        return member;
     }
 
     /** The types the {@code where} clauses after a parameter list constrain the type parameters to. */
     private static List<String> constraintsAfter(final SyntaxNode parameterList, final SyntaxNode node,
                                                  final String sourceText) {
-        if (sourceText == null || node.endOffset > sourceText.length()
-                || parameterList.endOffset > node.endOffset) {
+        return constraintsAfter(parameterList, node, sourceText, node.endOffset);
+    }
+
+    private static List<String> constraintsAfter(final SyntaxNode parameterList, final SyntaxNode node,
+                                                 final String sourceText, final int endOffset) {
+        if (sourceText == null || endOffset > sourceText.length()
+                || parameterList.endOffset > endOffset) {
             return new ArrayList<>();
         }
-        return CSharpConstraintText.constraintTypes(sourceText.substring(parameterList.endOffset, node.endOffset));
+        final String tail = sourceText.substring(parameterList.endOffset, endOffset);
+        return CSharpConstraintText.constraintTypes(DIRECTIVE_LINE_PATTERN.matcher(tail).replaceAll(" "));
     }
 
     private static final Pattern PARAMS_MODIFIER = Pattern.compile("(?:^|\\s)params\\s");
@@ -1171,13 +1199,13 @@ final class CSharpFileParser {
         return "this".equals(sourceText.substring(receiverStart, receiverEnd));
     }
 
-    private static CSharpModel.CSharpMemberModel buildSingleMember(final SyntaxNode node,
-                                                                   final CSharpModel.CSharpFileModel fileModel,
-                                                                   final CSharpModel.CSharpTypeModel ownerType,
-                                                                   final String kind,
-                                                                   final String name,
-                                                                   final String declaredType,
-                                                                   final String returnType) {
+    static CSharpModel.CSharpMemberModel buildSingleMember(final SyntaxNode node,
+                                                           final CSharpModel.CSharpFileModel fileModel,
+                                                           final CSharpModel.CSharpTypeModel ownerType,
+                                                           final String kind,
+                                                           final String name,
+                                                           final String declaredType,
+                                                           final String returnType) {
         final CSharpModel.CSharpMemberModel member = new CSharpModel.CSharpMemberModel();
         member.kind = kind;
         member.name = name;
@@ -1400,7 +1428,7 @@ final class CSharpFileParser {
      * {@code cs:id-role} it wraps ({@code Route} in {@code [Route("/x")]}). A single section may carry
      * several attributes ({@code [A, B]}), which appear as several {@code cs:id-role} children.
      */
-    private static List<CSharpModel.CSharpAttribute> precedingAttributes(final SyntaxNode node) {
+    static List<CSharpModel.CSharpAttribute> precedingAttributes(final SyntaxNode node) {
         final List<CSharpModel.CSharpAttribute> attributes = new ArrayList<>();
         if (node == null || node.parent == null) {
             return attributes;
@@ -1503,7 +1531,7 @@ final class CSharpFileParser {
         return text.substring(0, end).trim();
     }
 
-    private static String normalizeWhitespace(final String text) {
+    static String normalizeWhitespace(final String text) {
         if (text == null) {
             return null;
         }
@@ -1616,7 +1644,7 @@ final class CSharpFileParser {
         return text;
     }
 
-    private static List<String> parseModifiers(final String text) {
+    static List<String> parseModifiers(final String text) {
         final List<String> modifiers = new ArrayList<>();
         if (text == null || text.isBlank()) {
             return modifiers;
@@ -1760,7 +1788,7 @@ final class CSharpFileParser {
         return String.join(".", ids);
     }
 
-    private static String firstDirectChildText(final SyntaxNode node, final String type) {
+    static String firstDirectChildText(final SyntaxNode node, final String type) {
         final SyntaxNode child = firstChild(node, type);
         if (child == null) {
             return null;
@@ -1785,7 +1813,7 @@ final class CSharpFileParser {
         return currentNamespace + "." + declaredNamespace;
     }
 
-    private static SyntaxNode firstChild(final SyntaxNode node, final String type) {
+    static SyntaxNode firstChild(final SyntaxNode node, final String type) {
         for (final SyntaxNode child : node.children) {
             if (type.equals(child.type)) {
                 return child;
@@ -1794,7 +1822,7 @@ final class CSharpFileParser {
         return null;
     }
 
-    private static SyntaxNode firstDescendant(final SyntaxNode node, final String type) {
+    static SyntaxNode firstDescendant(final SyntaxNode node, final String type) {
         for (final SyntaxNode descendant : descendants(node)) {
             if (type.equals(descendant.type)) {
                 return descendant;
@@ -1832,7 +1860,7 @@ final class CSharpFileParser {
         return text.substring(safeStart, safeEnd);
     }
 
-    private record SyntaxTree(SyntaxNode root, BitSet laterAlternatives) {
+    record SyntaxTree(SyntaxNode root, BitSet laterAlternatives) {
     }
 
     /**
@@ -1920,15 +1948,15 @@ final class CSharpFileParser {
         }
     }
 
-    private static final class SyntaxNode {
-        private final String type;
-        private final int startOffset;
-        private int endOffset;
-        private final List<SyntaxNode> children = new ArrayList<>();
-        private SyntaxNode parent;
-        private String text = "";
+    static final class SyntaxNode {
+        final String type;
+        final int startOffset;
+        int endOffset;
+        final List<SyntaxNode> children = new ArrayList<>();
+        SyntaxNode parent;
+        String text = "";
 
-        private SyntaxNode(final String type, final int startOffset, final int endOffset) {
+        SyntaxNode(final String type, final int startOffset, final int endOffset) {
             this.type = type;
             this.startOffset = startOffset;
             this.endOffset = endOffset;
