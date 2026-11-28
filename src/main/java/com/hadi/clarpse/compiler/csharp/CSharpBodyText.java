@@ -332,6 +332,49 @@ final class CSharpBodyText {
 
     private static final Pattern GENERIC_ARGUMENTS = Pattern.compile("<[\\w.,\\s?\\[\\]<>]{0,1000}>\\s*\\(");
 
+    private static final Pattern FOREACH_VAR = Pattern.compile(
+            "\\bforeach\\s*\\(\\s*var\\s+(@?[A-Za-z_]\\w*)\\s+in\\s+(@?[A-Za-z_]\\w*)\\s*\\)");
+    private static final Pattern LAMBDA_ON_COLLECTION = Pattern.compile(
+            "(?<![\\w.@])(@?[A-Za-z_]\\w*)\\s*\\.\\s*(?:ForEach|RemoveAll|Exists|TrueForAll|FindAll|Find)\\s*\\(\\s*"
+                    + "(@?[A-Za-z_]\\w*)\\s*=>");
+    private static final Pattern INDEXED_CALL = Pattern.compile(
+            "(?<![\\w.@\\]])(@?[A-Za-z_]\\w*)\\s*\\[[^\\[\\]]*\\]\\s*\\.\\s*(@?[A-Za-z_]\\w*)\\s*(?:<[^()]*>)?\\s*\\(");
+
+    /**
+     * Records the places a receiver's type follows from the type argument of a collection written
+     * elsewhere: the variable of {@code foreach (var x in items)}, the parameter of
+     * {@code items.ForEach(x => ...)}, and {@code items[i].Name(...)}. The collection has to be a plain
+     * name; whether its type is known is for the assembler.
+     */
+    static void collectElementReceivers(final String text, final CSharpModel.CSharpMemberModel member) {
+        final String clean = withoutCommentsAndStrings(text);
+        final Matcher loops = FOREACH_VAR.matcher(clean);
+        while (loops.find()) {
+            record(member.foreachCollections, strip(loops.group(1)), strip(loops.group(2)));
+        }
+        final Matcher lambdas = LAMBDA_ON_COLLECTION.matcher(clean);
+        while (lambdas.find()) {
+            record(member.lambdaCollections, strip(lambdas.group(2)), strip(lambdas.group(1)));
+        }
+        final Matcher indexed = INDEXED_CALL.matcher(clean);
+        while (indexed.find()) {
+            member.indexedCalls.add(new CSharpModel.IndexedCall(strip(indexed.group(1)), indexed.group(2)));
+        }
+    }
+
+    private static void record(final java.util.Map<String, String> into, final String variable,
+                               final String collection) {
+        if (into.containsKey(variable) && !collection.equals(into.get(variable))) {
+            into.put(variable, "");
+        } else {
+            into.put(variable, collection);
+        }
+    }
+
+    private static String strip(final String name) {
+        return name.startsWith("@") ? name.substring(1) : name;
+    }
+
     /** The word that ends at {@code last}, or the empty string. */
     private static String wordEndingAt(final String text, final int last) {
         if (last < 0 || !isNamePart(text.charAt(last))) {

@@ -1129,6 +1129,7 @@ final class CSharpFileParser {
         CSharpTypeTestText.collect(text, member);
         CSharpBodyText.collectExtensionCalls(text, member);
         CSharpBodyText.collectBareCalls(text, member);
+        CSharpBodyText.collectElementReceivers(text, member);
     }
 
     private static void collectLambdaVariable(final SyntaxNode parameter,

@@ -71,6 +71,11 @@ final class KotlinFileParser {
     private static final Set<String> NESTED_DECLARATIONS = Set.of(CLASS, OBJECT_DECLARATION, FUN);
 
     /** Nodes that each add a path through a function. */
+    /** The functions that hand each element of the collection they are called on to one lambda parameter. */
+    private static final Set<String> LAMBDA_ELEMENT_FUNCTIONS = Set.of("forEach", "filter", "filterNot", "map",
+            "mapNotNull", "flatMap", "any", "all", "none", "find", "first", "firstOrNull", "last", "lastOrNull",
+            "count", "onEach", "takeWhile", "dropWhile", "partition", "groupBy", "associateBy", "sortedBy",
+            "maxByOrNull", "minByOrNull", "distinctBy", "sumOf");
     private static final Set<String> BRANCHES = Set.of("IF", "FOR", "WHILE", "DO_WHILE", "CATCH");
 
     private KotlinFileParser() {
@@ -494,7 +499,15 @@ final class KotlinFileParser {
 
         /** Counts the values a declaration's text declares, by name, nested declarations included. */
         private void countDeclarations(final KotlinSyntaxNode declaration, final KotlinMemberModel member) {
+            int implicitLambdas = 0;
             for (final KotlinSyntaxNode node : declaration.descendants()) {
+                if (node.is("FOR")) {
+                    recordLoop(node, member);
+                } else if (node.is("DOT_QUALIFIED_EXPRESSION")) {
+                    recordLambdaOnCollection(node, member);
+                } else if (node.is("LAMBDA_EXPRESSION") && lambdaParameterNames(node).isEmpty()) {
+                    implicitLambdas += 1;
+                }
                 if (node.is("VALUE_PARAMETER") || node.is("DESTRUCTURING_DECLARATION_ENTRY") || node.is(PROPERTY)
                         || node.is(FUN)) {
                     final Token funName = nameToken(node, "fun");
@@ -514,6 +527,76 @@ final class KotlinFileParser {
                 } else {
                     member.narrowed.addAll(narrowedBy(node));
                 }
+            }
+            if (implicitLambdas > 1) {
+                // Nested lambdas rebind `it`, and the one a name's lambda is nested in is not seen.
+                member.lambdaCollections.computeIfPresent("it", (name, collection) -> "");
+            }
+        }
+
+        /** The variable of {@code for (x in collection)} when the collection is a plain name, and its written type. */
+        private void recordLoop(final KotlinSyntaxNode loop, final KotlinMemberModel member) {
+            final KotlinSyntaxNode parameter = loop.child("VALUE_PARAMETER");
+            final KotlinSyntaxNode range = loop.child("LOOP_RANGE");
+            if (parameter == null || range == null || range.children.size() != 1) {
+                return;
+            }
+            final String variable = identifier(parameter);
+            final String collection = receiverName(range.children.get(0));
+            if (variable == null || collection == null || collection.indexOf('.') >= 0) {
+                return;
+            }
+            final KotlinSyntaxNode written = parameter.child("TYPE_REFERENCE");
+            if (written != null) {
+                member.loopTypes.put(variable, typeText(written));
+            }
+            record(member.loopCollections, variable, collection);
+        }
+
+        /** {@code collection.forEach { x -> ... }} binds {@code x}, or {@code it}, to an element of the collection. */
+        private void recordLambdaOnCollection(final KotlinSyntaxNode access, final KotlinMemberModel member) {
+            if (access.children.size() != 2 || !access.children.get(0).is(REFERENCE_EXPRESSION)
+                    || !access.children.get(1).is(CALL_EXPRESSION)) {
+                return;
+            }
+            final KotlinSyntaxNode call = access.children.get(1);
+            final KotlinSyntaxNode lambdaArgument = call.child("LAMBDA_ARGUMENT");
+            if (call.children.isEmpty() || !call.children.get(0).is(REFERENCE_EXPRESSION)
+                    || !LAMBDA_ELEMENT_FUNCTIONS.contains(referenceName(call.children.get(0)))
+                    || lambdaArgument == null || call.child("VALUE_ARGUMENT_LIST") != null) {
+                return;
+            }
+            final KotlinSyntaxNode lambda = lambdaArgument.child("LAMBDA_EXPRESSION");
+            if (lambda == null) {
+                return;
+            }
+            final List<String> names = lambdaParameterNames(lambda);
+            if (names.size() > 1) {
+                return;
+            }
+            record(member.lambdaCollections, names.isEmpty() ? "it" : names.get(0), referenceName(access.children.get(0)));
+        }
+
+        /** The names the parameters of a lambda are written with; empty for a lambda with none written. */
+        private List<String> lambdaParameterNames(final KotlinSyntaxNode lambda) {
+            final List<String> names = new ArrayList<>();
+            final KotlinSyntaxNode literal = lambda.child("FUNCTION_LITERAL");
+            final KotlinSyntaxNode list = literal == null ? null : literal.child("VALUE_PARAMETER_LIST");
+            if (list != null) {
+                for (final KotlinSyntaxNode parameter : list.children("VALUE_PARAMETER")) {
+                    final String name = identifier(parameter);
+                    names.add(name == null ? "" : name);
+                }
+            }
+            return names;
+        }
+
+        /** Records the collection a name is bound from; a name bound from two different ones maps to nothing. */
+        private void record(final java.util.Map<String, String> into, final String variable, final String collection) {
+            if (into.containsKey(variable) && !collection.equals(into.get(variable))) {
+                into.put(variable, "");
+            } else {
+                into.put(variable, collection);
             }
         }
 
@@ -794,6 +877,15 @@ final class KotlinFileParser {
         private String receiverName(final KotlinSyntaxNode node) {
             if (node.is(REFERENCE_EXPRESSION)) {
                 return referenceName(node);
+            }
+            if (node.is("ARRAY_ACCESS_EXPRESSION") && node.children.size() == 2
+                    && node.children.get(0).is(REFERENCE_EXPRESSION) && node.children.get(1).is("INDICES")) {
+                return referenceName(node.children.get(0)) + "[]";
+            }
+            if (node.is("DOT_QUALIFIED_EXPRESSION") && node.children.size() == 2
+                    && node.children.get(0).is(REFERENCE_EXPRESSION) && node.children.get(1).is(REFERENCE_EXPRESSION)
+                    && !"this".equals(referenceName(node.children.get(0)))) {
+                return referenceName(node.children.get(0)) + "." + referenceName(node.children.get(1));
             }
             if (node.is("THIS_EXPRESSION") && tree.text(node).trim().equals("this")) {
                 return "this";

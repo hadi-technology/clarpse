@@ -265,6 +265,18 @@ final class CSharpModel {
          */
         Set<String> bareCalls = new LinkedHashSet<>();
         /**
+         * The collection a {@code foreach (var x in collection)} loop reads, by loop variable, where the
+         * collection is a plain name; a variable that two loops bind maps to nothing.
+         */
+        Map<String, String> foreachCollections = new LinkedHashMap<>();
+        /**
+         * The collection a lambda parameter comes from when the lambda is the only argument of a call
+         * {@code collection.ForEach(x => ...)} on a plain name; a name that two lambdas bind maps to nothing.
+         */
+        Map<String, String> lambdaCollections = new LinkedHashMap<>();
+        /** The calls {@code collection[index].Name(...)} on a plain name. */
+        Set<IndexedCall> indexedCalls = new LinkedHashSet<>();
+        /**
          * The names the member's body or initializer may declare itself -- a local function, a local
          * variable or a lambda parameter -- and so may hide a name another scope supplies.
          */
@@ -294,6 +306,10 @@ final class CSharpModel {
      * The argument count is -1 when it could not be read.
      */
     record ExtensionCall(String receiver, String name, int argumentCount) {
+    }
+
+    /** A call {@code collection[index].Name(...)}, the collection being a plain name. */
+    record IndexedCall(String collection, String name) {
     }
 
     static final class CSharpParameterModel {

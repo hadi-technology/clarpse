@@ -54,6 +54,7 @@ import com.github.javaparser.resolution.TypeSolver;
 import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration;
 import com.github.javaparser.resolution.model.SymbolReference;
+import com.github.javaparser.resolution.types.ResolvedReferenceType;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
@@ -853,15 +854,27 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             return;
         }
         try {
-            final ResolvedReferenceTypeDeclaration receiver = receiverTypeDeclaration(ctx.getScope().get());
-            if (receiver == null) {
-                return;
+            ResolvedReferenceTypeDeclaration receiver = null;
+            try {
+                receiver = receiverTypeDeclaration(ctx.getScope().get());
+            } catch (final Exception | StackOverflowError unresolved) {
+                receiver = null;
             }
             ResolvedReferenceTypeDeclaration declaring = null;
             try {
                 declaring = ctx.resolve().declaringType();
             } catch (final Exception | StackOverflowError unresolved) {
                 declaring = null;
+            }
+            if (receiver == null && declaring != null) {
+                // The call resolves on the type a written type argument gives, which is the evidence.
+                receiver = typeArgumentReceiver(ctx.getScope().get());
+            }
+            if (receiver == null) {
+                receiver = lambdaElementReceiver(ctx.getScope().get());
+            }
+            if (receiver == null) {
+                return;
             }
             final MemberReference reference = JavaMemberReferences.of(receiver, declaring, ctx.getNameAsString());
             if (reference != null) {
@@ -900,6 +913,78 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
         }
         return null;
+    }
+
+    /**
+     * The declaration of the type a receiver has when that follows exactly from a type argument written
+     * on a variable or field: the field of a generic type ({@code b.value}), an element of a collection
+     * ({@code l.get(0)}) and the parameter of a lambda given to one ({@code l.forEach(o -> ...)}). The
+     * variable's type has to be a parameterised type every argument of which is a type itself: a raw
+     * type, a wildcard and a type variable give nothing.
+     */
+    private ResolvedReferenceTypeDeclaration typeArgumentReceiver(final Expression scope) {
+        final Expression holder;
+        if (scope.isFieldAccessExpr()) {
+            holder = scope.asFieldAccessExpr().getScope();
+        } else if (scope.isMethodCallExpr() && "get".equals(scope.asMethodCallExpr().getNameAsString())
+                && scope.asMethodCallExpr().getArguments().size() == 1) {
+            holder = scope.asMethodCallExpr().getScope().orElse(null);
+        } else {
+            return null;
+        }
+        if (holder == null || !holder.isNameExpr() || !hasWrittenTypeArguments(holder)) {
+            return null;
+        }
+        if (holder.asNameExpr().resolve().isField() && !everyVisibleValueIsKnown(holder)) {
+            return null;
+        }
+        return valueTypeDeclaration(scope);
+    }
+
+    /**
+     * The declaration of the element type of a collection, when the receiver is the one parameter of a
+     * lambda given to {@code forEach} or {@code removeIf} of a variable declared with a written element
+     * type: the parameter is that element. The solver does not always type such a parameter.
+     */
+    private ResolvedReferenceTypeDeclaration lambdaElementReceiver(final Expression scope) {
+        if (!scope.isNameExpr()) {
+            return null;
+        }
+        final NameExpr name = scope.asNameExpr();
+        final java.util.Optional<com.github.javaparser.ast.expr.LambdaExpr> lambda =
+                name.findAncestor(com.github.javaparser.ast.expr.LambdaExpr.class);
+        if (lambda.isEmpty() || lambda.get().getParameters().size() != 1
+                || !lambda.get().getParameter(0).getNameAsString().equals(name.getNameAsString())) {
+            return null;
+        }
+        final java.util.Optional<Node> parent = lambda.get().getParentNode();
+        if (parent.isEmpty() || !(parent.get() instanceof MethodCallExpr)) {
+            return null;
+        }
+        final MethodCallExpr call = (MethodCallExpr) parent.get();
+        if (!Set.of("forEach", "removeIf").contains(call.getNameAsString()) || call.getArguments().size() != 1
+                || call.getScope().isEmpty() || !call.getScope().get().isNameExpr()
+                || !hasWrittenTypeArguments(call.getScope().get())) {
+            return null;
+        }
+        final Expression holder = call.getScope().get();
+        if (holder.asNameExpr().resolve().isField() && !everyVisibleValueIsKnown(holder)) {
+            return null;
+        }
+        final ResolvedReferenceType collection = holder.calculateResolvedType().asReferenceType();
+        if (collection.typeParametersValues().size() != 1 || collection.getAllAncestors().stream()
+                .noneMatch(ancestor -> "java.lang.Iterable".equals(ancestor.getQualifiedName()))) {
+            return null;
+        }
+        return collection.typeParametersValues().get(0).asReferenceType().getTypeDeclaration().orElse(null);
+    }
+
+    private static boolean hasWrittenTypeArguments(final Expression value) {
+        final ResolvedType type = value.calculateResolvedType();
+        if (!type.isReferenceType() || type.asReferenceType().typeParametersValues().isEmpty()) {
+            return false;
+        }
+        return type.asReferenceType().typeParametersValues().stream().allMatch(ResolvedType::isReferenceType);
     }
 
     private ResolvedReferenceTypeDeclaration solvedType(final String qualifiedName) {
