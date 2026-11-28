@@ -148,7 +148,7 @@ How a reference binds to such a declaration, when several files hold it:
 ### 1.5 The declared type
 
 `declaredType()` is the return type of a method or function, or the written type of a field, property,
-parameter or local, as a `SimpleTypeReference`. It is always also one of `references()`. Type arguments
+parameter (a local in Kotlin only), as a `SimpleTypeReference`. It is always also one of `references()`. Type arguments
 and a nullable marker are not part of it (`List<Order>` is `List`, `Order?` is `Order`). It is `null`,
 meaning *unknown* and never *void*, when no type is written (inferred, C# `var`), when the type is not one
 named type (type variable, array, tuple, union, function type), or when the declaration returns nothing.
