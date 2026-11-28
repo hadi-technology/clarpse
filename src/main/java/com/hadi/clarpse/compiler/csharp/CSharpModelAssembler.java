@@ -391,8 +391,10 @@ final class CSharpModelAssembler {
         attachConstructions(component, memberModel.constructedTypes, typeIndex, ownerType, memberModel,
                 "method".equals(memberModel.kind) || "constructor".equals(memberModel.kind));
         if (!"constructor".equals(memberModel.kind)) {
-            final String written = memberModel.returnType != null && !memberModel.returnType.isEmpty()
-                    ? memberModel.returnType : memberModel.declaredType;
+            String written = memberModel.declaredType;
+            if (memberModel.returnType != null && !memberModel.returnType.isEmpty()) {
+                written = memberModel.returnType;
+            }
             attachDeclaredType(component, written, typeIndex, ownerType, memberModel);
         }
         attachStaticReceivers(component, memberModel, typeIndex, ownerType);
@@ -882,13 +884,13 @@ final class CSharpModelAssembler {
                 model = typeIndex.typeModelsByName.get(binding.resolution().name());
                 builtin = BUILTIN_TYPES.get(receiver);
             }
-            emitMemberCall(component, memberModel, typeIndex, ownerType, model, builtin, written, call.name());
+            emitMemberCall(component, memberModel, typeIndex, ownerType,
+                    new CallReceiver(model, builtin, written), call.name());
         }
         for (final CSharpModel.IndexedCall call : memberModel.indexedCalls) {
             final WrittenType collection = receiverDeclaration(call.collection(), memberModel, ownerType, typeIndex,
                     inferred);
-            final WrittenType element = collection == null ? null
-                    : elementOf(collection, true, memberModel, ownerType, typeIndex);
+            final WrittenType element = elementOfOrNull(collection, true, memberModel, ownerType, typeIndex);
             if (element == null) {
                 continue;
             }
@@ -896,8 +898,8 @@ final class CSharpModelAssembler {
             if ("var".equals(text) || "dynamic".equals(text) || CSharpTypeIndex.isArrayOrPointer(text)) {
                 continue;
             }
-            emitMemberCall(component, memberModel, typeIndex, ownerType, typeIndex.typeModelOf(element),
-                    BUILTIN_TYPES.get(text), element, call.name());
+            emitMemberCall(component, memberModel, typeIndex, ownerType,
+                    new CallReceiver(typeIndex.typeModelOf(element), BUILTIN_TYPES.get(text), element), call.name());
         }
     }
 
@@ -911,10 +913,11 @@ final class CSharpModelAssembler {
                                        final CSharpModel.CSharpMemberModel memberModel,
                                        final CSharpTypeIndex typeIndex,
                                        final CSharpModel.CSharpTypeModel ownerType,
-                                       final CSharpModel.CSharpTypeModel model,
-                                       final String builtin,
-                                       final WrittenType written,
+                                       final CallReceiver receiver,
                                        final String callName) {
+        final CSharpModel.CSharpTypeModel model = receiver.model();
+        final String builtin = receiver.builtin();
+        final WrittenType written = receiver.written();
         CSharpModel.CSharpTypeModel owner = null;
         if (model != null) {
             owner = typeIndex.declaringTypeOf(model, callName);
@@ -950,6 +953,13 @@ final class CSharpModelAssembler {
     private static final Set<String> INDEXED_BY_KEY = Set.of("Dictionary", "IDictionary", "IReadOnlyDictionary",
             "SortedDictionary");
 
+    private static Set<String> collectionsWithOneElement(final boolean indexer) {
+        if (indexer) {
+            return INDEXED_OF_ONE;
+        }
+        return ENUMERABLE_OF_ONE;
+    }
+
     /** The type arguments written in a type, at its top level; empty when it has none or they cannot be read. */
     private static List<String> typeArguments(final String type) {
         final int open = type.indexOf('<');
@@ -975,6 +985,16 @@ final class CSharpModelAssembler {
         }
         arguments.add(type.substring(start, type.length() - 1).trim());
         return arguments;
+    }
+
+    private static WrittenType elementOfOrNull(final WrittenType collection, final boolean indexer,
+                                               final CSharpModel.CSharpMemberModel memberModel,
+                                               final CSharpModel.CSharpTypeModel ownerType,
+                                               final CSharpTypeIndex typeIndex) {
+        if (collection == null) {
+            return null;
+        }
+        return elementOf(collection, indexer, memberModel, ownerType, typeIndex);
     }
 
     /**
@@ -1004,7 +1024,7 @@ final class CSharpModelAssembler {
                 }
                 if (indexer && INDEXED_BY_KEY.contains(simple) && arguments.size() == 2) {
                     element = arguments.get(1);
-                } else if (arguments.size() == 1 && (indexer ? INDEXED_OF_ONE : ENUMERABLE_OF_ONE).contains(simple)) {
+                } else if (arguments.size() == 1 && collectionsWithOneElement(indexer).contains(simple)) {
                     element = arguments.get(0);
                 }
             }
@@ -1093,8 +1113,10 @@ final class CSharpModelAssembler {
             int unknown = 0;
             for (final String target : ownerType.staticImports) {
                 final CSharpTypeIndex.Resolution resolved = typeIndex.resolveType(target, ownerType, null);
-                final CSharpModel.CSharpTypeModel model = resolved != null && resolved.kind() == ResolutionKind.EXACT
-                        ? typeIndex.typeModelsByName.get(resolved.name()) : null;
+                CSharpModel.CSharpTypeModel model = null;
+                if (resolved != null && resolved.kind() == ResolutionKind.EXACT) {
+                    model = typeIndex.typeModelsByName.get(resolved.name());
+                }
                 if (model != null) {
                     if (declaresStaticMethod(model, name)) {
                         declaring.add(model.uniqueName);
@@ -1317,6 +1339,10 @@ final class CSharpModelAssembler {
         return false;
     }
 
+    /** What a call's receiver is: a parsed type, a built-in type's name, or neither, and how it was written. */
+    record CallReceiver(CSharpModel.CSharpTypeModel model, String builtin, WrittenType written) {
+    }
+
     /** A type as written in a declaration, with the type and member whose scope the name is read in. */
     record WrittenType(String text, CSharpModel.CSharpTypeModel scope, CSharpModel.CSharpMemberModel member) {
     }
@@ -1435,8 +1461,7 @@ final class CSharpModelAssembler {
             } else if (isLoopVariable(name, local, memberModel)) {
                 final WrittenType collection = receiverDeclaration(memberModel.foreachCollections.get(name),
                         memberModel, ownerType, typeIndex, inferred);
-                final WrittenType element = collection == null ? null
-                        : elementOf(collection, false, memberModel, ownerType, typeIndex);
+                final WrittenType element = elementOfOrNull(collection, false, memberModel, ownerType, typeIndex);
                 if (element == null) {
                     return null;
                 }
@@ -1460,7 +1485,7 @@ final class CSharpModelAssembler {
             }
             final WrittenType collection = receiverDeclaration(lambdaCollection, memberModel, ownerType, typeIndex,
                     inferred);
-            return collection == null ? null : elementOf(collection, false, memberModel, ownerType, typeIndex);
+            return elementOfOrNull(collection, false, memberModel, ownerType, typeIndex);
         }
         final FoundMember field = typeIndex.findMember(ownerType, name, false);
         if (field == null || field.member().declaredType == null || field.member().declaredType.isBlank()

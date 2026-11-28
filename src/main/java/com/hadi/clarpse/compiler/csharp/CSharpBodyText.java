@@ -270,12 +270,15 @@ final class CSharpBodyText {
         final String clean = withoutCommentsAndStrings(text);
         final Matcher matcher = IDENTIFIER.matcher(clean);
         while (matcher.find()) {
-            final String name = matcher.group().startsWith("@") ? matcher.group().substring(1) : matcher.group();
+            final String name = strip(matcher.group());
             int before = matcher.start() - 1;
             while (before >= 0 && Character.isWhitespace(clean.charAt(before))) {
                 before -= 1;
             }
-            final char previous = before >= 0 ? clean.charAt(before) : 0;
+            char previous = 0;
+            if (before >= 0) {
+                previous = clean.charAt(before);
+            }
             if (previous == '.' || previous == ':' && before > 0 && clean.charAt(before - 1) == ':') {
                 continue;
             }
@@ -286,7 +289,10 @@ final class CSharpBodyText {
             while (after < clean.length() && Character.isWhitespace(clean.charAt(after))) {
                 after += 1;
             }
-            final char next = after < clean.length() ? clean.charAt(after) : 0;
+            char next = 0;
+            if (after < clean.length()) {
+                next = clean.charAt(after);
+            }
             if (next == '=' && after + 1 < clean.length() && clean.charAt(after + 1) == '>') {
                 member.bodyDeclaredNames.add(name);
                 continue;
@@ -372,7 +378,10 @@ final class CSharpBodyText {
     }
 
     private static String strip(final String name) {
-        return name.startsWith("@") ? name.substring(1) : name;
+        if (name.startsWith("@")) {
+            return name.substring(1);
+        }
+        return name;
     }
 
     /** The word that ends at {@code last}, or the empty string. */

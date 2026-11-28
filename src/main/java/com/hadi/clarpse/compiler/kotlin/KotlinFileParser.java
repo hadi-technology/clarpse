@@ -574,18 +574,29 @@ final class KotlinFileParser {
             if (names.size() > 1) {
                 return;
             }
-            record(member.lambdaCollections, names.isEmpty() ? "it" : names.get(0), referenceName(access.children.get(0)));
+            String lambdaParameter = "it";
+            if (!names.isEmpty()) {
+                lambdaParameter = names.get(0);
+            }
+            record(member.lambdaCollections, lambdaParameter, referenceName(access.children.get(0)));
         }
 
         /** The names the parameters of a lambda are written with; empty for a lambda with none written. */
         private List<String> lambdaParameterNames(final KotlinSyntaxNode lambda) {
             final List<String> names = new ArrayList<>();
             final KotlinSyntaxNode literal = lambda.child("FUNCTION_LITERAL");
-            final KotlinSyntaxNode list = literal == null ? null : literal.child("VALUE_PARAMETER_LIST");
+            KotlinSyntaxNode list = null;
+            if (literal != null) {
+                list = literal.child("VALUE_PARAMETER_LIST");
+            }
             if (list != null) {
                 for (final KotlinSyntaxNode parameter : list.children("VALUE_PARAMETER")) {
                     final String name = identifier(parameter);
-                    names.add(name == null ? "" : name);
+                    if (name == null) {
+                        names.add("");
+                    } else {
+                        names.add(name);
+                    }
                 }
             }
             return names;

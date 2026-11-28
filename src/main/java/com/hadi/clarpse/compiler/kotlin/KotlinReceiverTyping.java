@@ -303,8 +303,10 @@ final class KotlinReceiverTyping {
         if (written == null) {
             return null;
         }
-        final String text = written.trim().endsWith("?") ? written.trim().substring(0, written.trim().length() - 1)
-                : written.trim();
+        String text = written.trim();
+        if (text.endsWith("?")) {
+            text = text.substring(0, text.length() - 1);
+        }
         final int open = text.indexOf('<');
         if (open <= 0 || !text.endsWith(">")) {
             return null;
@@ -354,7 +356,11 @@ final class KotlinReceiverTyping {
         if (indexed && INDEXED_BY_KEY.contains(simple) && parts.size() == 3) {
             return typeMembers.resolveWritten(parts.get(2), scope);
         }
-        if (parts.size() == 2 && (indexed ? INDEXED_OF_ONE : ITERABLE_OF_ONE).contains(simple)) {
+        Set<String> single = ITERABLE_OF_ONE;
+        if (indexed) {
+            single = INDEXED_OF_ONE;
+        }
+        if (parts.size() == 2 && single.contains(simple)) {
             return typeMembers.resolveWritten(parts.get(1), scope);
         }
         return null;

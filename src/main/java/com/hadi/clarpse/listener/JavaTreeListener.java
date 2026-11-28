@@ -33,7 +33,6 @@ import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.SimpleName;
 import com.github.javaparser.ast.expr.SingleMemberAnnotationExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
-import com.github.javaparser.ast.nodeTypes.NodeWithTypeParameters;
 import com.github.javaparser.ast.stmt.CatchClause;
 import com.github.javaparser.ast.stmt.ForEachStmt;
 import com.github.javaparser.ast.stmt.ForStmt;
@@ -54,7 +53,6 @@ import com.github.javaparser.resolution.TypeSolver;
 import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration;
 import com.github.javaparser.resolution.model.SymbolReference;
-import com.github.javaparser.resolution.types.ResolvedReferenceType;
 import com.github.javaparser.resolution.types.ResolvedType;
 import com.hadi.clarpse.compiler.Lang;
 import com.hadi.clarpse.compiler.ProjectFile;
@@ -370,7 +368,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                 cmp = createComponent(ctx, ComponentType.CLASS);
             }
             if (ctx.getTypeParameters().isNonEmpty()) {
-                cmp.setCodeFragment(typeParametersCodeFragment(ctx.getTypeParameters()));
+                cmp.setCodeFragment(JavaDeclarations.typeParametersCodeFragment(ctx.getTypeParameters()));
             }
 
             cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
@@ -387,7 +385,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
             ParseUtil.pointParentsToGivenChild(cmp, componentStack);
 
-            final Set<String> typeParameters = typeParameterNamesInScope(ctx);
+            final Set<String> typeParameters = JavaDeclarations.typeParameterNamesInScope(ctx);
             if (ctx.getExtendedTypes() != null) {
                 for (final ClassOrInterfaceType outerType : ctx.getExtendedTypes()) {
                     final String resolvedType = resolveType(outerType.asString());
@@ -454,17 +452,6 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         }
     }
 
-    private static String typeParametersCodeFragment(final NodeList<? extends Type> typeParameters) {
-        final StringBuilder fragment = new StringBuilder("<");
-        for (final Type typeParam : typeParameters) {
-            fragment.append(typeParam.asString()).append(", ");
-        }
-        while (fragment.toString().endsWith(", ") || fragment.toString().endsWith(",")) {
-            fragment.setLength(fragment.length() - 1);
-        }
-        return fragment + ">";
-    }
-
     /**
      * Records are modelled as {@link ComponentType#CLASS} components; their record components become
      * {@code FIELD} children, and the canonical constructor is modelled whether it is declared
@@ -475,7 +462,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
         if (!ParseUtil.componentStackContainsMethod(componentStack)) {
             final Component cmp = createComponent(ctx, ComponentType.CLASS);
             if (ctx.getTypeParameters().isNonEmpty()) {
-                cmp.setCodeFragment(typeParametersCodeFragment(ctx.getTypeParameters()));
+                cmp.setCodeFragment(JavaDeclarations.typeParametersCodeFragment(ctx.getTypeParameters()));
             }
             cmp.setAccessModifiers(resolveJavaParserModifiers(ctx.getModifiers()));
             recordAnnotations(ctx.getAnnotations(), cmp);
@@ -494,7 +481,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
             ParseUtil.pointParentsToGivenChild(cmp, componentStack);
 
-            final Set<String> typeParameters = typeParameterNamesInScope(ctx);
+            final Set<String> typeParameters = JavaDeclarations.typeParameterNamesInScope(ctx);
             for (final ClassOrInterfaceType implementedType : ctx.getImplementedTypes()) {
                 final String resolvedType = resolveType(implementedType.asString());
                 if (resolvedType != null) {
@@ -553,7 +540,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     private void insertRecordAccessors(final RecordDeclaration ctx, final Object arg) {
         for (final Parameter recordComponent : ctx.getParameters()) {
             final String accessorName = recordComponent.getNameAsString();
-            if (declaresAccessor(ctx, accessorName)) {
+            if (JavaDeclarations.declaresAccessor(ctx, accessorName)) {
                 continue;
             }
             final Component accessorCmp = createComponent(recordComponent, ComponentType.METHOD);
@@ -576,29 +563,13 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     }
 
     /**
-     * True if the record body declares the accessor for the named component itself.
-     */
-    private static boolean declaresAccessor(final RecordDeclaration ctx, final String accessorName) {
-        for (final Node member : ctx.getMembers()) {
-            if (!(member instanceof MethodDeclaration)) {
-                continue;
-            }
-            final MethodDeclaration method = (MethodDeclaration) member;
-            if (method.getParameters().isEmpty() && method.getNameAsString().equals(accessorName)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Models the record's canonical constructor. An explicitly declared one is left to
      * {@link #visit(ConstructorDeclaration, Object)}; a compact declaration or no declaration at all is
      * synthesized here from the record components, so that the constructor and its parameters are
      * present either way.
      */
     private void insertRecordCanonicalConstructor(final RecordDeclaration ctx, final Object arg) {
-        if (declaresCanonicalConstructor(ctx)) {
+        if (JavaDeclarations.declaresCanonicalConstructor(ctx)) {
             return;
         }
         final List<CompactConstructorDeclaration> compactCtors = ctx.getCompactConstructors();
@@ -630,7 +601,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
         } else {
             // An implicit canonical constructor is as visible as the record itself.
-            ctorCmp.setAccessModifiers(visibilityModifiers(ctx.getModifiers()));
+            ctorCmp.setAccessModifiers(JavaDeclarations.visibilityModifiers(ctx.getModifiers()));
         }
         ctorCmp.setCodeFragment(signature);
         ctorCmp.setComponentName(ParseUtil.generateComponentName(signature, componentStack));
@@ -658,41 +629,6 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             compactCtor.getBody().accept(this, arg);
         }
         completeComponent();
-    }
-
-    /**
-     * True if the record body declares the canonical constructor in full, in which case the regular
-     * constructor visitor models it.
-     */
-    private static boolean declaresCanonicalConstructor(final RecordDeclaration ctx) {
-        final List<String> recordComponentTypes = new ArrayList<>();
-        for (final Parameter recordComponent : ctx.getParameters()) {
-            recordComponentTypes.add(recordComponent.getType().asString());
-        }
-        for (final Node member : ctx.getMembers()) {
-            if (!(member instanceof ConstructorDeclaration)) {
-                continue;
-            }
-            final List<String> ctorParamTypes = new ArrayList<>();
-            for (final Parameter param : ((ConstructorDeclaration) member).getParameters()) {
-                ctorParamTypes.add(param.getType().asString());
-            }
-            if (ctorParamTypes.equals(recordComponentTypes)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static List<String> visibilityModifiers(final NodeList<Modifier> modifiers) {
-        final List<String> visibility = new ArrayList<>();
-        for (final Modifier modifier : modifiers) {
-            final String keyword = modifier.toString().toLowerCase(Locale.ROOT).trim();
-            if (keyword.equals("public") || keyword.equals("protected") || keyword.equals("private")) {
-                visibility.add(keyword);
-            }
-        }
-        return visibility;
     }
 
     /**
@@ -868,10 +804,11 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
             if (receiver == null && declaring != null) {
                 // The call resolves on the type a written type argument gives, which is the evidence.
-                receiver = typeArgumentReceiver(ctx.getScope().get());
+                receiver = JavaTypeArgumentReceivers.ofValue(ctx.getScope().get(), this::everyVisibleValueIsKnown);
             }
             if (receiver == null) {
-                receiver = lambdaElementReceiver(ctx.getScope().get());
+                receiver = JavaTypeArgumentReceivers.ofLambdaParameter(ctx.getScope().get(),
+                        this::everyVisibleValueIsKnown);
             }
             if (receiver == null) {
                 return;
@@ -913,78 +850,6 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
         }
         return null;
-    }
-
-    /**
-     * The declaration of the type a receiver has when that follows exactly from a type argument written
-     * on a variable or field: the field of a generic type ({@code b.value}), an element of a collection
-     * ({@code l.get(0)}) and the parameter of a lambda given to one ({@code l.forEach(o -> ...)}). The
-     * variable's type has to be a parameterised type every argument of which is a type itself: a raw
-     * type, a wildcard and a type variable give nothing.
-     */
-    private ResolvedReferenceTypeDeclaration typeArgumentReceiver(final Expression scope) {
-        final Expression holder;
-        if (scope.isFieldAccessExpr()) {
-            holder = scope.asFieldAccessExpr().getScope();
-        } else if (scope.isMethodCallExpr() && "get".equals(scope.asMethodCallExpr().getNameAsString())
-                && scope.asMethodCallExpr().getArguments().size() == 1) {
-            holder = scope.asMethodCallExpr().getScope().orElse(null);
-        } else {
-            return null;
-        }
-        if (holder == null || !holder.isNameExpr() || !hasWrittenTypeArguments(holder)) {
-            return null;
-        }
-        if (holder.asNameExpr().resolve().isField() && !everyVisibleValueIsKnown(holder)) {
-            return null;
-        }
-        return valueTypeDeclaration(scope);
-    }
-
-    /**
-     * The declaration of the element type of a collection, when the receiver is the one parameter of a
-     * lambda given to {@code forEach} or {@code removeIf} of a variable declared with a written element
-     * type: the parameter is that element. The solver does not always type such a parameter.
-     */
-    private ResolvedReferenceTypeDeclaration lambdaElementReceiver(final Expression scope) {
-        if (!scope.isNameExpr()) {
-            return null;
-        }
-        final NameExpr name = scope.asNameExpr();
-        final java.util.Optional<com.github.javaparser.ast.expr.LambdaExpr> lambda =
-                name.findAncestor(com.github.javaparser.ast.expr.LambdaExpr.class);
-        if (lambda.isEmpty() || lambda.get().getParameters().size() != 1
-                || !lambda.get().getParameter(0).getNameAsString().equals(name.getNameAsString())) {
-            return null;
-        }
-        final java.util.Optional<Node> parent = lambda.get().getParentNode();
-        if (parent.isEmpty() || !(parent.get() instanceof MethodCallExpr)) {
-            return null;
-        }
-        final MethodCallExpr call = (MethodCallExpr) parent.get();
-        if (!Set.of("forEach", "removeIf").contains(call.getNameAsString()) || call.getArguments().size() != 1
-                || call.getScope().isEmpty() || !call.getScope().get().isNameExpr()
-                || !hasWrittenTypeArguments(call.getScope().get())) {
-            return null;
-        }
-        final Expression holder = call.getScope().get();
-        if (holder.asNameExpr().resolve().isField() && !everyVisibleValueIsKnown(holder)) {
-            return null;
-        }
-        final ResolvedReferenceType collection = holder.calculateResolvedType().asReferenceType();
-        if (collection.typeParametersValues().size() != 1 || collection.getAllAncestors().stream()
-                .noneMatch(ancestor -> "java.lang.Iterable".equals(ancestor.getQualifiedName()))) {
-            return null;
-        }
-        return collection.typeParametersValues().get(0).asReferenceType().getTypeDeclaration().orElse(null);
-    }
-
-    private static boolean hasWrittenTypeArguments(final Expression value) {
-        final ResolvedType type = value.calculateResolvedType();
-        if (!type.isReferenceType() || type.asReferenceType().typeParametersValues().isEmpty()) {
-            return false;
-        }
-        return type.asReferenceType().typeParametersValues().stream().allMatch(ResolvedType::isReferenceType);
     }
 
     private ResolvedReferenceTypeDeclaration solvedType(final String qualifiedName) {
@@ -1094,7 +959,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     public final void visit(final MethodDeclaration ctx, final Object arg) {
         if (!ParseUtil.componentStackContainsMethod(componentStack)) {
             final Set<String> enclosingTypeVariables = typeVariables;
-            typeVariables = typeParameterNamesInScope(ctx);
+            typeVariables = JavaDeclarations.typeParameterNamesInScope(ctx);
             final Component currMethodCmp = createComponent(ctx, ComponentType.METHOD);
             currMethodCmp.setName(ctx.getNameAsString());
             currMethodCmp.setCodeFragment(ctx.getType().asString());
@@ -1200,7 +1065,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
     public final void visit(final ConstructorDeclaration ctx, final Object arg) {
         if (!ParseUtil.componentStackContainsMethod(componentStack)) {
             final Set<String> enclosingTypeVariables = typeVariables;
-            typeVariables = typeParameterNamesInScope(ctx);
+            typeVariables = JavaDeclarations.typeParameterNamesInScope(ctx);
             final Component currMethodCmp = createComponent(ctx, ComponentType.CONSTRUCTOR);
             final String methodName = ctx.getNameAsString();
             currMethodCmp.setName(methodName);
@@ -1630,24 +1495,6 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
         }
         insertTypeArgumentRefs(cmp, classType, typeParameters);
-    }
-
-    /**
-     * The type variables a node may legally mention: its own, and those of every type that
-     * encloses it.
-     */
-    private static Set<String> typeParameterNamesInScope(final Node node) {
-        final Set<String> names = new HashSet<>();
-        Node current = node;
-        while (current != null) {
-            if (current instanceof NodeWithTypeParameters) {
-                for (final TypeParameter typeParameter : ((NodeWithTypeParameters<?>) current).getTypeParameters()) {
-                    names.add(typeParameter.getNameAsString());
-                }
-            }
-            current = current.getParentNode().orElse(null);
-        }
-        return names;
     }
 
     private String resolveType(final String type) {

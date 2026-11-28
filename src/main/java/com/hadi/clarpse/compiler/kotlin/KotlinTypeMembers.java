@@ -196,7 +196,10 @@ final class KotlinTypeMembers {
             writers += 1;
             found = written.map(text -> parameters.indexOf(text.trim())).orElse(-1);
         }
-        return writers == 1 ? found : -1;
+        if (writers != 1) {
+            return -1;
+        }
+        return found;
     }
 
     /**

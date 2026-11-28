@@ -353,18 +353,25 @@ final class PythonModelAssembler {
             if (decorator == null || decorator.isBlank()) {
                 continue;
             }
-            final PythonDecoratorOriginModel origin = decoratorOrigins != null && i < decoratorOrigins.size()
-                    ? decoratorOrigins.get(i) : null;
+            PythonDecoratorOriginModel origin = null;
+            if (decoratorOrigins != null && i < decoratorOrigins.size()) {
+                origin = decoratorOrigins.get(i);
+            }
             final boolean imported = origin != null && origin.name != null && !origin.name.isBlank();
-            final String invoked = imported ? origin.name.trim() : decorator.trim();
+            String invoked = decorator.trim();
+            if (imported) {
+                invoked = origin.name.trim();
+            }
             if (invoked.equals(component.uniqueName()) || !seen.add(invoked)) {
                 continue;
             }
             final AnnotationReference reference = new AnnotationReference(invoked);
             // A decorator an import binds from a module outside the repository is named by that
             // import; any other is kept as written.
-            reference.setResolutionKind(imported && !origin.unresolved
-                    ? ResolutionKind.EXACT : ResolutionKind.UNRESOLVED);
+            reference.setResolutionKind(ResolutionKind.UNRESOLVED);
+            if (imported && !origin.unresolved) {
+                reference.setResolutionKind(ResolutionKind.EXACT);
+            }
             if (decoratorArguments != null && i < decoratorArguments.size()
                     && decoratorArguments.get(i) != null) {
                 reference.setArguments(decoratorArgumentMap(decoratorArguments.get(i)));
@@ -744,7 +751,10 @@ final class PythonModelAssembler {
      * since {@code List[Order]} is a list and not the {@code Order} its element resolves to.
      */
     private static boolean namesOneClass(final String raw, final String target) {
-        String text = raw == null ? "" : raw.trim();
+        String text = "";
+        if (raw != null) {
+            text = raw.trim();
+        }
         boolean unwrapped = true;
         while (unwrapped) {
             unwrapped = false;

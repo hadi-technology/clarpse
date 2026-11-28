@@ -671,7 +671,8 @@ final class CSharpFileParser {
         typeModel.startOffset = node.startOffset;
         typeModel.endOffset = node.endOffset;
         typeModel.imports = importTargets(fileModel.usings);
-        typeModel.staticImports = staticImportTargets(fileModel.usings, typeModel.namespaceName);
+        typeModel.staticImports = CSharpDeclarationFacts.staticImportTargets(fileModel.usings,
+                typeModel.namespaceName);
         typeModel.importDirectives = importDirectives(fileModel.usings);
         typeModel.usingAliases = usingAliases(fileModel.usings);
         if (parentTypeComponentName == null || parentTypeComponentName.isEmpty()) {
@@ -1219,7 +1220,7 @@ final class CSharpFileParser {
         member.sourceText = fileModel.sourceText;
         member.moduleName = fileModel.moduleName;
         member.ownerTypeUniqueName = ownerType.uniqueName;
-        member.modifiers = parseMemberModifiers(node.text);
+        member.modifiers = CSharpDeclarationFacts.memberModifiers(node.text);
         member.comment = extractLeadingComment(fileModel.sourceText, node.startOffset);
         member.startOffset = node.startOffset;
         member.endOffset = node.endOffset;
@@ -1274,27 +1275,6 @@ final class CSharpFileParser {
             }
         }
         return members;
-    }
-
-    /**
-     * The classes named by {@code using static} directives that are in force where a type of the given
-     * namespace is declared: a directive written in a namespace applies inside it.
-     */
-    private static Set<String> staticImportTargets(final List<CSharpModel.CSharpUsingModel> usings,
-                                                   final String namespaceName) {
-        final Set<String> targets = new LinkedHashSet<>();
-        for (final CSharpModel.CSharpUsingModel usingModel : usings) {
-            if (!usingModel.staticImport || usingModel.aliasImport || usingModel.implicitImport
-                    || usingModel.target == null || usingModel.target.isEmpty()) {
-                continue;
-            }
-            final String scope = usingModel.scopeNamespace;
-            if (scope == null || scope.isEmpty() || scope.equals(namespaceName)
-                    || (namespaceName != null && namespaceName.startsWith(scope + "."))) {
-                targets.add(usingModel.target);
-            }
-        }
-        return targets;
     }
 
     private static Set<String> importTargets(final List<CSharpModel.CSharpUsingModel> usings) {
@@ -1685,37 +1665,6 @@ final class CSharpFileParser {
                 modifiers.add(lower);
             }
         }
-        return modifiers;
-    }
-
-    /**
-     * The modifiers of a member declaration. A {@code ref} before the type says the member returns or
-     * holds a reference and is a modifier of the member; the {@code readonly} that may follow it
-     * belongs to the type ({@code ref readonly int}), so it is not.
-     *
-     * @param text The member's declaration text.
-     * @return The modifiers, in source order.
-     */
-    static List<String> parseMemberModifiers(final String text) {
-        final List<String> modifiers = parseModifiers(text);
-        if (text == null || text.isBlank()) {
-            return modifiers;
-        }
-        final String header = normalizeWhitespace(cutAtAny(text, "{", "(", ";", "=>", "="));
-        final List<String> parts = List.of(header.split(" "));
-        final int ref = parts.indexOf("ref");
-        if (ref < 0) {
-            return modifiers;
-        }
-        if (ref + 1 < parts.size() && "readonly".equals(parts.get(ref + 1))) {
-            // `readonly` directly after `ref` belongs to the returned type, unless a `readonly`
-            // was also written before the `ref`.
-            final boolean written = parts.subList(0, ref).contains("readonly");
-            if (!written) {
-                modifiers.remove("readonly");
-            }
-        }
-        modifiers.add("ref");
         return modifiers;
     }
 

@@ -90,7 +90,10 @@ public final class TypeNames {
             text = text.substring(0, text.length() - 1).trim();
         }
         final int open = text.indexOf('<');
-        final String name = open < 0 ? text : text.substring(0, open).trim();
+        String name = text;
+        if (open >= 0) {
+            name = text.substring(0, open).trim();
+        }
         if (!name.matches("[A-Za-z_@$][\\w.@$]*")) {
             return null;
         }
