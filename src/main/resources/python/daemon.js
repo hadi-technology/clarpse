@@ -3853,7 +3853,10 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
       if (isLocal(base)) {
         return;
       }
-      if (isKnownImport(base)) {
+      if (!isKnownImport(base) && ctx.importedModules && ctx.importedModules.size) {
+        // `import a.b` binds the dotted name `a.b` and `a` with it.
+        addExternalModuleCall(calleeText, calleeNode);
+      } else if (isKnownImport(base)) {
         const resolved = resolveTypeFromRaw(base, ctx);
         if (resolved) {
           calleeTarget = { targetUniqueName: null, externalLabel: resolved + calleeText.substring(dotIdx) };
@@ -3877,22 +3880,44 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
   }
 
   /**
-   * `m.N(...)` after `import m`, with `m` outside the repo and Pyright unable to resolve the callee,
-   * references the imported name `m.N`, unresolved. It is not a construction, since nothing says
-   * `N` is a class.
+   * The module an import binds the head of a dotted callee to, and the names left after it: `a.b.f` is
+   * `a.b` and `f` after `import a.b`, `a` and `b.f` after `import a`, and `a.b` and `f` after
+   * `import a.b as x` when the callee is `x.f`. The longest binding wins. `import a.b` also binds `a`.
+   */
+  function moduleBindingOf(parts) {
+    for (let length = parts.length - 1; length >= 1; length -= 1) {
+      const bound = ctx.importedModules.get(parts.slice(0, length).join('.'));
+      if (bound) {
+        return { moduleName: bound, rest: parts.slice(length) };
+      }
+    }
+    for (const localName of ctx.importedModules.keys()) {
+      if (localName.indexOf('.') > 0 && localName.split('.')[0] === parts[0]) {
+        return { moduleName: parts[0], rest: parts.slice(1) };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * `m.N(...)`, `m.p.N(...)` after `import m`, `import m.p`, `import m.p as x` or `import m as y`, with the
+   * module outside the repo and Pyright unable to resolve the callee, references the imported name
+   * `m.N` or `m.p.N`, unresolved, as `from m.p import N` does. It is not a construction, since nothing
+   * says `N` is a class.
    */
   function addExternalModuleCall(calleeText, calleeNode) {
     const parts = calleeText.split('.');
-    if (parts.length !== 2 || isLocal(parts[0]) || !ctx.importedModules || !calleeNode || !ctx.inferType
-      || !ctx.inferType.calleeKind) {
+    if (parts.length < 2 || isLocal(parts[0]) || !ctx.importedModules || !calleeNode || !ctx.inferType
+      || !ctx.inferType.calleeKind || ctx.importedSymbols.has(parts[0])) {
       return;
     }
-    const moduleName = ctx.importedModules.get(parts[0]);
-    if (!moduleName || moduleFileFor(moduleName, ctx) || ctx.importedSymbols.has(parts[0])
+    const binding = moduleBindingOf(parts);
+    if (!binding || moduleFileFor(binding.moduleName, ctx)
       || ctx.inferType.calleeKind(calleeNode) !== 'unresolved') {
       return;
     }
-    refs.push({ raw: calleeText, targetUniqueName: null, externalLabel: moduleName + '.' + parts[1], unresolved: true });
+    refs.push({ raw: calleeText, targetUniqueName: null,
+      externalLabel: binding.moduleName + '.' + binding.rest.join('.'), unresolved: true });
   }
 
   /**
