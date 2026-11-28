@@ -84,11 +84,18 @@ final class JavaTypeArgumentReceivers {
             return null;
         }
         final ResolvedReferenceType collection = call.getScope().get().calculateResolvedType().asReferenceType();
-        if (collection.typeParametersValues().size() != 1 || collection.getAllAncestors().stream()
-                .noneMatch(ancestor -> "java.lang.Iterable".equals(ancestor.getQualifiedName()))) {
+        if (collection.typeParametersValues().size() != 1) {
             return null;
         }
-        return collection.typeParametersValues().get(0).asReferenceType().getTypeDeclaration().orElse(null);
+        final ResolvedType own = collection.typeParametersValues().get(0);
+        final Optional<ResolvedType> element = collection.getAllAncestors().stream()
+                .filter(ancestor -> "java.lang.Iterable".equals(ancestor.getQualifiedName()))
+                .filter(ancestor -> ancestor.typeParametersValues().size() == 1)
+                .map(ancestor -> ancestor.typeParametersValues().get(0)).findFirst();
+        if (element.isEmpty() || !element.get().equals(own) || !element.get().isReferenceType()) {
+            return null;
+        }
+        return element.get().asReferenceType().getTypeDeclaration().orElse(null);
     }
 
     /** Whether the holder is a variable or field of a type written with type arguments that are all types. */

@@ -35,10 +35,12 @@ public class JavaTypeArgumentMemberReferenceTest {
                 public class A {
                   static class Order { int total() { return 1; } }
                   static class Box<T> { T value; }
+                  static abstract class Bag<T> implements Iterable<String> { }
                   int fieldOfGeneric(Box<Order> b) { return b.value.total(); }
                   int foreachVar(List<Order> l) { int r = 0; for (Order o : l) { r += o.total(); } return r; }
                   int foreachVarInferred(List<Order> l) { int r = 0; for (var o : l) { r += o.total(); } return r; }
                   void lambdaParam(List<Order> l) { l.forEach(o -> o.total()); }
+                  void bag(Bag<Order> b) { b.forEach(o -> o.length()); }
                   int indexed(List<Order> l) { return l.get(0).total(); }
                   int raw(Box b) { return b.hashCode(); }
                   int wildcard(Box<? extends Order> b) { return b.value.total(); }
@@ -105,5 +107,10 @@ public class JavaTypeArgumentMemberReferenceTest {
     @Test
     public void aRawTypeGivesNothing() {
         assertNoTotal("raw");
+    }
+
+    @Test
+    public void aLambdaParameterTakesTheTypeOfTheIterableAncestorNotTheFirstTypeArgument() {
+        assertTrue(members("bag").toString(), members("bag").stream().noneMatch(r -> r.member().equals("length")));
     }
 }
