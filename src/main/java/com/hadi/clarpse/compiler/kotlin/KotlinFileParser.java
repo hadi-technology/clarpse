@@ -70,12 +70,13 @@ final class KotlinFileParser {
     /** Declarations nested in a body that are modelled, or skipped, on their own. */
     private static final Set<String> NESTED_DECLARATIONS = Set.of(CLASS, OBJECT_DECLARATION, FUN);
 
-    /** Nodes that each add a path through a function. */
     /** The functions that hand each element of the collection they are called on to one lambda parameter. */
     private static final Set<String> LAMBDA_ELEMENT_FUNCTIONS = Set.of("forEach", "filter", "filterNot", "map",
             "mapNotNull", "flatMap", "any", "all", "none", "find", "first", "firstOrNull", "last", "lastOrNull",
             "count", "onEach", "takeWhile", "dropWhile", "partition", "groupBy", "associateBy", "sortedBy",
             "maxByOrNull", "minByOrNull", "distinctBy", "sumOf");
+
+    /** Nodes that each add a path through a function. */
     private static final Set<String> BRANCHES = Set.of("IF", "FOR", "WHILE", "DO_WHILE", "CATCH");
 
     private KotlinFileParser() {
