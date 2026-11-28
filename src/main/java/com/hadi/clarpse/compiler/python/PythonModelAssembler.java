@@ -6,6 +6,7 @@ import com.hadi.clarpse.compiler.StandardLibraries;
 import com.hadi.clarpse.compiler.python.model.PythonImportDirectiveModel;
 import com.hadi.clarpse.compiler.python.model.PythonClassModel;
 import com.hadi.clarpse.compiler.python.model.PythonDecoratorArgumentModel;
+import com.hadi.clarpse.compiler.python.model.PythonDecoratorOriginModel;
 import com.hadi.clarpse.compiler.python.model.PythonDecoratorValueModel;
 import com.hadi.clarpse.compiler.python.model.PythonFieldModel;
 import com.hadi.clarpse.compiler.python.model.PythonFileModel;
@@ -324,7 +325,8 @@ final class PythonModelAssembler {
                 insertReferences(component, decoratorRef, false);
             }
         }
-        attachDecoratorReferences(component, classModel.decorators, classModel.decoratorArguments);
+        attachDecoratorReferences(component, classModel.decorators, classModel.decoratorArguments,
+                classModel.decoratorOrigins);
         return component;
     }
 
@@ -332,13 +334,16 @@ final class PythonModelAssembler {
      * Records each applied decorator as an {@link AnnotationReference} on the component -- the same
      * mechanism a base class uses for its extension reference, so a decorator is a distinct kind of
      * reference and not a separate field. The daemon has already reduced each decorator to its type
-     * name ({@code app.route} to {@code route}); an unresolved decorator is still a real fact, so it
-     * is kept under that name.
+     * name ({@code app.route} to {@code route}), and names the ones an import binds from a module
+     * outside the repository by that import ({@code functools.wraps}); an unresolved decorator is
+     * still a real fact, so it is kept under the name it has.
      */
     private static void attachDecoratorReferences(final Component component,
                                                   final java.util.List<String> decorators,
                                                   final java.util.List<java.util.List<PythonDecoratorArgumentModel>>
-                                                          decoratorArguments) {
+                                                          decoratorArguments,
+                                                  final java.util.List<PythonDecoratorOriginModel>
+                                                          decoratorOrigins) {
         if (decorators == null) {
             return;
         }
@@ -348,13 +353,18 @@ final class PythonModelAssembler {
             if (decorator == null || decorator.isBlank()) {
                 continue;
             }
-            final String invoked = decorator.trim();
+            final PythonDecoratorOriginModel origin = decoratorOrigins != null && i < decoratorOrigins.size()
+                    ? decoratorOrigins.get(i) : null;
+            final boolean imported = origin != null && origin.name != null && !origin.name.isBlank();
+            final String invoked = imported ? origin.name.trim() : decorator.trim();
             if (invoked.equals(component.uniqueName()) || !seen.add(invoked)) {
                 continue;
             }
             final AnnotationReference reference = new AnnotationReference(invoked);
-            // Only the decorator's written name is known here, so it is kept as written.
-            reference.setResolutionKind(ResolutionKind.UNRESOLVED);
+            // A decorator an import binds from a module outside the repository is named by that
+            // import; any other is kept as written.
+            reference.setResolutionKind(imported && !origin.unresolved
+                    ? ResolutionKind.EXACT : ResolutionKind.UNRESOLVED);
             if (decoratorArguments != null && i < decoratorArguments.size()
                     && decoratorArguments.get(i) != null) {
                 reference.setArguments(decoratorArgumentMap(decoratorArguments.get(i)));
@@ -562,7 +572,7 @@ final class PythonModelAssembler {
                 insertReferences(component, bodyRef, false);
             }
         }
-        attachDecoratorReferences(component, method.decorators, method.decoratorArguments);
+        attachDecoratorReferences(component, method.decorators, method.decoratorArguments, method.decoratorOrigins);
         return component;
     }
 
@@ -598,7 +608,7 @@ final class PythonModelAssembler {
                 insertReferences(component, bodyRef, false);
             }
         }
-        attachDecoratorReferences(component, function.decorators, function.decoratorArguments);
+        attachDecoratorReferences(component, function.decorators, function.decoratorArguments, function.decoratorOrigins);
         return component;
     }
 

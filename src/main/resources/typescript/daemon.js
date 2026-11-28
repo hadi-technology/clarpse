@@ -2031,10 +2031,13 @@ function buildDecoratorReferences(node, checker) {
     const name = decoratorTypeName(decorator.expression);
     if (name) {
       const declared = decoratorDeclaration(decorator.expression, checker);
+      const imported = declared ? null : decoratorImport(decorator.expression, checker);
       references.push({
         kind: "annotation",
         external: !declared,
-        ...(declared ? { target: declared } : { displayName: name, resolution: "unresolved" }),
+        ...(declared ? { target: declared }
+          : imported ? { displayName: imported.displayName, resolution: imported.resolution }
+            : { displayName: name, resolution: "unresolved" }),
         arguments: readDecoratorArguments(decorator.expression, checker)
       });
     }
@@ -2046,6 +2049,46 @@ function buildDecoratorReferences(node, checker) {
     }
   }
   return references;
+}
+
+/**
+ * The package-qualified name of a decorator an import binds from a package the repository does not
+ * hold, `@nestjs/common:Controller`, or null where its name is not bound that way. A name imported
+ * under another local name is the name the package exports it by; a namespace import's member is the
+ * member's name.
+ */
+function decoratorImport(expression, checker) {
+  const ts = state.ts;
+  let callee = expression;
+  while (ts.isCallExpression(callee)) {
+    callee = callee.expression;
+  }
+  if (ts.isPropertyAccessExpression(callee)) {
+    return buildNamespaceMemberReference(callee, checker);
+  }
+  if (!ts.isIdentifier(callee)) {
+    return null;
+  }
+  let symbol;
+  let actual = null;
+  try {
+    symbol = checker.getSymbolAtLocation(callee);
+    if (!symbol || !(symbol.flags & ts.SymbolFlags.Alias)) {
+      return null;
+    }
+    actual = checker.getAliasedSymbol(symbol);
+  } catch (err) {
+    return null;
+  }
+  const imported = importedFrom(symbol);
+  const packageName = packageOfSpecifier(imported);
+  const reference = packageName ? buildExternalValueReference(callee, imported, actual) : null;
+  const specifier = symbol.declarations && symbol.declarations[0];
+  if (reference && specifier && ts.isImportSpecifier(specifier) && specifier.propertyName
+      && specifier.propertyName.text !== "default") {
+    return externalNamedReference(packageName, specifier.propertyName.text);
+  }
+  return reference;
 }
 
 /**

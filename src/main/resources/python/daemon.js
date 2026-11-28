@@ -2544,6 +2544,26 @@ function extractSuiteDocString(suiteNode, fileText) {
   return decodeDocStringLiteral(statementText);
 }
 
+/**
+ * The module an import binds the head of a dotted name to, and the names left after it: `a.b.f` is
+ * `a.b` and `f` after `import a.b`, `a` and `b.f` after `import a`, and `a.b` and `f` after
+ * `import a.b as x` when the name is `x.f`. The longest binding wins. `import a.b` also binds `a`.
+ */
+function moduleBindingOf(parts, ctx) {
+  for (let length = parts.length - 1; length >= 1; length -= 1) {
+    const bound = ctx.importedModules.get(parts.slice(0, length).join('.'));
+    if (bound) {
+      return { moduleName: bound, rest: parts.slice(length) };
+    }
+  }
+  for (const localName of ctx.importedModules.keys()) {
+    if (localName.indexOf('.') > 0 && localName.split('.')[0] === parts[0]) {
+      return { moduleName: parts[0], rest: parts.slice(1) };
+    }
+  }
+  return null;
+}
+
 function normalizeDecoratorName(rawDecoratorText) {
   if (!rawDecoratorText) {
     return '';
@@ -2581,6 +2601,67 @@ function extractDecoratorNames(functionNode, fileText) {
     }
   }
   return names;
+}
+
+/**
+ * Where each decorator extractDecoratorNames reports comes from, in the same order: the dotted name
+ * its import gives it (`functools.wraps` for `@wraps` after `from functools import wraps`, `click.command`
+ * for `@click.command()` after `import click`) and whether Pyright could not resolve it, or null where no
+ * import of a module outside the repo binds its first name -- a decorator defined in the file or in the
+ * repo, or an attribute of a local object.
+ */
+function extractDecoratorOrigins(definitionNode, ctx, parseNodeType) {
+  const decorators = getNodeProp(definitionNode, ['decorators', 'decoratorExpressions', 'decoratorNodes']);
+  if (!Array.isArray(decorators) || !decorators.length) {
+    return [];
+  }
+  const origins = [];
+  for (const decorator of decorators) {
+    const raw = textForNode(decorator, ctx.fileText) || nameFromNode(decorator);
+    if (!normalizeDecoratorName(raw)) {
+      continue;
+    }
+    origins.push(decoratorOrigin(decorator, ctx, parseNodeType));
+  }
+  return origins;
+}
+
+function decoratorOrigin(decorator, ctx, parseNodeType) {
+  let callee = decorator && decorator.d ? decorator.d.expr : null;
+  while (callee && parseNodeType.Call !== undefined && callee.nodeType === parseNodeType.Call) {
+    callee = callee.d.leftExpr;
+  }
+  const dotted = callee ? dottedNameOf(callee, parseNodeType) : null;
+  if (!dotted) {
+    return null;
+  }
+  const parts = dotted.split('.');
+  const root = parts[0];
+  if ((ctx.localClasses && ctx.localClasses.has(root)) || (ctx.localFunctions && ctx.localFunctions.has(root))) {
+    return null;
+  }
+  let moduleName = null;
+  let label = null;
+  const symbol = ctx.importedSymbols ? ctx.importedSymbols.get(root) : null;
+  if (symbol && symbol.moduleName && symbol.symbolName) {
+    moduleName = symbol.moduleName;
+    label = [moduleName, symbol.symbolName].concat(parts.slice(1)).join('.');
+  } else if (!symbol && parts.length > 1 && ctx.importedModules && ctx.importedModules.size) {
+    const binding = moduleBindingOf(parts, ctx);
+    if (binding) {
+      moduleName = binding.moduleName;
+      label = [moduleName].concat(binding.rest).join('.');
+    }
+  } else if (!symbol && ctx.importedModules && ctx.importedModules.has(root)) {
+    // `@m` where `m` is a module is no decorator the import names.
+    return null;
+  }
+  if (!label || moduleFileFor(moduleName, ctx)) {
+    return null;
+  }
+  const unresolved = !!ctx.inferType && !!ctx.inferType.calleeKind
+    && ctx.inferType.calleeKind(callee) === 'unresolved';
+  return { name: label, unresolved };
 }
 
 /**
@@ -3880,26 +3961,6 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
   }
 
   /**
-   * The module an import binds the head of a dotted callee to, and the names left after it: `a.b.f` is
-   * `a.b` and `f` after `import a.b`, `a` and `b.f` after `import a`, and `a.b` and `f` after
-   * `import a.b as x` when the callee is `x.f`. The longest binding wins. `import a.b` also binds `a`.
-   */
-  function moduleBindingOf(parts) {
-    for (let length = parts.length - 1; length >= 1; length -= 1) {
-      const bound = ctx.importedModules.get(parts.slice(0, length).join('.'));
-      if (bound) {
-        return { moduleName: bound, rest: parts.slice(length) };
-      }
-    }
-    for (const localName of ctx.importedModules.keys()) {
-      if (localName.indexOf('.') > 0 && localName.split('.')[0] === parts[0]) {
-        return { moduleName: parts[0], rest: parts.slice(1) };
-      }
-    }
-    return null;
-  }
-
-  /**
    * `m.N(...)`, `m.p.N(...)` after `import m`, `import m.p`, `import m.p as x` or `import m as y`, with the
    * module outside the repo and Pyright unable to resolve the callee, references the imported name
    * `m.N` or `m.p.N`, unresolved, as `from m.p import N` does. It is not a construction, since nothing
@@ -3911,7 +3972,7 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
       || !ctx.inferType.calleeKind || ctx.importedSymbols.has(parts[0])) {
       return;
     }
-    const binding = moduleBindingOf(parts);
+    const binding = moduleBindingOf(parts, ctx);
     if (!binding || moduleFileFor(binding.moduleName, ctx)
       || ctx.inferType.calleeKind(calleeNode) !== 'unresolved') {
       return;
@@ -4301,6 +4362,7 @@ function extractMethod(methodNode, enclosingCtx, parseNodeType) {
   }
   const decorators = extractDecoratorNames(methodNode, ctx.fileText);
   const decoratorArguments = extractDecoratorArguments(methodNode, ctx);
+  const decoratorOrigins = extractDecoratorOrigins(methodNode, ctx, parseNodeType);
   const isClassMethod = decorators.includes('classmethod');
   const isStaticMethod = decorators.includes('staticmethod');
   const comment = extractSuiteDocString(methodNode.d ? methodNode.d.suite : null, ctx.fileText);
@@ -4329,6 +4391,7 @@ function extractMethod(methodNode, enclosingCtx, parseNodeType) {
     staticMethod: isStaticMethod,
     decorators,
     decoratorArguments,
+    decoratorOrigins,
     params,
     locals: collectLocalVariables(methodNode, bodyCtx, parseNodeType),
     return: returnRef,
@@ -4345,6 +4408,7 @@ function extractFunction(functionNode, enclosingCtx, parseNodeType) {
   const comment = extractSuiteDocString(functionNode.d ? functionNode.d.suite : null, ctx.fileText);
   const decorators = extractDecoratorNames(functionNode, ctx.fileText);
   const decoratorArguments = extractDecoratorArguments(functionNode, ctx);
+  const decoratorOrigins = extractDecoratorOrigins(functionNode, ctx, parseNodeType);
   const params = extractParams(functionNode, ctx, parseNodeType);
   const returnNode = getNodeProp(functionNode, ['returnTypeAnnotation', 'returnType', 'returnAnnotation']);
   const returnRead = returnNode ? readAnnotation(returnNode, ctx, parseNodeType, normalizePythonTypeDisplay) : null;
@@ -4373,6 +4437,7 @@ function extractFunction(functionNode, enclosingCtx, parseNodeType) {
     staticMethod: false,
     decorators,
     decoratorArguments,
+    decoratorOrigins,
     params,
     locals: collectLocalVariables(functionNode, bodyCtx, parseNodeType),
     return: returnRef,
@@ -4664,6 +4729,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
     const classComment = extractSuiteDocString(statement.d ? statement.d.suite : null, ctx.fileText);
     const classDecorators = extractDecoratorNames(statement, ctx.fileText);
     const classDecoratorArguments = extractDecoratorArguments(statement, ctx);
+    const classDecoratorOrigins = extractDecoratorOrigins(statement, ctx, parseNodeType);
     let baseExprs = [];
     if (statement.d && Array.isArray(statement.d.baseClassExpressions)) {
       baseExprs = statement.d.baseClassExpressions;
@@ -4790,6 +4856,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
       decorators: classDecorators,
       decoratorArguments: classDecoratorArguments,
+      decoratorOrigins: classDecoratorOrigins,
       decoratorReferences: collectDecoratorReferences(statement, ctx, parseNodeType),
       bases,
       baseArguments,
