@@ -10,6 +10,7 @@ import com.hadi.clarpse.reference.MemberKind;
 import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
+import com.hadi.clarpse.reference.StandardLibraryStatus;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
 import com.hadi.clarpse.sourcemodel.Component;
@@ -391,6 +392,7 @@ final class CSharpModelAssembler {
         attachStaticReceivers(component, memberModel, typeIndex, ownerType);
         attachExtensionCalls(component, memberModel, typeIndex, ownerType);
         attachMemberCalls(component, memberModel, typeIndex, ownerType);
+        attachUsingStaticCalls(component, memberModel, typeIndex, ownerType);
         // The operand of typeof is a type whatever else shares its name, so no member-access filter.
         attachTypeReferences(component, memberModel.typeofOperands, typeIndex, ownerType, memberModel, false);
         attachTypeReferences(component, memberModel.typeTestOperands, typeIndex, ownerType, memberModel, false);
@@ -850,6 +852,119 @@ final class CSharpModelAssembler {
             reference.setResolutionKind(ResolutionKind.EXACT);
             component.insertCmpRef(reference);
         }
+    }
+
+    /**
+     * Records the call of a member a {@code using static} directive brings into scope: {@code Max(1, 2)}
+     * with {@code using static Lib.Util;} is a call of {@code Lib.Util.Max}, beside the reference to the
+     * class. The language binds a bare name to the members of the enclosing types first, then to a local,
+     * so a name the enclosing types may declare (including through a base the parse does not hold), a name
+     * the body declares and a name that is a parameter or local of the member add nothing. The name must be
+     * a static method that exactly one class of the file's static usings declares; a class that is not
+     * parsed supplies a name only when it is the sole static using of the file and a standard-library
+     * class, since nothing else says which class declares it.
+     */
+    private static void attachUsingStaticCalls(final Component component,
+                                               final CSharpModel.CSharpMemberModel memberModel,
+                                               final CSharpTypeIndex typeIndex,
+                                               final CSharpModel.CSharpTypeModel ownerType) {
+        if (memberModel.bareCalls.isEmpty() || ownerType.staticImports.isEmpty()) {
+            return;
+        }
+        for (final String name : memberModel.bareCalls) {
+            if (isDeclaredInMember(name, memberModel) || isBoundByEnclosingTypes(name, ownerType, typeIndex)) {
+                continue;
+            }
+            final List<String> declaring = new ArrayList<>();
+            final List<String> libraries = new ArrayList<>();
+            int unknown = 0;
+            for (final String target : ownerType.staticImports) {
+                final CSharpTypeIndex.Resolution resolved = typeIndex.resolveType(target, ownerType, null);
+                final CSharpModel.CSharpTypeModel model = resolved != null && resolved.kind() == ResolutionKind.EXACT
+                        ? typeIndex.typeModelsByName.get(resolved.name()) : null;
+                if (model != null) {
+                    if (declaresStaticMethod(model, name)) {
+                        declaring.add(model.uniqueName);
+                    }
+                } else if (new CSharpStandardLibrary().ofExternalName(target) == StandardLibraryStatus.STANDARD) {
+                    libraries.add(target);
+                } else {
+                    unknown += 1;
+                }
+            }
+            String owner = null;
+            String unit = null;
+            if (declaring.size() == 1) {
+                owner = declaring.get(0);
+            } else if (declaring.isEmpty() && unknown == 0 && libraries.size() == 1
+                    && ownerType.staticImports.size() == 1) {
+                owner = libraries.get(0);
+                unit = owner.substring(0, Math.max(owner.lastIndexOf('.'), 0));
+            }
+            if (owner == null || owner.equals(ownerType.uniqueName) || owner.equals(component.uniqueName())) {
+                continue;
+            }
+            final SimpleTypeReference type = new SimpleTypeReference(owner);
+            type.setResolutionKind(ResolutionKind.EXACT);
+            component.insertCmpRef(type);
+            final MemberReference call = new MemberReference(owner, name, MemberKind.CALL, unit);
+            call.setResolutionKind(ResolutionKind.EXACT);
+            component.insertCmpRef(call);
+        }
+    }
+
+    /** Whether the member itself declares the name: as a parameter, a local, a lambda variable or in its body. */
+    private static boolean isDeclaredInMember(final String name, final CSharpModel.CSharpMemberModel memberModel) {
+        if (memberModel.bodyDeclaredNames.contains(name) || memberModel.lambdaVariables.containsKey(name)
+                || memberModel.typeParameters.contains(name)) {
+            return true;
+        }
+        for (final CSharpModel.CSharpParameterModel parameter : memberModel.parameters) {
+            if (name.equals(parameter.name)) {
+                return true;
+            }
+        }
+        for (final CSharpModel.CSharpMemberModel local : memberModel.locals) {
+            if (local.name != null && name.equals(local.name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a bare name written in the type may be bound by the type itself, a type that encloses it,
+     * or what either inherits: one of them declares a member of the name, or its ancestry has a part the
+     * parse does not hold.
+     */
+    private static boolean isBoundByEnclosingTypes(final String name, final CSharpModel.CSharpTypeModel ownerType,
+                                                   final CSharpTypeIndex typeIndex) {
+        String current = ownerType.uniqueName;
+        while (current != null && !current.isEmpty()) {
+            final CSharpModel.CSharpTypeModel level = typeIndex.typeModelsByName.get(current);
+            if (level != null && (typeIndex.declaresMemberNamed(level, name)
+                    || !typeIndex.hasFullyParsedAncestry(level))) {
+                return true;
+            }
+            final int cut = current.lastIndexOf('.');
+            if (cut < 0) {
+                return false;
+            }
+            current = current.substring(0, cut);
+        }
+        return false;
+    }
+
+    /** Whether the class declares, itself, a static method of the name that is not an extension method. */
+    private static boolean declaresStaticMethod(final CSharpModel.CSharpTypeModel type, final String name) {
+        for (final CSharpModel.CSharpMemberModel member : type.members) {
+            if ("method".equals(member.kind) && member.modifiers.contains("static") && member.name != null
+                    && name.equals(CSharpTypeIndex.bareName(member.name))
+                    && member.parameters.stream().noneMatch(parameter -> parameter.extensionReceiver)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Whether every using of the file names {@code System} or a namespace the repository declares. */

@@ -671,6 +671,7 @@ final class CSharpFileParser {
         typeModel.startOffset = node.startOffset;
         typeModel.endOffset = node.endOffset;
         typeModel.imports = importTargets(fileModel.usings);
+        typeModel.staticImports = staticImportTargets(fileModel.usings, typeModel.namespaceName);
         typeModel.importDirectives = importDirectives(fileModel.usings);
         typeModel.usingAliases = usingAliases(fileModel.usings);
         if (parentTypeComponentName == null || parentTypeComponentName.isEmpty()) {
@@ -1127,6 +1128,7 @@ final class CSharpFileParser {
         CSharpBodyText.collectTypeofOperands(text, member);
         CSharpTypeTestText.collect(text, member);
         CSharpBodyText.collectExtensionCalls(text, member);
+        CSharpBodyText.collectBareCalls(text, member);
     }
 
     private static void collectLambdaVariable(final SyntaxNode parameter,
@@ -1271,6 +1273,27 @@ final class CSharpFileParser {
             }
         }
         return members;
+    }
+
+    /**
+     * The classes named by {@code using static} directives that are in force where a type of the given
+     * namespace is declared: a directive written in a namespace applies inside it.
+     */
+    private static Set<String> staticImportTargets(final List<CSharpModel.CSharpUsingModel> usings,
+                                                   final String namespaceName) {
+        final Set<String> targets = new LinkedHashSet<>();
+        for (final CSharpModel.CSharpUsingModel usingModel : usings) {
+            if (!usingModel.staticImport || usingModel.aliasImport || usingModel.implicitImport
+                    || usingModel.target == null || usingModel.target.isEmpty()) {
+                continue;
+            }
+            final String scope = usingModel.scopeNamespace;
+            if (scope == null || scope.isEmpty() || scope.equals(namespaceName)
+                    || (namespaceName != null && namespaceName.startsWith(scope + "."))) {
+                targets.add(usingModel.target);
+            }
+        }
+        return targets;
     }
 
     private static Set<String> importTargets(final List<CSharpModel.CSharpUsingModel> usings) {
