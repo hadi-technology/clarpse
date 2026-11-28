@@ -15,6 +15,9 @@ public class TypeScriptComponentModel {
     public String returnType;
     public String type;
     public String jsDoc;
+
+    /** The reference to the one type this declaration is written with, or {@code null}. */
+    public TypeScriptReferenceModel declaredType;
     public int cyclo;
     public List<String> modifiers = new ArrayList<>();
     public List<TypeScriptComponentModel> members = new ArrayList<>();

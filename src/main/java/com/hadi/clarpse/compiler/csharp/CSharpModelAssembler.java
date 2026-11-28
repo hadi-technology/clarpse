@@ -365,6 +365,7 @@ final class CSharpModelAssembler {
                 ParseUtil.pointParentsToGivenChild(paramComponent, stack);
                 attachTypeReferences(paramComponent, singletonType(parameter.declaredType),
                         typeIndex, ownerType, memberModel, false);
+                attachDeclaredType(paramComponent, parameter.declaredType, typeIndex, ownerType, memberModel);
                 model.insertComponent(paramComponent);
                 ParseUtil.copyRefsToParents(paramComponent, stack);
             }
@@ -389,6 +390,11 @@ final class CSharpModelAssembler {
                 "method".equals(memberModel.kind) || "constructor".equals(memberModel.kind));
         attachConstructions(component, memberModel.constructedTypes, typeIndex, ownerType, memberModel,
                 "method".equals(memberModel.kind) || "constructor".equals(memberModel.kind));
+        if (!"constructor".equals(memberModel.kind)) {
+            final String written = memberModel.returnType != null && !memberModel.returnType.isEmpty()
+                    ? memberModel.returnType : memberModel.declaredType;
+            attachDeclaredType(component, written, typeIndex, ownerType, memberModel);
+        }
         attachStaticReceivers(component, memberModel, typeIndex, ownerType);
         attachExtensionCalls(component, memberModel, typeIndex, ownerType);
         attachMemberCalls(component, memberModel, typeIndex, ownerType);
@@ -605,6 +611,54 @@ final class CSharpModelAssembler {
             elements.add(attributeValue(element, typeIndex, ownerType));
         }
         return AnnotationArgument.array(elements);
+    }
+
+    /**
+     * Records the type a declaration is written with as the component's declared type: the head of a
+     * single named type, whatever type arguments it has and a nullable marker it carries. A tuple, an array
+     * or pointer, {@code void}, {@code var}, {@code dynamic} and a type parameter are not one, and the
+     * reference is recorded only when the written type already gave this component that reference.
+     */
+    private static void attachDeclaredType(final Component component, final String written,
+                                           final CSharpTypeIndex typeIndex,
+                                           final CSharpModel.CSharpTypeModel ownerType,
+                                           final CSharpModel.CSharpMemberModel memberModel) {
+        if (written == null) {
+            return;
+        }
+        String text = written.trim();
+        while (text.endsWith("?")) {
+            text = text.substring(0, text.length() - 1).trim();
+        }
+        text = text.replaceFirst("^ref\\s+(readonly\\s+)?", "");
+        if (text.isEmpty() || "void".equals(text) || "var".equals(text) || "dynamic".equals(text)
+                || text.indexOf('(') >= 0 || text.indexOf('[') >= 0 || text.indexOf('*') >= 0) {
+            return;
+        }
+        final List<CSharpFileParser.TypeToken> tokens = CSharpFileParser.extractTypeReferences(text);
+        if (tokens.isEmpty() || !text.startsWith(tokens.get(0).name())) {
+            return;
+        }
+        final CSharpFileParser.TypeToken head = tokens.get(0);
+        final String rest = text.substring(head.name().length()).trim();
+        if (!rest.isEmpty() && !(rest.startsWith("<") && rest.endsWith(">"))) {
+            return;
+        }
+        if (ownerType.typeParameters.contains(head.name())
+                || (memberModel != null && memberModel.typeParameters.contains(head.name()))) {
+            return;
+        }
+        final CSharpTypeIndex.Resolution resolved = typeIndex.resolveType(head.name(), head.arity(), ownerType,
+                memberModel);
+        if (resolved == null) {
+            return;
+        }
+        for (final ComponentReference reference : component.references()) {
+            if (reference instanceof SimpleTypeReference && reference.invokedComponent().equals(resolved.name())) {
+                component.setDeclaredType((SimpleTypeReference) reference);
+                return;
+            }
+        }
     }
 
     private static void attachTypeReferences(final Component component,

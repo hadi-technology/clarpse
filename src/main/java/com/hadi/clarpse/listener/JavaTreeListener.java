@@ -1055,6 +1055,9 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                         ParseUtil.insertCmpRef(methodParamCmp, typed(new SimpleTypeReference(resolvedType)),
                                 this.componentStack);
                     }
+                    if (!param.isVarArgs()) {
+                        recordDeclaredType(methodParamCmp, param.getType());
+                    }
                     ParseUtil.pointParentsToGivenChild(methodParamCmp, componentStack);
                     componentStack.push(methodParamCmp);
                     completeComponent();
@@ -1062,8 +1065,37 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
             }
             currCyclomaticComplexity = 1 + countLogicalBinaryOperators(ctx);
             super.visit(ctx, arg);
+            recordDeclaredType(currMethodCmp, ctx.getType());
             typeVariables = enclosingTypeVariables;
             completeComponent();
+        }
+    }
+
+    /**
+     * Records the type a declaration is written with as the component's declared type, when it is one
+     * named type: a class or interface, whatever type arguments it has. A primitive, {@code void}, an
+     * array, a wildcard, {@code var} and a type variable are not.
+     */
+    private void recordDeclaredType(final Component cmp, final com.github.javaparser.ast.type.Type type) {
+        if (!(type instanceof ClassOrInterfaceType)) {
+            return;
+        }
+        final ClassOrInterfaceType named = (ClassOrInterfaceType) type;
+        final String written = named.getNameWithScope();
+        if (named.getScope().isEmpty() && typeVariables.contains(written)) {
+            return;
+        }
+        final String resolvedType = resolveType(written);
+        if (resolvedType == null) {
+            return;
+        }
+        pendingName = null;
+        // Only a reference the written type already gave the component, so its references are unchanged.
+        for (final ComponentReference reference : cmp.references()) {
+            if (reference instanceof SimpleTypeReference && reference.invokedComponent().equals(resolvedType)) {
+                cmp.setDeclaredType((SimpleTypeReference) reference);
+                return;
+            }
         }
     }
 
@@ -1315,6 +1347,7 @@ public class JavaTreeListener extends VoidVisitorAdapter<Object> {
                     componentStack.push(tmp);
                     ctx.getAnnotations().forEach(annotation -> annotation.accept(this, arg));
                     copy.accept(this, arg);
+                    recordDeclaredType(tmp, copy.getType());
                     completeComponent();
                 }
             } catch (final Exception e) {

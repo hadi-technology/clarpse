@@ -69,6 +69,51 @@ public final class TypeNames {
         return result;
     }
 
+    /**
+     * The name of the one type a written type is, or null where it is not exactly one named type.
+     *
+     * <p>{@code Order}, {@code Order?}, {@code a.b.Order} and {@code List<Order>} are the types
+     * {@code Order}, {@code Order}, {@code a.b.Order} and {@code List}: the type arguments and a
+     * nullable marker are not part of the name. An array, a tuple, a function type, a union, a pointer
+     * and anything else that is not a name with an optional argument list are not one type, and
+     * nor is the empty string.
+     *
+     * @param written a written type, or null
+     * @return the name of the type, or null
+     */
+    public static String singleNamedType(final String written) {
+        if (written == null) {
+            return null;
+        }
+        String text = written.trim();
+        while (text.endsWith("?") || text.endsWith("!")) {
+            text = text.substring(0, text.length() - 1).trim();
+        }
+        final int open = text.indexOf('<');
+        final String name = open < 0 ? text : text.substring(0, open).trim();
+        if (!name.matches("[A-Za-z_@$][\\w.@$]*")) {
+            return null;
+        }
+        if (open >= 0) {
+            int depth = 0;
+            for (int i = open; i < text.length(); i++) {
+                final char c = text.charAt(i);
+                if (c == '<') {
+                    depth += 1;
+                } else if (c == '>') {
+                    depth -= 1;
+                    if (depth == 0 && i != text.length() - 1) {
+                        return null;
+                    }
+                }
+            }
+            if (depth != 0) {
+                return null;
+            }
+        }
+        return name;
+    }
+
     private static int firstBracket(final String typeName) {
         final int angle = typeName.indexOf('<');
         final int square = typeName.indexOf('[');

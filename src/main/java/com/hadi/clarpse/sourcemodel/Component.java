@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.hadi.clarpse.reference.AnnotationReference;
 import com.hadi.clarpse.reference.ComponentReference;
+import com.hadi.clarpse.reference.SimpleTypeReference;
 import com.hadi.clarpse.reference.StandardLibraryStatus;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.ComponentType;
 import com.hadi.clarpse.sourcemodel.OOPSourceModelConstants.TypeReferences;
@@ -37,6 +38,13 @@ public final class Component implements Serializable {
     @JsonInclude(Include.NON_EMPTY)
     private final List<String> children = new ArrayList<>();
     private String value;
+    /**
+     * The target of the reference to this component's declared type, or null. The reference itself is
+     * one of this component's references, so its classification always follows the others.
+     */
+    @JsonProperty("declaredType")
+    @JsonInclude(Include.NON_NULL)
+    private String declaredType;
     private Package pkg;
     private int cyclo;
     private String name;
@@ -91,6 +99,7 @@ public final class Component implements Serializable {
             this.componentName = component.componentName;
             this.pkg = component.pkg;
             this.value = component.value;
+            this.declaredType = component.declaredType;
             this.sourceFile = component.sourceFile;
             this.module = component.module;
             this.comment = component.comment;
@@ -105,6 +114,7 @@ public final class Component implements Serializable {
             this.componentName = pool.pooled(component.componentName);
             this.pkg = pool.pooled(component.pkg);
             this.value = pool.pooled(component.value);
+            this.declaredType = pool.pooled(component.declaredType);
             this.sourceFile = pool.pooled(component.sourceFile);
             this.module = pool.pooled(component.module);
             this.comment = pool.pooled(component.comment);
@@ -530,6 +540,46 @@ public final class Component implements Serializable {
     }
     public String value() {
         return value;
+    }
+
+    /**
+     * The type this component is declared with: the return type of a METHOD or FUNCTION, the written
+     * type of a FIELD, MODULE_FIELD, LOCAL or parameter. Null when no type is written, when it is not a
+     * single named type (a type variable, an array, a union of several types, a function type), or for a
+     * declaration that returns nothing. Null means unknown, never "void".
+     *
+     * <p>The reference is written, classified and resolved exactly as the same type is in
+     * {@link #references()}, of which it is always one: type arguments are not part of it, so
+     * {@code List<Order>} is the reference to {@code List}, and a nullable marker does not change it.
+     *
+     * @return The reference to the declared type, or null.
+     */
+    public SimpleTypeReference declaredType() {
+        if (declaredType == null) {
+            return null;
+        }
+        for (final ComponentReference reference : references()) {
+            if (reference instanceof SimpleTypeReference && declaredType.equals(reference.invokedComponent())) {
+                return (SimpleTypeReference) reference;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Records the type this component is declared with, and makes the reference to it one of this
+     * component's references.
+     *
+     * @param reference The reference to the declared type, or null for no declared type.
+     */
+    @JsonIgnore
+    public void setDeclaredType(final SimpleTypeReference reference) {
+        if (reference == null) {
+            this.declaredType = null;
+            return;
+        }
+        insertCmpRef(reference);
+        this.declaredType = reference.invokedComponent();
     }
 
     public void setValue(final String value) {

@@ -3213,12 +3213,55 @@ function computeCyclo(ts, node) {
   return complexity;
 }
 
+/**
+ * The reference to the one type a written annotation names, or null: a type reference, however many type
+ * arguments it has, alone or with `null` and `undefined` beside it. An array, a tuple, a union of several
+ * types, a function or literal type, a keyword type and a type parameter name no one type, and nor does a
+ * declaration with no annotation, whose type the checker inferred. It is one of the references the
+ * annotation already gives; the assembler records it as the declared type only where it is.
+ */
+function writtenDeclaredType(typeNode, checker) {
+  const ts = state.ts;
+  let node = typeNode;
+  while (node && ts.isParenthesizedTypeNode(node)) {
+    node = node.type;
+  }
+  if (node && ts.isUnionTypeNode(node)) {
+    const kept = node.types.filter((member) => member.kind !== ts.SyntaxKind.NullKeyword
+      && member.kind !== ts.SyntaxKind.UndefinedKeyword
+      && !(ts.isLiteralTypeNode(member) && member.literal.kind === ts.SyntaxKind.NullKeyword));
+    node = kept.length === 1 ? kept[0] : null;
+    while (node && ts.isParenthesizedTypeNode(node)) {
+      node = node.type;
+    }
+  }
+  if (!node || !ts.isTypeReferenceNode(node)) {
+    return null;
+  }
+  try {
+    const identifier = ts.isQualifiedName(node.typeName) ? leftmostIdentifier(node.typeName) : node.typeName;
+    const symbol = ts.isIdentifier(identifier) ? checker.getSymbolAtLocation(identifier) : null;
+    if (symbol && (symbol.flags & ts.SymbolFlags.TypeParameter)) {
+      return null;
+    }
+    const written = writtenNameReference(node, checker);
+    if (written) {
+      return written;
+    }
+    const global = ts.isIdentifier(node.typeName) ? libraryGlobalName(node.typeName, checker) : null;
+    return global ? externalReference("type", global.name, false, global.resolution) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 function buildParameterModels(parameters, checker) {
   const models = [];
   for (const param of parameters) {
     const paramType = checker.getTypeAtLocation(param);
     models.push({
       kind: "parameter",
+      declaredType: writtenDeclaredType(param.type, checker),
       name: param.name.getText(),
       type: typeToString(checker, param),
       implementationHash: stableImplementationHash(param.getText()),
@@ -3261,6 +3304,7 @@ function buildFieldModel(node, checker) {
   const fieldType = checker.getTypeAtLocation(node);
   return {
     kind: "field",
+    declaredType: writtenDeclaredType(node.type, checker),
     name: memberName(node.name),
     type: writtenTypeText(node) || typeToString(checker, node),
     implementationHash: stableImplementationHash(node.getText()),
@@ -3284,6 +3328,7 @@ function buildMethodModel(node, checker, kindLabel) {
   const paramModels = buildParameterModels(node.parameters || [], checker);
   return {
     kind: kindLabel,
+    declaredType: kindLabel === "constructor" ? null : writtenDeclaredType(node.type, checker),
     name,
     signature,
     // The whole declaration, not just the body: a changed return type or modifier is a change too, and a
