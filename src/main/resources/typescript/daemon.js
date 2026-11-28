@@ -1868,13 +1868,25 @@ function isLibraryDeclarationFile(fileName) {
  * element type, so the name written is the base.
  */
 function libraryBaseName(typeNode, checker) {
+  if (!state.ts.isExpressionWithTypeArguments(typeNode)) {
+    return null;
+  }
+  return libraryGlobalName(typeNode.expression, checker);
+}
+
+/**
+ * What a bare name is when it is a global and not something the repository or an import declares:
+ * `exact` where the checker resolves it to a declaration in a default library or `@types` file,
+ * `unresolved` where no declaration answers to it. Null for any other name.
+ */
+function libraryGlobalName(identifier, checker) {
   const ts = state.ts;
-  if (!ts.isExpressionWithTypeArguments(typeNode) || !ts.isIdentifier(typeNode.expression)) {
+  if (!ts.isIdentifier(identifier)) {
     return null;
   }
   let symbol;
   try {
-    symbol = checker.getSymbolAtLocation(typeNode.expression);
+    symbol = checker.getSymbolAtLocation(identifier);
   } catch (err) {
     return null;
   }
@@ -1882,7 +1894,7 @@ function libraryBaseName(typeNode, checker) {
     return null;
   }
   const declarations = symbol && symbol.declarations ? symbol.declarations : [];
-  const name = typeNode.expression.text;
+  const name = identifier.text;
   if (!declarations.length) {
     return { name, resolution: "unresolved" };
   }
@@ -2282,6 +2294,22 @@ function buildCalleeReference(node, checker) {
   };
 }
 
+/**
+ * The reference a call of a global function makes to the function: `fetch(url)` names `fetch`, `exact`
+ * where the checker resolves it to a default-library or `@types` declaration and `unresolved` where no
+ * declaration answers to the name (an ambient function a userscript or extension provides). A callee the
+ * repository declares or an import binds is named by the references that already exist for it, a
+ * `require` call is the module load it is, and a call through an object names no global.
+ */
+function buildGlobalCalleeReference(node, checker) {
+  const callee = node.expression;
+  if (!callee || !state.ts.isIdentifier(callee) || (callee.text === "require" && requiredModule(node))) {
+    return null;
+  }
+  const found = libraryGlobalName(callee, checker);
+  return found ? externalReference("type", found.name, false, found.resolution) : null;
+}
+
 function buildCallReferences(node, checker) {
   const references = [];
   if (!node) {
@@ -2292,6 +2320,10 @@ function buildCallReferences(node, checker) {
   const callee = buildCalleeReference(node, checker);
   if (callee) {
     references.push(callee);
+  }
+  const globalCallee = buildGlobalCalleeReference(node, checker);
+  if (globalCallee) {
+    references.push(globalCallee);
   }
   const expr = node.expression;
   if (state.ts.isPropertyAccessExpression(expr) || state.ts.isElementAccessExpression(expr)) {
