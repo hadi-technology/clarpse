@@ -282,6 +282,8 @@ Core classes and where they live:
 - Parse listeners: `src/main/java/com/hadi/clarpse/listener/JavaTreeListener.java`
 - Source model: `src/main/java/com/hadi/clarpse/sourcemodel/OOPSourceCodeModel.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Component.java`, `src/main/java/com/hadi/clarpse/sourcemodel/Package.java`
 - References: `src/main/java/com/hadi/clarpse/reference/ComponentReference.java` and related types in `src/main/java/com/hadi/clarpse/reference`
+- Package dependencies: `src/main/java/com/hadi/clarpse/sourcemodel` and `src/main/java/com/hadi/clarpse/reference` never depend on `src/main/java/com/hadi/clarpse/compiler`, `src/main/java/com/hadi/clarpse/listener` or `src/main/java/com/hadi/clarpse/server`.
+- Package dependencies: `src/main/java/com/hadi/clarpse/compiler/java`, `src/main/java/com/hadi/clarpse/compiler/csharp` and `src/main/java/com/hadi/clarpse/compiler/typescript` never depend on one another.
 - TypeScript daemon: `src/main/resources/typescript/daemon.js`
 - Python daemon: `src/main/resources/python/daemon.js`
 
