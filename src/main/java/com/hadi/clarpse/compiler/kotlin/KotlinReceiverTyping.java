@@ -228,11 +228,160 @@ final class KotlinReceiverTyping {
             }
             return typeMembers.memberType(owner, name, false);
         }
+        final String element = typeFromTypeArgument(receiver);
+        if (element != null) {
+            return element;
+        }
         final String declared = typeOfName(receiver);
         if (declared != null || member.declarations.containsKey(receiver) || !classMembers.contains(receiver)) {
             return declared;
         }
         return typeOfProperty(receiver);
+    }
+
+    private static final Set<String> ITERABLE_OF_ONE = Set.of("List", "MutableList", "Set", "MutableSet",
+            "Collection", "MutableCollection", "Iterable", "MutableIterable", "Sequence", "ArrayList", "HashSet",
+            "LinkedHashSet", "Array");
+    private static final Set<String> INDEXED_OF_ONE = Set.of("List", "MutableList", "ArrayList", "Array");
+    private static final Set<String> INDEXED_BY_KEY = Set.of("Map", "MutableMap", "HashMap", "LinkedHashMap");
+
+    /**
+     * The type a receiver has when it follows exactly from a type argument written on a declaration: the
+     * property of a generic type ({@code b.value}), an element of a collection ({@code l[0]}), the variable
+     * of a loop over one and the parameter of a lambda given to one of its element functions. The name the
+     * type argument is written for has to be one of a parameter or local that its text declares once and
+     * no type test or assignment may retype.
+     */
+    private String typeFromTypeArgument(final String receiver) {
+        if (receiver.endsWith("[]")) {
+            return elementOf(writtenTypeOfName(receiver.substring(0, receiver.length() - 2)), true);
+        }
+        final int dot = receiver.indexOf('.');
+        if (dot > 0) {
+            return typeOfGenericProperty(writtenTypeOfName(receiver.substring(0, dot)), receiver.substring(dot + 1));
+        }
+        if (!member.declarations.containsKey(receiver) && !"it".equals(receiver)
+                || member.declarations.getOrDefault(receiver, 0) > 1 || member.narrowed.contains(receiver)) {
+            return null;
+        }
+        final String loopCollection = member.loopCollections.get(receiver);
+        if (loopCollection != null && !loopCollection.isEmpty() && !loopCollection.equals(receiver)) {
+            final String written = member.loopTypes.get(receiver);
+            if (written != null) {
+                return typeMembers.resolveWritten(written, scope);
+            }
+            return elementOf(writtenTypeOfName(loopCollection), false);
+        }
+        final String lambdaCollection = member.lambdaCollections.get(receiver);
+        if (lambdaCollection != null && !lambdaCollection.isEmpty() && !lambdaCollection.equals(receiver)
+                && !classMembers.contains(receiver)) {
+            return elementOf(writtenTypeOfName(lambdaCollection), false);
+        }
+        return null;
+    }
+
+    /** The type a parameter or local is written with, when its text declares it once and nothing retypes it. */
+    private String writtenTypeOfName(final String name) {
+        if (member.declarations.getOrDefault(name, 0) != 1 || member.narrowed.contains(name)) {
+            return null;
+        }
+        for (final KotlinParameterModel parameter : member.parameters) {
+            if (name.equals(parameter.name)) {
+                return parameter.declaredType;
+            }
+        }
+        for (final KotlinMemberModel local : member.locals) {
+            if (name.equals(local.name)) {
+                return local.declaredType;
+            }
+        }
+        return null;
+    }
+
+    /** The head and the top-level type arguments of a written type; null when it has none. */
+    private static List<String> headAndArguments(final String written) {
+        if (written == null) {
+            return null;
+        }
+        String text = written.trim();
+        if (text.endsWith("?")) {
+            text = text.substring(0, text.length() - 1);
+        }
+        final int open = text.indexOf('<');
+        if (open <= 0 || !text.endsWith(">")) {
+            return null;
+        }
+        final List<String> parts = new ArrayList<>();
+        parts.add(text.substring(0, open).trim());
+        int depth = 0;
+        int start = open + 1;
+        for (int i = open; i < text.length(); i += 1) {
+            final char c = text.charAt(i);
+            if (c == '<') {
+                depth += 1;
+            } else if (c == '>') {
+                depth -= 1;
+                if (depth == 0 && i != text.length() - 1) {
+                    return null;
+                }
+            } else if (c == ',' && depth == 1) {
+                parts.add(text.substring(start, i).trim());
+                start = i + 1;
+            }
+        }
+        parts.add(text.substring(start, text.length() - 1).trim());
+        return parts;
+    }
+
+    /** The class a collection's written head names, when it is a collection of the platform and no type of the repository. */
+    private String libraryCollection(final String head) {
+        final String resolved = typeMembers.resolveWritten(head, scope);
+        if (resolved == null || resolver.index().declaration(resolved) != null
+                || !(resolved.startsWith("kotlin.") || resolved.startsWith("java.util."))) {
+            return null;
+        }
+        return resolved.substring(resolved.lastIndexOf('.') + 1);
+    }
+
+    /** The type an element of a collection written with its type argument has, or null. */
+    private String elementOf(final String collection, final boolean indexed) {
+        final List<String> parts = headAndArguments(collection);
+        if (parts == null) {
+            return null;
+        }
+        final String simple = libraryCollection(parts.get(0));
+        if (simple == null) {
+            return null;
+        }
+        if (indexed && INDEXED_BY_KEY.contains(simple) && parts.size() == 3) {
+            return typeMembers.resolveWritten(parts.get(2), scope);
+        }
+        Set<String> single = ITERABLE_OF_ONE;
+        if (indexed) {
+            single = INDEXED_OF_ONE;
+        }
+        if (parts.size() == 2 && single.contains(simple)) {
+            return typeMembers.resolveWritten(parts.get(1), scope);
+        }
+        return null;
+    }
+
+    /** The type of {@code holder.property} when the property is written with a type parameter the holder gives an argument. */
+    private String typeOfGenericProperty(final String holder, final String property) {
+        final List<String> parts = headAndArguments(holder);
+        if (parts == null || property.indexOf('.') >= 0) {
+            return null;
+        }
+        final String type = typeMembers.resolveWritten(parts.get(0), scope);
+        if (type == null || resolver.index().declaration(type) == null) {
+            return null;
+        }
+        final int position = typeMembers.typeParameterPosition(type, property);
+        if (position < 0 || position + 1 >= parts.size()
+                || resolver.index().declaration(type).type().typeParameters.size() != parts.size() - 1) {
+            return null;
+        }
+        return typeMembers.resolveWritten(parts.get(position + 1), scope);
     }
 
     private String typeOfCall(final String name) {

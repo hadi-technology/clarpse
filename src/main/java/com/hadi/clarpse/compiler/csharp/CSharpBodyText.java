@@ -242,6 +242,163 @@ final class CSharpBodyText {
         }
     }
 
+    private static final Pattern IDENTIFIER = Pattern.compile("(?<![\\w@])@?[A-Za-z_]\\w*");
+
+    /** Words that are never the name of a called member. */
+    private static final Set<String> NOT_CALLED = Set.of(
+            "if", "while", "for", "foreach", "switch", "catch", "using", "lock", "fixed", "typeof", "sizeof",
+            "default", "checked", "unchecked", "nameof", "stackalloc", "when", "return", "await", "new", "base",
+            "this", "var", "is", "as", "and", "or", "not", "in", "out", "ref", "else", "do", "case", "throw",
+            "yield", "delegate", "params", "where", "from", "select", "group", "orderby", "let", "join", "on",
+            "equals", "by", "into", "ascending", "descending", "async", "unsafe", "readonly", "static", "const",
+            "get", "set", "init", "value", "true", "false", "null", "string", "int", "long", "short", "byte",
+            "bool", "double", "float", "decimal", "char", "object", "void", "uint", "ulong", "ushort", "sbyte");
+
+    /** Words after which an expression, and so a call, may begin. */
+    private static final Set<String> BEFORE_AN_EXPRESSION = Set.of(
+            "return", "await", "else", "yield", "throw", "in", "is", "as", "case", "when", "and", "or", "not",
+            "do", "ref", "lock", "switch", "if", "while", "for", "foreach");
+
+    /** Words after which a name is a pattern, {@code o is Point(var a)}, and never a call. */
+    private static final Set<String> AHEAD_OF_A_PATTERN = Set.of("is", "case", "when");
+
+    /**
+     * Records every name called without a receiver, {@code Max(1, 2)}, outside comments and string
+     * literals, and every name the body may declare itself: a name written after a type or {@code var}
+     * ({@code int Max(...)}, {@code var Max = ...}) or before {@code =>}. Only a name written where an
+     * expression begins counts as a call; a name written after anything else is read as a declaration
+     * and credited to no call.
+     */
+    static void collectBareCalls(final String text, final CSharpModel.CSharpMemberModel member) {
+        final String clean = withoutCommentsAndStrings(text);
+        final Matcher matcher = IDENTIFIER.matcher(clean);
+        while (matcher.find()) {
+            final String name = strip(matcher.group());
+            int before = matcher.start() - 1;
+            while (before >= 0 && Character.isWhitespace(clean.charAt(before))) {
+                before -= 1;
+            }
+            char previous = 0;
+            if (before >= 0) {
+                previous = clean.charAt(before);
+            }
+            if (previous == '.' || previous == ':' && before > 0 && clean.charAt(before - 1) == ':') {
+                continue;
+            }
+            if (previous == '>' && before > 0 && clean.charAt(before - 1) == '-') {
+                continue;
+            }
+            int after = matcher.end();
+            while (after < clean.length() && Character.isWhitespace(clean.charAt(after))) {
+                after += 1;
+            }
+            char next = 0;
+            if (after < clean.length()) {
+                next = clean.charAt(after);
+            }
+            if (next == '=' && after + 1 < clean.length() && clean.charAt(after + 1) == '>') {
+                member.bodyDeclaredNames.add(name);
+                continue;
+            }
+            final String previousWord = wordEndingAt(clean, before);
+            final boolean expressionStart = !isNamePart(previous) || BEFORE_AN_EXPRESSION.contains(previousWord);
+            final boolean afterTypeName = isNamePart(previous) && !BEFORE_AN_EXPRESSION.contains(previousWord)
+                    && !"new".equals(previousWord);
+            // A nullable marker is written against its type; the `?` of a conditional follows a space.
+            final boolean nullableMarker = previous == '?' && before > 0 && (isNamePart(clean.charAt(before - 1))
+                    || clean.charAt(before - 1) == '>' || clean.charAt(before - 1) == ']');
+            final boolean afterTypeSyntax = previous == ']' || nullableMarker
+                    || previous == '>' && !(before > 0 && clean.charAt(before - 1) == '=');
+            if ("new".equals(previousWord) || NOT_CALLED.contains(name) || AHEAD_OF_A_PATTERN.contains(previousWord)) {
+                continue;
+            }
+            if (afterTypeName || afterTypeSyntax) {
+                member.bodyDeclaredNames.add(name);
+                continue;
+            }
+            if (expressionStart && isCallAt(clean, matcher.end())) {
+                member.bareCalls.add(name);
+            }
+        }
+    }
+
+    /** Whether a parenthesised argument list, after any type arguments, begins at {@code from}. */
+    private static boolean isCallAt(final String text, final int from) {
+        int i = from;
+        while (i < text.length() && Character.isWhitespace(text.charAt(i))) {
+            i += 1;
+        }
+        if (i < text.length() && text.charAt(i) == '<') {
+            final Matcher generic = GENERIC_ARGUMENTS.matcher(text);
+            generic.region(i, text.length());
+            if (!generic.lookingAt()) {
+                return false;
+            }
+            return true;
+        }
+        return i < text.length() && text.charAt(i) == '(';
+    }
+
+    private static final Pattern GENERIC_ARGUMENTS = Pattern.compile("<[\\w.,\\s?\\[\\]<>]{0,1000}>\\s*\\(");
+
+    private static final Pattern FOREACH_VAR = Pattern.compile(
+            "\\bforeach\\s*\\(\\s*var\\s+(@?[A-Za-z_]\\w*)\\s+in\\s+(@?[A-Za-z_]\\w*)\\s*\\)");
+    private static final Pattern LAMBDA_ON_COLLECTION = Pattern.compile(
+            "(?<![\\w.@])(@?[A-Za-z_]\\w*)\\s*\\.\\s*(?:ForEach|RemoveAll|Exists|TrueForAll|FindAll|Find)\\s*\\(\\s*"
+                    + "(@?[A-Za-z_]\\w*)\\s*=>");
+    private static final Pattern INDEXED_CALL = Pattern.compile(
+            "(?<![\\w.@\\]])(@?[A-Za-z_]\\w*)\\s*\\[[^\\[\\]]*\\]\\s*\\.\\s*(@?[A-Za-z_]\\w*)\\s*(?:<[^()]*>)?\\s*\\(");
+
+    /**
+     * Records the places a receiver's type follows from the type argument of a collection written
+     * elsewhere: the variable of {@code foreach (var x in items)}, the parameter of
+     * {@code items.ForEach(x => ...)}, and {@code items[i].Name(...)}. The collection has to be a plain
+     * name; whether its type is known is for the assembler.
+     */
+    static void collectElementReceivers(final String text, final CSharpModel.CSharpMemberModel member) {
+        final String clean = withoutCommentsAndStrings(text);
+        final Matcher loops = FOREACH_VAR.matcher(clean);
+        while (loops.find()) {
+            record(member.foreachCollections, strip(loops.group(1)), strip(loops.group(2)));
+        }
+        final Matcher lambdas = LAMBDA_ON_COLLECTION.matcher(clean);
+        while (lambdas.find()) {
+            record(member.lambdaCollections, strip(lambdas.group(2)), strip(lambdas.group(1)));
+        }
+        final Matcher indexed = INDEXED_CALL.matcher(clean);
+        while (indexed.find()) {
+            member.indexedCalls.add(new CSharpModel.IndexedCall(strip(indexed.group(1)), indexed.group(2)));
+        }
+    }
+
+    private static void record(final java.util.Map<String, String> into, final String variable,
+                               final String collection) {
+        if (into.containsKey(variable) && !collection.equals(into.get(variable))) {
+            into.put(variable, "");
+        } else {
+            into.put(variable, collection);
+        }
+    }
+
+    private static String strip(final String name) {
+        if (name.startsWith("@")) {
+            return name.substring(1);
+        }
+        return name;
+    }
+
+    /** The word that ends at {@code last}, or the empty string. */
+    private static String wordEndingAt(final String text, final int last) {
+        if (last < 0 || !isNamePart(text.charAt(last))) {
+            return "";
+        }
+        int start = last;
+        while (start > 0 && isNamePart(text.charAt(start - 1))) {
+            start -= 1;
+        }
+        return text.substring(start, last + 1);
+    }
+
     /** The dotted chain of names that ends at {@code last}, or null when it is not all of the receiver. */
     private static String receiverChain(final String text, final int last) {
         if (!isNamePart(text.charAt(last))) {

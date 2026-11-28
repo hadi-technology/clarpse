@@ -367,6 +367,29 @@ final class TypeScriptModelAssembler {
                 component.insertCmpRef(componentReference);
             }
         }
+        attachDeclaredType(component, declaration, repoRoot);
+    }
+
+    /**
+     * Records the type a declaration is written with as its declared type, where the written type
+     * already gave the component that reference.
+     */
+    private static void attachDeclaredType(final Component component,
+                                           final TypeScriptComponentModel declaration,
+                                           final String repoRoot) {
+        if (declaration.declaredType == null) {
+            return;
+        }
+        final String invoked = resolveInvokedComponent(declaration.declaredType, repoRoot);
+        if (invoked == null || invoked.isEmpty()) {
+            return;
+        }
+        for (final ComponentReference reference : component.references()) {
+            if (reference instanceof SimpleTypeReference && reference.invokedComponent().equals(invoked)) {
+                component.setDeclaredType((SimpleTypeReference) reference);
+                return;
+            }
+        }
     }
 
     /** The resolution kind of a daemon reference: a repository target is exact, an external one as the daemon says. */

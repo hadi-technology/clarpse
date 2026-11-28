@@ -6,6 +6,7 @@ import com.hadi.clarpse.compiler.StandardLibraries;
 import com.hadi.clarpse.compiler.python.model.PythonImportDirectiveModel;
 import com.hadi.clarpse.compiler.python.model.PythonClassModel;
 import com.hadi.clarpse.compiler.python.model.PythonDecoratorArgumentModel;
+import com.hadi.clarpse.compiler.python.model.PythonDecoratorOriginModel;
 import com.hadi.clarpse.compiler.python.model.PythonDecoratorValueModel;
 import com.hadi.clarpse.compiler.python.model.PythonFieldModel;
 import com.hadi.clarpse.compiler.python.model.PythonFileModel;
@@ -324,7 +325,8 @@ final class PythonModelAssembler {
                 insertReferences(component, decoratorRef, false);
             }
         }
-        attachDecoratorReferences(component, classModel.decorators, classModel.decoratorArguments);
+        attachDecoratorReferences(component, classModel.decorators, classModel.decoratorArguments,
+                classModel.decoratorOrigins);
         return component;
     }
 
@@ -332,13 +334,16 @@ final class PythonModelAssembler {
      * Records each applied decorator as an {@link AnnotationReference} on the component -- the same
      * mechanism a base class uses for its extension reference, so a decorator is a distinct kind of
      * reference and not a separate field. The daemon has already reduced each decorator to its type
-     * name ({@code app.route} to {@code route}); an unresolved decorator is still a real fact, so it
-     * is kept under that name.
+     * name ({@code app.route} to {@code route}), and names the ones an import binds from a module
+     * outside the repository by that import ({@code functools.wraps}); an unresolved decorator is
+     * still a real fact, so it is kept under the name it has.
      */
     private static void attachDecoratorReferences(final Component component,
                                                   final java.util.List<String> decorators,
                                                   final java.util.List<java.util.List<PythonDecoratorArgumentModel>>
-                                                          decoratorArguments) {
+                                                          decoratorArguments,
+                                                  final java.util.List<PythonDecoratorOriginModel>
+                                                          decoratorOrigins) {
         if (decorators == null) {
             return;
         }
@@ -348,13 +353,25 @@ final class PythonModelAssembler {
             if (decorator == null || decorator.isBlank()) {
                 continue;
             }
-            final String invoked = decorator.trim();
+            PythonDecoratorOriginModel origin = null;
+            if (decoratorOrigins != null && i < decoratorOrigins.size()) {
+                origin = decoratorOrigins.get(i);
+            }
+            final boolean imported = origin != null && origin.name != null && !origin.name.isBlank();
+            String invoked = decorator.trim();
+            if (imported) {
+                invoked = origin.name.trim();
+            }
             if (invoked.equals(component.uniqueName()) || !seen.add(invoked)) {
                 continue;
             }
             final AnnotationReference reference = new AnnotationReference(invoked);
-            // Only the decorator's written name is known here, so it is kept as written.
+            // A decorator an import binds from a module outside the repository is named by that
+            // import; any other is kept as written.
             reference.setResolutionKind(ResolutionKind.UNRESOLVED);
+            if (imported && !origin.unresolved) {
+                reference.setResolutionKind(ResolutionKind.EXACT);
+            }
             if (decoratorArguments != null && i < decoratorArguments.size()
                     && decoratorArguments.get(i) != null) {
                 reference.setArguments(decoratorArgumentMap(decoratorArguments.get(i)));
@@ -463,6 +480,7 @@ final class PythonModelAssembler {
         typeRef.alternates = field.alternates;
         typeRef.typeVariable = field.typeVariable;
         insertReferences(component, typeRef, false);
+        attachDeclaredType(component, typeRef);
         if (field.valueReferences != null) {
             for (final PythonTypeRefModel valueRef : field.valueReferences) {
                 insertReferences(component, valueRef, false);
@@ -510,6 +528,7 @@ final class PythonModelAssembler {
         typeRef.alternates = field.alternates;
         typeRef.typeVariable = field.typeVariable;
         insertReferences(component, typeRef, false);
+        attachDeclaredType(component, typeRef);
         if (field.valueReferences != null) {
             for (final PythonTypeRefModel valueRef : field.valueReferences) {
                 insertReferences(component, valueRef, false);
@@ -556,13 +575,14 @@ final class PythonModelAssembler {
         applyCodeHash(component, method.implementationHash, method.signature);
         if (method.returnType != null) {
             insertReferences(component, method.returnType, false);
+            attachDeclaredType(component, method.returnType);
         }
         if (method.bodyReferences != null) {
             for (final PythonTypeRefModel bodyRef : method.bodyReferences) {
                 insertReferences(component, bodyRef, false);
             }
         }
-        attachDecoratorReferences(component, method.decorators, method.decoratorArguments);
+        attachDecoratorReferences(component, method.decorators, method.decoratorArguments, method.decoratorOrigins);
         return component;
     }
 
@@ -592,13 +612,14 @@ final class PythonModelAssembler {
         applyCodeHash(component, function.implementationHash, function.signature);
         if (function.returnType != null) {
             insertReferences(component, function.returnType, false);
+            attachDeclaredType(component, function.returnType);
         }
         if (function.bodyReferences != null) {
             for (final PythonTypeRefModel bodyRef : function.bodyReferences) {
                 insertReferences(component, bodyRef, false);
             }
         }
-        attachDecoratorReferences(component, function.decorators, function.decoratorArguments);
+        attachDecoratorReferences(component, function.decorators, function.decoratorArguments, function.decoratorOrigins);
         return component;
     }
 
@@ -638,6 +659,7 @@ final class PythonModelAssembler {
         typeRef.alternates = param.alternates;
         typeRef.typeVariable = param.typeVariable;
         insertReferences(component, typeRef, false);
+        attachDeclaredType(component, typeRef);
         return component;
     }
 
@@ -670,6 +692,7 @@ final class PythonModelAssembler {
         typeRef.alternates = param.alternates;
         typeRef.typeVariable = param.typeVariable;
         insertReferences(component, typeRef, false);
+        attachDeclaredType(component, typeRef);
         return component;
     }
 
@@ -692,6 +715,66 @@ final class PythonModelAssembler {
                 insertReference(component, buildReference(alternate, isExtends));
             }
         }
+    }
+
+    /** The heads of annotations that name no one class: a function, a tuple, a union or a literal. */
+    private static final Set<String> NOT_A_NAMED_TYPE = Set.of("Callable", "collections.abc.Callable",
+            "typing.Callable", "Union", "typing.Union", "Literal", "typing.Literal", "Tuple", "typing.Tuple", "tuple");
+
+    /**
+     * Records the class an annotation names as the component's declared type: one class, whatever its
+     * subscript, with {@code Optional[X]} being {@code X}. A union, a function, a tuple, a literal, a type
+     * variable and {@code None} are not one, and the reference is recorded only when the annotation already
+     * gave the component that reference.
+     */
+    private static void attachDeclaredType(final Component component, final PythonTypeRefModel ref) {
+        if (ref == null || ref.typeVariable || ref.member != null || ref.construction
+                || (ref.alternates != null && !ref.alternates.isEmpty())) {
+            return;
+        }
+        final ComponentReference built = buildReference(ref, false);
+        if (!(built instanceof SimpleTypeReference) || !namesOneClass(ref.raw, built.invokedComponent())) {
+            return;
+        }
+        for (final ComponentReference reference : component.references()) {
+            if (reference instanceof SimpleTypeReference
+                    && reference.invokedComponent().equals(built.invokedComponent())) {
+                component.setDeclaredType((SimpleTypeReference) reference);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Whether an annotation written as {@code raw} names the class {@code target} and no other type:
+     * {@code Optional[...]} wrappers are looked through, and a subscripted name must be the class itself,
+     * since {@code List[Order]} is a list and not the {@code Order} its element resolves to.
+     */
+    private static boolean namesOneClass(final String raw, final String target) {
+        String text = "";
+        if (raw != null) {
+            text = raw.trim();
+        }
+        boolean unwrapped = true;
+        while (unwrapped) {
+            unwrapped = false;
+            for (final String wrapper : new String[] {"Optional[", "typing.Optional["}) {
+                if (text.startsWith(wrapper) && text.endsWith("]")) {
+                    text = text.substring(wrapper.length(), text.length() - 1).trim();
+                    unwrapped = true;
+                }
+            }
+        }
+        final int subscript = text.indexOf('[');
+        if (subscript < 0) {
+            return !NOT_A_NAMED_TYPE.contains(text);
+        }
+        final String head = text.substring(0, subscript).trim();
+        if (NOT_A_NAMED_TYPE.contains(head)) {
+            return false;
+        }
+        final String simple = head.substring(head.lastIndexOf('.') + 1);
+        return target.equals(head) || target.endsWith("." + simple);
     }
 
     private static void insertReference(final Component component, final ComponentReference ref) {

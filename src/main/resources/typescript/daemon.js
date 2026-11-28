@@ -809,10 +809,43 @@ function programsForUnownedFiles(ts, repoRoot, configs) {
     dir,
     options,
     rootNames: groups.get(dir).sort(),
+    promiseShim: groups.get(dir).some(loadsModuleDynamically),
     projectReferences: [],
     programFailed: false,
     unowned: true
   }));
+}
+
+/**
+ * The declaration of `Promise` a program with no library is given where a file loads a module with
+ * `import()`: the checker types that call as a promise of the module, and without a global `Promise`
+ * the result is `any`. It is the part of the library that call needs, and nothing else.
+ */
+const PROMISE_SHIM_PATH = path.join(path.parse(process.cwd()).root, "__clarpse__", "promise.d.ts");
+const PROMISE_SHIM_TEXT = "interface PromiseLike<T> { then<R1 = T, R2 = never>(onfulfilled?: ((value: T) => R1 | "
+  + "PromiseLike<R1>) | null, onrejected?: ((reason: any) => R2 | PromiseLike<R2>) | null): PromiseLike<R1 | R2>; }\n"
+  + "interface Promise<T> { then<R1 = T, R2 = never>(onfulfilled?: ((value: T) => R1 | PromiseLike<R1>) | null, "
+  + "onrejected?: ((reason: any) => R2 | PromiseLike<R2>) | null): Promise<R1 | R2>; }\n";
+
+/** Whether a file's text loads a module with a call of `import(`. */
+function loadsModuleDynamically(fileName) {
+  try {
+    return /(^|[^\w$.])import\s*\(/.test(fs.readFileSync(fileName, "utf8"));
+  } catch (err) {
+    return false;
+  }
+}
+
+/** A host that holds the Promise declaration as a file of its own. */
+function withPromiseShim(host) {
+  const ts = state.ts;
+  const getSourceFile = host.getSourceFile.bind(host);
+  const fileExists = host.fileExists.bind(host);
+  host.fileExists = (fileName) => fileName === PROMISE_SHIM_PATH || fileExists(fileName);
+  host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreate) => fileName === PROMISE_SHIM_PATH
+    ? ts.createSourceFile(fileName, PROMISE_SHIM_TEXT, languageVersionOrOptions, false)
+    : getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreate);
+  return host;
 }
 
 /** Nearest enclosing directory first, and a config the repository wrote before one it did not. */
@@ -904,16 +937,17 @@ function programSpec(config) {
   if (state.oneLevel) {
     const options = Object.assign({}, config.options, { noResolve: true });
     return {
-      rootNames: config.oneLevelRoots || [],
+      rootNames: (config.oneLevelRoots || []).concat(config.promiseShim ? [PROMISE_SHIM_PATH] : []),
       options,
-      host: sharedSourceFileHost(options)
+      host: config.promiseShim ? withPromiseShim(sharedSourceFileHost(options)) : sharedSourceFileHost(options)
     };
   }
   return {
-    rootNames: config.rootNames,
+    rootNames: config.promiseShim ? config.rootNames.concat([PROMISE_SHIM_PATH]) : config.rootNames,
     options: config.options,
     projectReferences: config.projectReferences,
-    host: sharedSourceFileHost(config.options)
+    host: config.promiseShim ? withPromiseShim(sharedSourceFileHost(config.options))
+      : sharedSourceFileHost(config.options)
   };
 }
 
@@ -1868,13 +1902,25 @@ function isLibraryDeclarationFile(fileName) {
  * element type, so the name written is the base.
  */
 function libraryBaseName(typeNode, checker) {
+  if (!state.ts.isExpressionWithTypeArguments(typeNode)) {
+    return null;
+  }
+  return libraryGlobalName(typeNode.expression, checker);
+}
+
+/**
+ * What a bare name is when it is a global and not something the repository or an import declares:
+ * `exact` where the checker resolves it to a declaration in a default library or `@types` file,
+ * `unresolved` where no declaration answers to it. Null for any other name.
+ */
+function libraryGlobalName(identifier, checker) {
   const ts = state.ts;
-  if (!ts.isExpressionWithTypeArguments(typeNode) || !ts.isIdentifier(typeNode.expression)) {
+  if (!ts.isIdentifier(identifier)) {
     return null;
   }
   let symbol;
   try {
-    symbol = checker.getSymbolAtLocation(typeNode.expression);
+    symbol = checker.getSymbolAtLocation(identifier);
   } catch (err) {
     return null;
   }
@@ -1882,7 +1928,7 @@ function libraryBaseName(typeNode, checker) {
     return null;
   }
   const declarations = symbol && symbol.declarations ? symbol.declarations : [];
-  const name = typeNode.expression.text;
+  const name = identifier.text;
   if (!declarations.length) {
     return { name, resolution: "unresolved" };
   }
@@ -2031,10 +2077,13 @@ function buildDecoratorReferences(node, checker) {
     const name = decoratorTypeName(decorator.expression);
     if (name) {
       const declared = decoratorDeclaration(decorator.expression, checker);
+      const imported = declared ? null : decoratorImport(decorator.expression, checker);
       references.push({
         kind: "annotation",
         external: !declared,
-        ...(declared ? { target: declared } : { displayName: name, resolution: "unresolved" }),
+        ...(declared ? { target: declared }
+          : imported ? { displayName: imported.displayName, resolution: imported.resolution }
+            : { displayName: name, resolution: "unresolved" }),
         arguments: readDecoratorArguments(decorator.expression, checker)
       });
     }
@@ -2046,6 +2095,46 @@ function buildDecoratorReferences(node, checker) {
     }
   }
   return references;
+}
+
+/**
+ * The package-qualified name of a decorator an import binds from a package the repository does not
+ * hold, `@nestjs/common:Controller`, or null where its name is not bound that way. A name imported
+ * under another local name is the name the package exports it by; a namespace import's member is the
+ * member's name.
+ */
+function decoratorImport(expression, checker) {
+  const ts = state.ts;
+  let callee = expression;
+  while (ts.isCallExpression(callee)) {
+    callee = callee.expression;
+  }
+  if (ts.isPropertyAccessExpression(callee)) {
+    return buildNamespaceMemberReference(callee, checker);
+  }
+  if (!ts.isIdentifier(callee)) {
+    return null;
+  }
+  let symbol;
+  let actual = null;
+  try {
+    symbol = checker.getSymbolAtLocation(callee);
+    if (!symbol || !(symbol.flags & ts.SymbolFlags.Alias)) {
+      return null;
+    }
+    actual = checker.getAliasedSymbol(symbol);
+  } catch (err) {
+    return null;
+  }
+  const imported = importedFrom(symbol);
+  const packageName = packageOfSpecifier(imported);
+  const reference = packageName ? buildExternalValueReference(callee, imported, actual) : null;
+  const specifier = symbol.declarations && symbol.declarations[0];
+  if (reference && specifier && ts.isImportSpecifier(specifier) && specifier.propertyName
+      && specifier.propertyName.text !== "default") {
+    return externalNamedReference(packageName, specifier.propertyName.text);
+  }
+  return reference;
 }
 
 /**
@@ -2179,6 +2268,64 @@ function readNamedArgument(node, checker) {
   return { kind: "other" };
 }
 
+/** The exports of the repository module a variable's initializer loads with a literal `import()` or `require()`. */
+function loadedModuleExports(variable, checker) {
+  const ts = state.ts;
+  if (!variable || !ts.isVariableDeclaration(variable) || !variable.initializer) {
+    return null;
+  }
+  const specifier = requiredModule(variable.initializer);
+  if (!specifier) {
+    return null;
+  }
+  let call = variable.initializer;
+  while (!ts.isCallExpression(call) && call.expression) {
+    call = call.expression;
+  }
+  const file = resolveImportedFile(call.arguments[0], specifier, variable.getSourceFile(), checker);
+  const moduleSource = file && state.currentProgram ? state.currentProgram.getSourceFile(file) : null;
+  const moduleSymbol = moduleSource ? checker.getSymbolAtLocation(moduleSource) : null;
+  return moduleSymbol ? checker.getExportsOfModule(moduleSymbol) : null;
+}
+
+function exportNamed(exports, name, checker) {
+  const found = exports ? exports.find((entry) => entry.getName() === name) : null;
+  if (!found) {
+    return null;
+  }
+  return (found.flags & state.ts.SymbolFlags.Alias) ? checker.getAliasedSymbol(found) : found;
+}
+
+/**
+ * The export a name destructured from a literal `import("m")` or `require("m")` binds, found in the
+ * module's own exports where the checker cannot type the call. Null where the binding is not such a name,
+ * the module is not a file of the repository or exports nothing of that name.
+ */
+function loadedExportOf(declaration, checker) {
+  const ts = state.ts;
+  if (!declaration || !ts.isBindingElement(declaration) || !ts.isObjectBindingPattern(declaration.parent)
+      || declaration.dotDotDotToken) {
+    return null;
+  }
+  const wanted = declaration.propertyName && ts.isIdentifier(declaration.propertyName)
+    ? declaration.propertyName.text : declaration.name.text;
+  return exportNamed(loadedModuleExports(declaration.parent.parent, checker), wanted, checker);
+}
+
+/** The export `ns.name` reaches when `ns` is bound to a literal `import("m")` or `require("m")`. */
+function loadedMemberOf(propertyAccess, checker) {
+  const ts = state.ts;
+  if (!ts.isIdentifier(propertyAccess.expression) || !ts.isIdentifier(propertyAccess.name)) {
+    return null;
+  }
+  const symbol = checker.getSymbolAtLocation(propertyAccess.expression);
+  const declaration = symbol && symbol.declarations && symbol.declarations[0];
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) {
+    return null;
+  }
+  return exportNamed(loadedModuleExports(declaration, checker), propertyAccess.name.text, checker);
+}
+
 /**
  * The module-level function a call names, when it names one in this repository.
  *
@@ -2200,7 +2347,8 @@ function buildCalleeReference(node, checker) {
   }
   let symbol;
   try {
-    symbol = checker.getSymbolAtLocation(expr);
+    symbol = (state.ts.isPropertyAccessExpression(expr) ? loadedMemberOf(expr, checker) : null)
+      || checker.getSymbolAtLocation(expr);
   } catch (err) {
     return null;
   }
@@ -2214,6 +2362,14 @@ function buildCalleeReference(node, checker) {
     } catch (err) {
       actual = symbol;
     }
+  }
+  try {
+    const loaded = loadedExportOf(actual.declarations && actual.declarations[0], checker);
+    if (loaded) {
+      actual = loaded;
+    }
+  } catch (err) {
+    actual = symbol;
   }
   const name = actual.getName ? actual.getName() : null;
   if (!name || isInternalSymbolName(name)) {
@@ -2239,6 +2395,22 @@ function buildCalleeReference(node, checker) {
   };
 }
 
+/**
+ * The reference a call of a global function makes to the function: `fetch(url)` names `fetch`, `exact`
+ * where the checker resolves it to a default-library or `@types` declaration and `unresolved` where no
+ * declaration answers to the name (an ambient function a userscript or extension provides). A callee the
+ * repository declares or an import binds is named by the references that already exist for it, a
+ * `require` call is the module load it is, and a call through an object names no global.
+ */
+function buildGlobalCalleeReference(node, checker) {
+  const callee = node.expression;
+  if (!callee || !state.ts.isIdentifier(callee) || (callee.text === "require" && requiredModule(node))) {
+    return null;
+  }
+  const found = libraryGlobalName(callee, checker);
+  return found ? externalReference("type", found.name, false, found.resolution) : null;
+}
+
 function buildCallReferences(node, checker) {
   const references = [];
   if (!node) {
@@ -2249,6 +2421,10 @@ function buildCallReferences(node, checker) {
   const callee = buildCalleeReference(node, checker);
   if (callee) {
     references.push(callee);
+  }
+  const globalCallee = buildGlobalCalleeReference(node, checker);
+  if (globalCallee) {
+    references.push(globalCallee);
   }
   const expr = node.expression;
   if (state.ts.isPropertyAccessExpression(expr) || state.ts.isElementAccessExpression(expr)) {
@@ -2901,6 +3077,9 @@ function buildValueReference(identifier, checker, owner) {
         if (loaded && ts.isBindingElement(declaration)) {
           imported = loaded;
           boundByRequire = true;
+          if (!packageOfSpecifier(loaded)) {
+            symbol = loadedExportOf(declaration, checker) || symbol;
+          }
         }
       }
     }
@@ -3034,12 +3213,55 @@ function computeCyclo(ts, node) {
   return complexity;
 }
 
+/**
+ * The reference to the one type a written annotation names, or null: a type reference, however many type
+ * arguments it has, alone or with `null` and `undefined` beside it. An array, a tuple, a union of several
+ * types, a function or literal type, a keyword type and a type parameter name no one type, and nor does a
+ * declaration with no annotation, whose type the checker inferred. It is one of the references the
+ * annotation already gives; the assembler records it as the declared type only where it is.
+ */
+function writtenDeclaredType(typeNode, checker) {
+  const ts = state.ts;
+  let node = typeNode;
+  while (node && ts.isParenthesizedTypeNode(node)) {
+    node = node.type;
+  }
+  if (node && ts.isUnionTypeNode(node)) {
+    const kept = node.types.filter((member) => member.kind !== ts.SyntaxKind.NullKeyword
+      && member.kind !== ts.SyntaxKind.UndefinedKeyword
+      && !(ts.isLiteralTypeNode(member) && member.literal.kind === ts.SyntaxKind.NullKeyword));
+    node = kept.length === 1 ? kept[0] : null;
+    while (node && ts.isParenthesizedTypeNode(node)) {
+      node = node.type;
+    }
+  }
+  if (!node || !ts.isTypeReferenceNode(node)) {
+    return null;
+  }
+  try {
+    const identifier = ts.isQualifiedName(node.typeName) ? leftmostIdentifier(node.typeName) : node.typeName;
+    const symbol = ts.isIdentifier(identifier) ? checker.getSymbolAtLocation(identifier) : null;
+    if (symbol && (symbol.flags & ts.SymbolFlags.TypeParameter)) {
+      return null;
+    }
+    const written = writtenNameReference(node, checker);
+    if (written) {
+      return written;
+    }
+    const global = ts.isIdentifier(node.typeName) ? libraryGlobalName(node.typeName, checker) : null;
+    return global ? externalReference("type", global.name, false, global.resolution) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 function buildParameterModels(parameters, checker) {
   const models = [];
   for (const param of parameters) {
     const paramType = checker.getTypeAtLocation(param);
     models.push({
       kind: "parameter",
+      declaredType: writtenDeclaredType(param.type, checker),
       name: param.name.getText(),
       type: typeToString(checker, param),
       implementationHash: stableImplementationHash(param.getText()),
@@ -3082,6 +3304,7 @@ function buildFieldModel(node, checker) {
   const fieldType = checker.getTypeAtLocation(node);
   return {
     kind: "field",
+    declaredType: writtenDeclaredType(node.type, checker),
     name: memberName(node.name),
     type: writtenTypeText(node) || typeToString(checker, node),
     implementationHash: stableImplementationHash(node.getText()),
@@ -3105,6 +3328,7 @@ function buildMethodModel(node, checker, kindLabel) {
   const paramModels = buildParameterModels(node.parameters || [], checker);
   return {
     kind: kindLabel,
+    declaredType: kindLabel === "constructor" ? null : writtenDeclaredType(node.type, checker),
     name,
     signature,
     // The whole declaration, not just the body: a changed return type or modifier is a change too, and a
@@ -4050,6 +4274,7 @@ async function handleGetFileModel(params) {
     throw err;
   }
   const checker = entryInfo.entry.checker || withPortableTypeText(entryInfo.entry.program.getTypeChecker());
+  state.currentProgram = entryInfo.entry.program;
   const unresolvedBases = [];
   let declarations;
   state.shallowBody = !!(state.oneLevel && params.boundary);
@@ -4254,8 +4479,14 @@ function collectImportDirectives(ts, source, checker) {
       const dynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
       if (dynamicImport || isRequireFunction(callee)) {
         const fields = { importsModule: true, dynamic: dynamicImport || insideFunction, names: [], binds: [] };
-        const parent = node.parent;
-        if (parent && ts.isVariableDeclaration(parent) && parent.initializer === node) {
+        // `await import("m")`, `(await import("m"))` and `require("m") as T` bind what the plain call does.
+        let bound = node;
+        while (bound.parent && (ts.isAwaitExpression(bound.parent) || ts.isParenthesizedExpression(bound.parent)
+            || ts.isAsExpression(bound.parent) || ts.isNonNullExpression(bound.parent))) {
+          bound = bound.parent;
+        }
+        const parent = bound.parent;
+        if (parent && ts.isVariableDeclaration(parent) && parent.initializer === bound) {
           if (ts.isIdentifier(parent.name)) {
             fields.alias = parent.name.text;
           } else if (ts.isObjectBindingPattern(parent.name)) {

@@ -671,6 +671,8 @@ final class CSharpFileParser {
         typeModel.startOffset = node.startOffset;
         typeModel.endOffset = node.endOffset;
         typeModel.imports = importTargets(fileModel.usings);
+        typeModel.staticImports = CSharpDeclarationFacts.staticImportTargets(fileModel.usings,
+                typeModel.namespaceName);
         typeModel.importDirectives = importDirectives(fileModel.usings);
         typeModel.usingAliases = usingAliases(fileModel.usings);
         if (parentTypeComponentName == null || parentTypeComponentName.isEmpty()) {
@@ -1127,6 +1129,8 @@ final class CSharpFileParser {
         CSharpBodyText.collectTypeofOperands(text, member);
         CSharpTypeTestText.collect(text, member);
         CSharpBodyText.collectExtensionCalls(text, member);
+        CSharpBodyText.collectBareCalls(text, member);
+        CSharpBodyText.collectElementReceivers(text, member);
     }
 
     private static void collectLambdaVariable(final SyntaxNode parameter,
@@ -1216,7 +1220,7 @@ final class CSharpFileParser {
         member.sourceText = fileModel.sourceText;
         member.moduleName = fileModel.moduleName;
         member.ownerTypeUniqueName = ownerType.uniqueName;
-        member.modifiers = parseModifiers(node.text);
+        member.modifiers = CSharpDeclarationFacts.memberModifiers(node.text);
         member.comment = extractLeadingComment(fileModel.sourceText, node.startOffset);
         member.startOffset = node.startOffset;
         member.endOffset = node.endOffset;

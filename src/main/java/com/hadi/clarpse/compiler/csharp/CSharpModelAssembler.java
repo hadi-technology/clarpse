@@ -10,6 +10,7 @@ import com.hadi.clarpse.reference.MemberKind;
 import com.hadi.clarpse.reference.MemberReference;
 import com.hadi.clarpse.reference.ResolutionKind;
 import com.hadi.clarpse.reference.SimpleTypeReference;
+import com.hadi.clarpse.reference.StandardLibraryStatus;
 import com.hadi.clarpse.reference.TypeExtensionReference;
 import com.hadi.clarpse.reference.TypeImplementationReference;
 import com.hadi.clarpse.sourcemodel.Component;
@@ -364,6 +365,7 @@ final class CSharpModelAssembler {
                 ParseUtil.pointParentsToGivenChild(paramComponent, stack);
                 attachTypeReferences(paramComponent, singletonType(parameter.declaredType),
                         typeIndex, ownerType, memberModel, false);
+                attachDeclaredType(paramComponent, parameter.declaredType, typeIndex, ownerType, memberModel);
                 model.insertComponent(paramComponent);
                 ParseUtil.copyRefsToParents(paramComponent, stack);
             }
@@ -388,9 +390,17 @@ final class CSharpModelAssembler {
                 "method".equals(memberModel.kind) || "constructor".equals(memberModel.kind));
         attachConstructions(component, memberModel.constructedTypes, typeIndex, ownerType, memberModel,
                 "method".equals(memberModel.kind) || "constructor".equals(memberModel.kind));
+        if (!"constructor".equals(memberModel.kind)) {
+            String written = memberModel.declaredType;
+            if (memberModel.returnType != null && !memberModel.returnType.isEmpty()) {
+                written = memberModel.returnType;
+            }
+            attachDeclaredType(component, written, typeIndex, ownerType, memberModel);
+        }
         attachStaticReceivers(component, memberModel, typeIndex, ownerType);
         attachExtensionCalls(component, memberModel, typeIndex, ownerType);
         attachMemberCalls(component, memberModel, typeIndex, ownerType);
+        attachUsingStaticCalls(component, memberModel, typeIndex, ownerType);
         // The operand of typeof is a type whatever else shares its name, so no member-access filter.
         attachTypeReferences(component, memberModel.typeofOperands, typeIndex, ownerType, memberModel, false);
         attachTypeReferences(component, memberModel.typeTestOperands, typeIndex, ownerType, memberModel, false);
@@ -605,6 +615,54 @@ final class CSharpModelAssembler {
         return AnnotationArgument.array(elements);
     }
 
+    /**
+     * Records the type a declaration is written with as the component's declared type: the head of a
+     * single named type, whatever type arguments it has and a nullable marker it carries. A tuple, an array
+     * or pointer, {@code void}, {@code var}, {@code dynamic} and a type parameter are not one, and the
+     * reference is recorded only when the written type already gave this component that reference.
+     */
+    private static void attachDeclaredType(final Component component, final String written,
+                                           final CSharpTypeIndex typeIndex,
+                                           final CSharpModel.CSharpTypeModel ownerType,
+                                           final CSharpModel.CSharpMemberModel memberModel) {
+        if (written == null) {
+            return;
+        }
+        String text = written.trim();
+        while (text.endsWith("?")) {
+            text = text.substring(0, text.length() - 1).trim();
+        }
+        text = text.replaceFirst("^ref\\s+(readonly\\s+)?", "");
+        if (text.isEmpty() || "void".equals(text) || "var".equals(text) || "dynamic".equals(text)
+                || text.indexOf('(') >= 0 || text.indexOf('[') >= 0 || text.indexOf('*') >= 0) {
+            return;
+        }
+        final List<CSharpFileParser.TypeToken> tokens = CSharpFileParser.extractTypeReferences(text);
+        if (tokens.isEmpty() || !text.startsWith(tokens.get(0).name())) {
+            return;
+        }
+        final CSharpFileParser.TypeToken head = tokens.get(0);
+        final String rest = text.substring(head.name().length()).trim();
+        if (!rest.isEmpty() && !(rest.startsWith("<") && rest.endsWith(">"))) {
+            return;
+        }
+        if (ownerType.typeParameters.contains(head.name())
+                || (memberModel != null && memberModel.typeParameters.contains(head.name()))) {
+            return;
+        }
+        final CSharpTypeIndex.Resolution resolved = typeIndex.resolveType(head.name(), head.arity(), ownerType,
+                memberModel);
+        if (resolved == null) {
+            return;
+        }
+        for (final ComponentReference reference : component.references()) {
+            if (reference instanceof SimpleTypeReference && reference.invokedComponent().equals(resolved.name())) {
+                component.setDeclaredType((SimpleTypeReference) reference);
+                return;
+            }
+        }
+    }
+
     private static void attachTypeReferences(final Component component,
                                              final Collection<String> rawTypes,
                                              final CSharpTypeIndex typeIndex,
@@ -792,7 +850,7 @@ final class CSharpModelAssembler {
                                           final CSharpModel.CSharpMemberModel memberModel,
                                           final CSharpTypeIndex typeIndex,
                                           final CSharpModel.CSharpTypeModel ownerType) {
-        if (memberModel.extensionCalls.isEmpty()) {
+        if (memberModel.extensionCalls.isEmpty() && memberModel.indexedCalls.isEmpty()) {
             return;
         }
         final Map<CSharpModel.CSharpMemberModel, WrittenType> inferred =
@@ -807,6 +865,8 @@ final class CSharpModelAssembler {
             WrittenType written = null;
             if (receiver.indexOf('.') < 0) {
                 written = receiverDeclaration(receiver, memberModel, ownerType, typeIndex, inferred);
+            } else if (receiver.indexOf('.') == receiver.lastIndexOf('.')) {
+                written = genericFieldType(receiver, memberModel, ownerType, typeIndex, inferred);
             }
             if (written != null) {
                 final String text = written.text().trim().replace("?", "");
@@ -824,32 +884,330 @@ final class CSharpModelAssembler {
                 model = typeIndex.typeModelsByName.get(binding.resolution().name());
                 builtin = BUILTIN_TYPES.get(receiver);
             }
-            CSharpModel.CSharpTypeModel owner = null;
-            if (model != null) {
-                owner = typeIndex.declaringTypeOf(model, call.name());
-                if (owner == null) {
-                    if (written != null && typeIndex.hasExtensionMethodNamed(call.name())) {
-                        continue;
-                    }
-                    owner = model;
-                }
-            } else if (builtin == null || !onlyRepositoryUsings(memberModel, ownerType, typeIndex)) {
-                continue;
-            }
-            String ownerName = builtin;
-            String unit = "System";
-            if (owner != null) {
-                ownerName = owner.uniqueName;
-                unit = null;
-            }
-            if (ownerName.equals(ownerType.uniqueName) || ownerName.equals(component.uniqueName())) {
-                continue;
-            }
-            final MemberReference reference = new MemberReference(ownerName, call.name(),
-                    MemberKind.CALL, unit);
-            reference.setResolutionKind(ResolutionKind.EXACT);
-            component.insertCmpRef(reference);
+            emitMemberCall(component, memberModel, typeIndex, ownerType,
+                    new CallReceiver(model, builtin, written), call.name());
         }
+        for (final CSharpModel.IndexedCall call : memberModel.indexedCalls) {
+            final WrittenType collection = receiverDeclaration(call.collection(), memberModel, ownerType, typeIndex,
+                    inferred);
+            final WrittenType element = elementOfOrNull(collection, true, memberModel, ownerType, typeIndex);
+            if (element == null) {
+                continue;
+            }
+            final String text = element.text().trim().replace("?", "");
+            if ("var".equals(text) || "dynamic".equals(text) || CSharpTypeIndex.isArrayOrPointer(text)) {
+                continue;
+            }
+            emitMemberCall(component, memberModel, typeIndex, ownerType,
+                    new CallReceiver(typeIndex.typeModelOf(element), BUILTIN_TYPES.get(text), element), call.name());
+        }
+    }
+
+    /**
+     * Records the call of {@code name} on a receiver of the given type: a parsed type owns the member
+     * unless a parsed base declares it, and a name no parsed type declares is not credited while the
+     * repository has an extension method of that name; a built-in type is owned by its {@code System}
+     * type, only in a file whose usings add no extension methods.
+     */
+    private static void emitMemberCall(final Component component,
+                                       final CSharpModel.CSharpMemberModel memberModel,
+                                       final CSharpTypeIndex typeIndex,
+                                       final CSharpModel.CSharpTypeModel ownerType,
+                                       final CallReceiver receiver,
+                                       final String callName) {
+        final CSharpModel.CSharpTypeModel model = receiver.model();
+        final String builtin = receiver.builtin();
+        final WrittenType written = receiver.written();
+        CSharpModel.CSharpTypeModel owner = null;
+        if (model != null) {
+            owner = typeIndex.declaringTypeOf(model, callName);
+            if (owner == null) {
+                if (written != null && typeIndex.hasExtensionMethodNamed(callName)) {
+                    return;
+                }
+                owner = model;
+            }
+        } else if (builtin == null || !onlyRepositoryUsings(memberModel, ownerType, typeIndex)) {
+            return;
+        }
+        String ownerName = builtin;
+        String unit = "System";
+        if (owner != null) {
+            ownerName = owner.uniqueName;
+            unit = null;
+        }
+        if (ownerName.equals(ownerType.uniqueName) || ownerName.equals(component.uniqueName())) {
+            return;
+        }
+        final MemberReference reference = new MemberReference(ownerName, callName, MemberKind.CALL, unit);
+        reference.setResolutionKind(ResolutionKind.EXACT);
+        component.insertCmpRef(reference);
+    }
+
+    /** Collections whose enumeration yields their one type argument, and those that have an integer indexer. */
+    private static final Set<String> ENUMERABLE_OF_ONE = Set.of("List", "IList", "IEnumerable", "ICollection",
+            "IReadOnlyList", "IReadOnlyCollection", "HashSet", "ISet", "Queue", "Stack", "LinkedList", "SortedSet",
+            "Collection", "ReadOnlyCollection");
+    private static final Set<String> INDEXED_OF_ONE = Set.of("List", "IList", "IReadOnlyList", "Collection",
+            "ReadOnlyCollection");
+    private static final Set<String> INDEXED_BY_KEY = Set.of("Dictionary", "IDictionary", "IReadOnlyDictionary",
+            "SortedDictionary");
+
+    private static Set<String> collectionsWithOneElement(final boolean indexer) {
+        if (indexer) {
+            return INDEXED_OF_ONE;
+        }
+        return ENUMERABLE_OF_ONE;
+    }
+
+    /** The type arguments written in a type, at its top level; empty when it has none or they cannot be read. */
+    private static List<String> typeArguments(final String type) {
+        final int open = type.indexOf('<');
+        if (open < 0 || !type.endsWith(">")) {
+            return List.of();
+        }
+        final List<String> arguments = new ArrayList<>();
+        int depth = 0;
+        int start = open + 1;
+        for (int i = open; i < type.length(); i++) {
+            final char c = type.charAt(i);
+            if (c == '<') {
+                depth += 1;
+            } else if (c == '>') {
+                depth -= 1;
+                if (depth == 0 && i != type.length() - 1) {
+                    return List.of();
+                }
+            } else if (c == ',' && depth == 1) {
+                arguments.add(type.substring(start, i).trim());
+                start = i + 1;
+            }
+        }
+        arguments.add(type.substring(start, type.length() - 1).trim());
+        return arguments;
+    }
+
+    private static WrittenType elementOfOrNull(final WrittenType collection, final boolean indexer,
+                                               final CSharpModel.CSharpMemberModel memberModel,
+                                               final CSharpModel.CSharpTypeModel ownerType,
+                                               final CSharpTypeIndex typeIndex) {
+        if (collection == null) {
+            return null;
+        }
+        return elementOf(collection, indexer, memberModel, ownerType, typeIndex);
+    }
+
+    /**
+     * The element type of a collection written with its type argument, or null: what enumerating it
+     * yields, or what its indexer returns. Only the collections of the base library are read, and
+     * only where the written element is one named type that is no type parameter in scope.
+     */
+    private static WrittenType elementOf(final WrittenType collection, final boolean indexer,
+                                         final CSharpModel.CSharpMemberModel memberModel,
+                                         final CSharpModel.CSharpTypeModel ownerType,
+                                         final CSharpTypeIndex typeIndex) {
+        String text = collection.text().trim();
+        while (text.endsWith("?")) {
+            text = text.substring(0, text.length() - 1).trim();
+        }
+        String element = null;
+        if (text.endsWith("[]") && text.indexOf('[') == text.length() - 2) {
+            element = text.substring(0, text.length() - 2).trim();
+        } else {
+            final int open = text.indexOf('<');
+            if (open > 0) {
+                final String head = text.substring(0, open).trim();
+                final String simple = head.substring(head.lastIndexOf('.') + 1);
+                final List<String> arguments = typeArguments(text);
+                if (typeIndex.typeModelOf(new WrittenType(head, collection.scope(), collection.member())) != null) {
+                    return null;
+                }
+                if (indexer && INDEXED_BY_KEY.contains(simple) && arguments.size() == 2) {
+                    element = arguments.get(1);
+                } else if (arguments.size() == 1 && collectionsWithOneElement(indexer).contains(simple)) {
+                    element = arguments.get(0);
+                }
+            }
+        }
+        if (element == null || element.isEmpty()) {
+            return null;
+        }
+        final String named = com.hadi.clarpse.TypeNames.singleNamedType(element);
+        if (named == null || ownerType.typeParameters.contains(named)
+                || (memberModel != null && memberModel.typeParameters.contains(named))
+                || (collection.scope() != null && collection.scope().typeParameters.contains(named))) {
+            return null;
+        }
+        return new WrittenType(element, collection.scope(), collection.member());
+    }
+
+    /**
+     * The type of {@code holder.Field} when {@code holder} is declared with a type written with its type
+     * arguments, a parsed generic type declares {@code Field} itself with the type of one of its type
+     * parameters, and the argument written for that parameter is one named type: {@code Box<Order> b}
+     * and {@code T Value} give {@code Order} for {@code b.Value}.
+     */
+    private static WrittenType genericFieldType(final String receiver,
+                                                final CSharpModel.CSharpMemberModel memberModel,
+                                                final CSharpModel.CSharpTypeModel ownerType,
+                                                final CSharpTypeIndex typeIndex,
+                                                final Map<CSharpModel.CSharpMemberModel, WrittenType> inferred) {
+        final String holderName = receiver.substring(0, receiver.indexOf('.'));
+        final String fieldName = receiver.substring(receiver.indexOf('.') + 1);
+        final WrittenType holder = receiverDeclaration(holderName, memberModel, ownerType, typeIndex, inferred);
+        if (holder == null) {
+            return null;
+        }
+        final String holderText = holder.text().trim();
+        final int open = holderText.indexOf('<');
+        if (open <= 0) {
+            return null;
+        }
+        final CSharpModel.CSharpTypeModel generic = typeIndex.typeModelOf(
+                new WrittenType(holderText.substring(0, open).trim(), holder.scope(), holder.member()));
+        if (generic == null || generic.typeParameters.isEmpty()) {
+            return null;
+        }
+        final FoundMember found = typeIndex.findMember(generic, fieldName, false);
+        if (found == null || !found.declaring().uniqueName.equals(generic.uniqueName) || found.member().declaredType == null) {
+            return null;
+        }
+        final List<String> parameters = new ArrayList<>(generic.typeParameters);
+        final int position = parameters.indexOf(found.member().declaredType.trim());
+        final List<String> arguments = typeArguments(holder.text().trim());
+        if (position < 0 || arguments.size() != parameters.size()) {
+            return null;
+        }
+        final String element = arguments.get(position);
+        final String named = com.hadi.clarpse.TypeNames.singleNamedType(element);
+        if (named == null || ownerType.typeParameters.contains(named) || memberModel.typeParameters.contains(named)
+                || (holder.scope() != null && holder.scope().typeParameters.contains(named))) {
+            return null;
+        }
+        return new WrittenType(element, holder.scope(), holder.member());
+    }
+
+    /** Whether the file's types resolve the bare name to a type, as a positional pattern or a constructor does. */
+    private static boolean namesAType(final String name, final CSharpModel.CSharpTypeModel ownerType,
+                                      final CSharpTypeIndex typeIndex) {
+        final CSharpTypeIndex.Resolution resolved = typeIndex.resolveType(name, ownerType, null);
+        return resolved != null && resolved.kind() == ResolutionKind.EXACT;
+    }
+
+    /**
+     * Records the call of a member a {@code using static} directive brings into scope: {@code Max(1, 2)}
+     * with {@code using static Lib.Util;} is a call of {@code Lib.Util.Max}, beside the reference to the
+     * class. The language binds a bare name to the members of the enclosing types first, then to a local,
+     * so a name the enclosing types may declare (including through a base the parse does not hold), a name
+     * the body declares and a name that is a parameter or local of the member add nothing. The name must be
+     * a static method that exactly one class of the file's static usings declares; a class that is not
+     * parsed supplies a name only when it is the sole static using of the file and a standard-library
+     * class, since nothing else says which class declares it.
+     */
+    private static void attachUsingStaticCalls(final Component component,
+                                               final CSharpModel.CSharpMemberModel memberModel,
+                                               final CSharpTypeIndex typeIndex,
+                                               final CSharpModel.CSharpTypeModel ownerType) {
+        if (memberModel.bareCalls.isEmpty() || ownerType.staticImports.isEmpty()) {
+            return;
+        }
+        for (final String name : memberModel.bareCalls) {
+            if (isDeclaredInMember(name, memberModel) || isBoundByEnclosingTypes(name, ownerType, typeIndex)
+                    || namesAType(name, ownerType, typeIndex)) {
+                continue;
+            }
+            final List<String> declaring = new ArrayList<>();
+            final List<String> libraries = new ArrayList<>();
+            int unknown = 0;
+            for (final String target : ownerType.staticImports) {
+                final CSharpTypeIndex.Resolution resolved = typeIndex.resolveType(target, ownerType, null);
+                CSharpModel.CSharpTypeModel model = null;
+                if (resolved != null && resolved.kind() == ResolutionKind.EXACT) {
+                    model = typeIndex.typeModelsByName.get(resolved.name());
+                }
+                if (model != null) {
+                    if (declaresStaticMethod(model, name)) {
+                        declaring.add(model.uniqueName);
+                    }
+                } else if (new CSharpStandardLibrary().ofExternalName(target) == StandardLibraryStatus.STANDARD) {
+                    libraries.add(target);
+                } else {
+                    unknown += 1;
+                }
+            }
+            String owner = null;
+            String unit = null;
+            if (declaring.size() == 1) {
+                owner = declaring.get(0);
+            } else if (declaring.isEmpty() && unknown == 0 && libraries.size() == 1
+                    && ownerType.staticImports.size() == 1) {
+                owner = libraries.get(0);
+                unit = owner.substring(0, Math.max(owner.lastIndexOf('.'), 0));
+            }
+            if (owner == null || owner.equals(ownerType.uniqueName) || owner.equals(component.uniqueName())) {
+                continue;
+            }
+            final SimpleTypeReference type = new SimpleTypeReference(owner);
+            type.setResolutionKind(ResolutionKind.EXACT);
+            component.insertCmpRef(type);
+            final MemberReference call = new MemberReference(owner, name, MemberKind.CALL, unit);
+            call.setResolutionKind(ResolutionKind.EXACT);
+            component.insertCmpRef(call);
+        }
+    }
+
+    /** Whether the member itself declares the name: as a parameter, a local, a lambda variable or in its body. */
+    private static boolean isDeclaredInMember(final String name, final CSharpModel.CSharpMemberModel memberModel) {
+        if (memberModel.bodyDeclaredNames.contains(name) || memberModel.lambdaVariables.containsKey(name)
+                || memberModel.typeParameters.contains(name)) {
+            return true;
+        }
+        for (final CSharpModel.CSharpParameterModel parameter : memberModel.parameters) {
+            if (name.equals(parameter.name)) {
+                return true;
+            }
+        }
+        for (final CSharpModel.CSharpMemberModel local : memberModel.locals) {
+            if (local.name != null && name.equals(local.name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a bare name written in the type may be bound by the type itself, a type that encloses it,
+     * or what either inherits: one of them declares a member of the name, or its ancestry has a part the
+     * parse does not hold.
+     */
+    private static boolean isBoundByEnclosingTypes(final String name, final CSharpModel.CSharpTypeModel ownerType,
+                                                   final CSharpTypeIndex typeIndex) {
+        String current = ownerType.uniqueName;
+        while (current != null && !current.isEmpty()) {
+            final CSharpModel.CSharpTypeModel level = typeIndex.typeModelsByName.get(current);
+            if (level != null && (typeIndex.declaresMemberNamed(level, name)
+                    || !typeIndex.hasFullyParsedAncestry(level))) {
+                return true;
+            }
+            final int cut = current.lastIndexOf('.');
+            if (cut < 0) {
+                return false;
+            }
+            current = current.substring(0, cut);
+        }
+        return false;
+    }
+
+    /** Whether the class declares, itself, a static method of the name that is not an extension method. */
+    private static boolean declaresStaticMethod(final CSharpModel.CSharpTypeModel type, final String name) {
+        for (final CSharpModel.CSharpMemberModel member : type.members) {
+            if ("method".equals(member.kind) && member.modifiers.contains("static") && member.name != null
+                    && name.equals(CSharpTypeIndex.bareName(member.name))
+                    && member.parameters.stream().noneMatch(parameter -> parameter.extensionReceiver)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Whether every using of the file names {@code System} or a namespace the repository declares. */
@@ -989,6 +1347,10 @@ final class CSharpModelAssembler {
         return false;
     }
 
+    /** What a call's receiver is: a parsed type, a built-in type's name, or neither, and how it was written. */
+    record CallReceiver(CSharpModel.CSharpTypeModel model, String builtin, WrittenType written) {
+    }
+
     /** A type as written in a declaration, with the type and member whose scope the name is read in. */
     record WrittenType(String text, CSharpModel.CSharpTypeModel scope, CSharpModel.CSharpMemberModel member) {
     }
@@ -1104,6 +1466,15 @@ final class CSharpModelAssembler {
                     && !"var".equals(local.declaredType.trim())) {
                 distinct.add(local.declaredType.trim());
                 declared = new WrittenType(local.declaredType, ownerType, memberModel);
+            } else if (isLoopVariable(name, local, memberModel)) {
+                final WrittenType collection = receiverDeclaration(memberModel.foreachCollections.get(name),
+                        memberModel, ownerType, typeIndex, inferred);
+                final WrittenType element = elementOfOrNull(collection, false, memberModel, ownerType, typeIndex);
+                if (element == null) {
+                    return null;
+                }
+                distinct.add(element.scope().uniqueName + "|" + element.text().trim());
+                declared = element;
             } else {
                 return null;
             }
@@ -1114,12 +1485,31 @@ final class CSharpModelAssembler {
             }
             return null;
         }
+        final String lambdaCollection = memberModel.lambdaCollections.get(name);
+        if (lambdaCollection != null) {
+            if (lambdaCollection.isEmpty() || lambdaCollection.equals(name)
+                    || typeIndex.findMember(ownerType, name, false) != null) {
+                return null;
+            }
+            final WrittenType collection = receiverDeclaration(lambdaCollection, memberModel, ownerType, typeIndex,
+                    inferred);
+            return elementOfOrNull(collection, false, memberModel, ownerType, typeIndex);
+        }
         final FoundMember field = typeIndex.findMember(ownerType, name, false);
         if (field == null || field.member().declaredType == null || field.member().declaredType.isBlank()
                 || CSharpDeclaredNames.bodyMayDeclare(memberModel, name)) {
             return null;
         }
         return new WrittenType(field.member().declaredType, field.declaring(), field.member());
+    }
+
+    /** Whether the local is the variable of a {@code foreach (var x in collection)} loop over a plain name. */
+    private static boolean isLoopVariable(final String name, final CSharpModel.CSharpMemberModel local,
+                                          final CSharpModel.CSharpMemberModel memberModel) {
+        final String collection = memberModel.foreachCollections.get(name);
+        return collection != null && !collection.isEmpty() && !collection.equals(name)
+                && (local.declaredType == null || local.declaredType.isBlank()
+                    || "var".equals(local.declaredType.trim()));
     }
 
     private static List<String> singletonType(final String declaredType) {

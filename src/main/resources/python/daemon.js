@@ -703,7 +703,13 @@ function findDynamicImports(parseTree, parseNodeType, importCtx, scopes) {
       }
       const written = loads ? stringLiteralValue(positional(node, 0), types) : null;
       const moduleName = written ? resolveName(node, written) : null;
-      if (moduleName) found.push({ moduleName, start: node.start });
+      if (moduleName) {
+        const parent = node.parent;
+        const assigned = loads && !(callee.nodeType === types.Name && nameFromNode(callee) === '__import__')
+          && parent && parent.nodeType === types.Assignment && parent.d.rightExpr === node && parent.d.leftExpr
+          && parent.d.leftExpr.nodeType === types.Name ? nameFromNode(parent.d.leftExpr) : null;
+        found.push({ moduleName, start: node.start, node, alias: assigned });
+      }
     }
     for (const key of Object.keys(node.d)) {
       const child = node.d[key];
@@ -951,7 +957,7 @@ function collectImportDirectives(parseTree, parseNodeType, filePath, dynamicImpo
   visit(parseTree, false, false);
   for (const dynamic of dynamicImports || []) {
     found.push({ start: dynamic.start, directive: {
-      target: dynamic.moduleName, kind: 'single', relative: false, names: [], binds: [], alias: null,
+      target: dynamic.moduleName, kind: 'single', relative: false, names: [], binds: [], alias: dynamic.alias || null,
       importsModule: true, dynamic: true, typeOnly: false, inProject: inProject(0, dynamic.moduleName.split('.')) } });
   }
   found.sort((a, b) => a.start - b.start);
@@ -1302,6 +1308,47 @@ function typeInferrer(filePath) {
       return 'class';
     }
     return type.category === PYRIGHT_CATEGORY_UNKNOWN ? 'unresolved' : 'other';
+  };
+  /**
+   * The class a top-level class statement of a repository module declares, as the evaluator types it, or
+   * null. It answers for a name reached through a module binding the evaluator cannot follow, as a module
+   * loaded by `importlib.import_module`.
+   */
+  infer.moduleClass = (moduleName, name) => {
+    try {
+      const file = state.moduleIndex ? state.moduleIndex.get(moduleName) : null;
+      const evaluation = file ? evaluationProgram() : null;
+      if (!evaluation) {
+        return null;
+      }
+      if (session === undefined) {
+        session = open();
+      }
+      const uri = evaluation.toUri(file);
+      evaluation.program.addTrackedFile(uri);
+      const parsed = evaluation.program.getParseResults(uri);
+      const tree = parsed && parsed.parserOutput ? parsed.parserOutput.parseTree : null;
+      const classType = getParseNodeTypeEnum(getPyrightApi()).Class;
+      for (const statement of tree && tree.d ? tree.d.statements || [] : []) {
+        if (statement && statement.nodeType === classType && nameFromNode(statement.d.name) === name) {
+          const result = evaluation.program.evaluator.getTypeOfClass(statement);
+          return result ? result.classType : null;
+        }
+      }
+    } catch (err) {
+      return null;
+    }
+    return null;
+  };
+  /** The reference to the owner of `member` called on a class type, as `receiver` answers for a node. */
+  infer.memberOwnerOf = (classType, member) => {
+    try {
+      const info = receiverClassOf(classType, member);
+      const ref = info ? inferredClassRef(info) : null;
+      return ref ? Object.assign({ externalUnit: ref.externalLabel ? info.moduleName : null }, ref) : null;
+    } catch (err) {
+      return null;
+    }
   };
   /** The reference to the owner of `member` called on `node`, with the module of an external owner. */
   infer.receiver = (node, member) => {
@@ -2544,6 +2591,26 @@ function extractSuiteDocString(suiteNode, fileText) {
   return decodeDocStringLiteral(statementText);
 }
 
+/**
+ * The module an import binds the head of a dotted name to, and the names left after it: `a.b.f` is
+ * `a.b` and `f` after `import a.b`, `a` and `b.f` after `import a`, and `a.b` and `f` after
+ * `import a.b as x` when the name is `x.f`. The longest binding wins. `import a.b` also binds `a`.
+ */
+function moduleBindingOf(parts, ctx) {
+  for (let length = parts.length - 1; length >= 1; length -= 1) {
+    const bound = ctx.importedModules.get(parts.slice(0, length).join('.'));
+    if (bound) {
+      return { moduleName: bound, rest: parts.slice(length) };
+    }
+  }
+  for (const localName of ctx.importedModules.keys()) {
+    if (localName.indexOf('.') > 0 && localName.split('.')[0] === parts[0]) {
+      return { moduleName: parts[0], rest: parts.slice(1) };
+    }
+  }
+  return null;
+}
+
 function normalizeDecoratorName(rawDecoratorText) {
   if (!rawDecoratorText) {
     return '';
@@ -2581,6 +2648,67 @@ function extractDecoratorNames(functionNode, fileText) {
     }
   }
   return names;
+}
+
+/**
+ * Where each decorator extractDecoratorNames reports comes from, in the same order: the dotted name
+ * its import gives it (`functools.wraps` for `@wraps` after `from functools import wraps`, `click.command`
+ * for `@click.command()` after `import click`) and whether Pyright could not resolve it, or null where no
+ * import of a module outside the repo binds its first name -- a decorator defined in the file or in the
+ * repo, or an attribute of a local object.
+ */
+function extractDecoratorOrigins(definitionNode, ctx, parseNodeType) {
+  const decorators = getNodeProp(definitionNode, ['decorators', 'decoratorExpressions', 'decoratorNodes']);
+  if (!Array.isArray(decorators) || !decorators.length) {
+    return [];
+  }
+  const origins = [];
+  for (const decorator of decorators) {
+    const raw = textForNode(decorator, ctx.fileText) || nameFromNode(decorator);
+    if (!normalizeDecoratorName(raw)) {
+      continue;
+    }
+    origins.push(decoratorOrigin(decorator, ctx, parseNodeType));
+  }
+  return origins;
+}
+
+function decoratorOrigin(decorator, ctx, parseNodeType) {
+  let callee = decorator && decorator.d ? decorator.d.expr : null;
+  while (callee && parseNodeType.Call !== undefined && callee.nodeType === parseNodeType.Call) {
+    callee = callee.d.leftExpr;
+  }
+  const dotted = callee ? dottedNameOf(callee, parseNodeType) : null;
+  if (!dotted) {
+    return null;
+  }
+  const parts = dotted.split('.');
+  const root = parts[0];
+  if ((ctx.localClasses && ctx.localClasses.has(root)) || (ctx.localFunctions && ctx.localFunctions.has(root))) {
+    return null;
+  }
+  let moduleName = null;
+  let label = null;
+  const symbol = ctx.importedSymbols ? ctx.importedSymbols.get(root) : null;
+  if (symbol && symbol.moduleName && symbol.symbolName) {
+    moduleName = symbol.moduleName;
+    label = [moduleName, symbol.symbolName].concat(parts.slice(1)).join('.');
+  } else if (!symbol && parts.length > 1 && ctx.importedModules && ctx.importedModules.size) {
+    const binding = moduleBindingOf(parts, ctx);
+    if (binding) {
+      moduleName = binding.moduleName;
+      label = [moduleName].concat(binding.rest).join('.');
+    }
+  } else if (!symbol && ctx.importedModules && ctx.importedModules.has(root)) {
+    // `@m` where `m` is a module is no decorator the import names.
+    return null;
+  }
+  if (!label || moduleFileFor(moduleName, ctx)) {
+    return null;
+  }
+  const unresolved = !!ctx.inferType && !!ctx.inferType.calleeKind
+    && ctx.inferType.calleeKind(callee) === 'unresolved';
+  return { name: label, unresolved };
 }
 
 /**
@@ -3405,6 +3533,32 @@ function importBindingNode(node, types) {
 }
 
 /**
+ * The names a scope binds to a module it loads by calling `importlib.import_module("m")`, each mapped to
+ * the module: `m = importlib.import_module("pkg.b")` binds `m` the way `import pkg.b as m` does. The name
+ * must be bound by that one assignment in the scope and nowhere else, since a name bound twice may hold
+ * anything where it is used; a load made inside a nested function or class belongs to that scope.
+ */
+function dynamicModuleBindings(scopeNode, parseNodeType, importCtx, scopes) {
+  const types = parseNodeType || {};
+  const counts = new Map();
+  collectLocalNames(scopeNode, parseNodeType, false, counts);
+  const bindings = new Map();
+  for (const load of findDynamicImports(scopeNode, parseNodeType, importCtx, scopes)) {
+    if (!load.alias || counts.get(load.alias) !== 1) {
+      continue;
+    }
+    let owner = load.node.parent;
+    while (owner && !isFunctionNode(owner, types) && !isClassNode(owner, types) && owner !== scopeNode) {
+      owner = owner.parent;
+    }
+    if (owner === scopeNode || (!owner && scopeNode.nodeType === types.Module)) {
+      bindings.set(load.alias, load.moduleName);
+    }
+  }
+  return bindings;
+}
+
+/**
  * The scope a function body resolves names in. Python binds an import written in a function -- at
  * any depth of `if`, `try`, `with` or loop -- in that function's scope alone, so its names resolve
  * the references in that function and in no other, and hide any module-level binding of the same
@@ -3445,7 +3599,9 @@ function functionScope(functionNode, ctx, parseNodeType) {
   }
 
   visit(functionNode, true);
-  if (!importBound.size) {
+  const loaded = dynamicModuleBindings(functionNode, parseNodeType, ctx, [ctx, { importedModules: new Map(),
+    importedSymbols: new Map() }]);
+  if (!importBound.size && !loaded.size) {
     return ctx;
   }
   const rebound = collectLocalNames(functionNode, parseNodeType, false);
@@ -3473,6 +3629,12 @@ function functionScope(functionNode, ctx, parseNodeType) {
       functionImportNames.add(key);
     }
   }
+  for (const [name, moduleName] of loaded) {
+    importedModules.set(name, moduleName);
+    importedSymbols.delete(name);
+    localClasses.delete(name);
+    functionImportNames.add(name);
+  }
   return Object.assign({}, ctx, { importedModules, importedSymbols, localClasses, functionImportNames });
 }
 
@@ -3485,7 +3647,7 @@ function functionScope(functionNode, ctx, parseNodeType) {
  * Lambdas and comprehensions have scopes of their own but are counted in, which can only withhold a
  * reference, never invent one. Without `includeImports`, a name bound only by an import is left out.
  */
-function collectLocalNames(functionNode, parseNodeType, includeImports = true) {
+function collectLocalNames(functionNode, parseNodeType, includeImports = true, counts = null) {
   const names = new Set();
   const globals = new Set();
   const types = parseNodeType || {};
@@ -3496,6 +3658,7 @@ function collectLocalNames(functionNode, parseNodeType, includeImports = true) {
     }
     if (expr.nodeType === types.Name) {
       names.add(nameFromNode(expr));
+      if (counts) counts.set(nameFromNode(expr), (counts.get(nameFromNode(expr)) || 0) + 1);
     } else if (expr.nodeType === types.Tuple || expr.nodeType === types.List) {
       (expr.d.items || []).forEach(addTarget);
     } else if (expr.nodeType === types.TypeAnnotation) {
@@ -3512,6 +3675,7 @@ function collectLocalNames(functionNode, parseNodeType, includeImports = true) {
     }
     if (!isRoot && (isFunctionNode(node, parseNodeType) || isClassNode(node, parseNodeType))) {
       names.add(nameFromNode(node.d.name));
+      if (counts) counts.set(nameFromNode(node.d.name), (counts.get(nameFromNode(node.d.name)) || 0) + 1);
       return;
     }
     const type = node.nodeType;
@@ -3784,7 +3948,17 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     if (base === 'self' || base === 'cls') {
       return;
     }
-    const owner = ctx.inferType.receiver(receiver, member);
+    // A member of a module is a name the module holds, found through the import that binds it, not a
+    // member of the type Pyright gives a module object.
+    if (base && ctx.importedModules && ctx.importedModules.has(base)) {
+      return;
+    }
+    let owner = ctx.inferType.receiver(receiver, member);
+    if (!owner && receiver.nodeType === parseNodeType.Call) {
+      // `m.C().member()` where `m` is a module loaded by name: the class the call constructs owns it.
+      const classType = moduleBoundClass(dottedNameOf(receiver.d.leftExpr, parseNodeType));
+      owner = classType ? ctx.inferType.memberOwnerOf(classType, member) : null;
+    }
     if (!owner) {
       return;
     }
@@ -3804,6 +3978,22 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     });
   }
 
+  /**
+   * The class `m.C` names when `m` is bound to a module of the repository by a load the evaluator cannot
+   * follow (`importlib.import_module`), found in the module's own class statements; null for anything else.
+   */
+  function moduleBoundClass(dotted) {
+    const parts = dotted ? dotted.split('.') : [];
+    if (parts.length < 2 || !ctx.importedModules || !ctx.inferType || !ctx.inferType.moduleClass) {
+      return null;
+    }
+    const binding = moduleBindingOf(parts, ctx);
+    if (!binding || binding.rest.length !== 1 || !moduleFileFor(binding.moduleName, ctx)) {
+      return null;
+    }
+    return ctx.inferType.moduleClass(binding.moduleName, binding.rest[0]);
+  }
+
   function pushTarget(raw, target) {
     calleeTarget = { targetUniqueName: target, externalLabel: target };
     if (!moduleMemberTargets.has(target)) {
@@ -3821,7 +4011,8 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
     const target = calleeTarget;
     calleeTarget = null;
     if (!target || !calleeNode || !dottedNameOf(calleeNode, parseNodeType) || !ctx.inferType
-      || !ctx.inferType.calleeKind || ctx.inferType.calleeKind(calleeNode) !== 'class') {
+      || !ctx.inferType.calleeKind || (ctx.inferType.calleeKind(calleeNode) !== 'class'
+        && !moduleBoundClass(dottedNameOf(calleeNode, parseNodeType)))) {
       return;
     }
     const key = target.targetUniqueName || target.externalLabel;
@@ -3853,7 +4044,10 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
       if (isLocal(base)) {
         return;
       }
-      if (isKnownImport(base)) {
+      if (!isKnownImport(base) && ctx.importedModules && ctx.importedModules.size) {
+        // `import a.b` binds the dotted name `a.b` and `a` with it.
+        addExternalModuleCall(calleeText, calleeNode);
+      } else if (isKnownImport(base)) {
         const resolved = resolveTypeFromRaw(base, ctx);
         if (resolved) {
           calleeTarget = { targetUniqueName: null, externalLabel: resolved + calleeText.substring(dotIdx) };
@@ -3877,22 +4071,24 @@ function collectReferences(functionNode, valueExpression, boundNames, ctx, parse
   }
 
   /**
-   * `m.N(...)` after `import m`, with `m` outside the repo and Pyright unable to resolve the callee,
-   * references the imported name `m.N`, unresolved. It is not a construction, since nothing says
-   * `N` is a class.
+   * `m.N(...)`, `m.p.N(...)` after `import m`, `import m.p`, `import m.p as x` or `import m as y`, with the
+   * module outside the repo and Pyright unable to resolve the callee, references the imported name
+   * `m.N` or `m.p.N`, unresolved, as `from m.p import N` does. It is not a construction, since nothing
+   * says `N` is a class.
    */
   function addExternalModuleCall(calleeText, calleeNode) {
     const parts = calleeText.split('.');
-    if (parts.length !== 2 || isLocal(parts[0]) || !ctx.importedModules || !calleeNode || !ctx.inferType
-      || !ctx.inferType.calleeKind) {
+    if (parts.length < 2 || isLocal(parts[0]) || !ctx.importedModules || !calleeNode || !ctx.inferType
+      || !ctx.inferType.calleeKind || ctx.importedSymbols.has(parts[0])) {
       return;
     }
-    const moduleName = ctx.importedModules.get(parts[0]);
-    if (!moduleName || moduleFileFor(moduleName, ctx) || ctx.importedSymbols.has(parts[0])
+    const binding = moduleBindingOf(parts, ctx);
+    if (!binding || moduleFileFor(binding.moduleName, ctx)
       || ctx.inferType.calleeKind(calleeNode) !== 'unresolved') {
       return;
     }
-    refs.push({ raw: calleeText, targetUniqueName: null, externalLabel: moduleName + '.' + parts[1], unresolved: true });
+    refs.push({ raw: calleeText, targetUniqueName: null,
+      externalLabel: binding.moduleName + '.' + binding.rest.join('.'), unresolved: true });
   }
 
   /**
@@ -4252,7 +4448,9 @@ function collectLocalVariables(functionNode, ctx, parseNodeType) {
     const read = entry.annotationNode ? readAnnotation(entry.annotationNode, ctx, parseNodeType) : null;
     const rawType = read ? read.text : 'Any';
     // An unannotated binding has the class Pyright infers for it, when it infers exactly one.
-    const inferred = !read && ctx.inferType ? ctx.inferType(entry.node) : null;
+    // A name bound to a module by a load is no instance of the type Pyright gives a module object.
+    const inferred = !read && ctx.inferType && !(ctx.functionImportNames && ctx.functionImportNames.has(entry.name)
+      && ctx.importedModules.has(entry.name)) ? ctx.inferType(entry.node) : null;
     const ref = read ? read.ref : (inferred ? Object.assign({ raw: rawType, alternates: [] }, inferred) : null);
     locals.push({
       name: entry.name,
@@ -4276,6 +4474,7 @@ function extractMethod(methodNode, enclosingCtx, parseNodeType) {
   }
   const decorators = extractDecoratorNames(methodNode, ctx.fileText);
   const decoratorArguments = extractDecoratorArguments(methodNode, ctx);
+  const decoratorOrigins = extractDecoratorOrigins(methodNode, ctx, parseNodeType);
   const isClassMethod = decorators.includes('classmethod');
   const isStaticMethod = decorators.includes('staticmethod');
   const comment = extractSuiteDocString(methodNode.d ? methodNode.d.suite : null, ctx.fileText);
@@ -4304,6 +4503,7 @@ function extractMethod(methodNode, enclosingCtx, parseNodeType) {
     staticMethod: isStaticMethod,
     decorators,
     decoratorArguments,
+    decoratorOrigins,
     params,
     locals: collectLocalVariables(methodNode, bodyCtx, parseNodeType),
     return: returnRef,
@@ -4320,6 +4520,7 @@ function extractFunction(functionNode, enclosingCtx, parseNodeType) {
   const comment = extractSuiteDocString(functionNode.d ? functionNode.d.suite : null, ctx.fileText);
   const decorators = extractDecoratorNames(functionNode, ctx.fileText);
   const decoratorArguments = extractDecoratorArguments(functionNode, ctx);
+  const decoratorOrigins = extractDecoratorOrigins(functionNode, ctx, parseNodeType);
   const params = extractParams(functionNode, ctx, parseNodeType);
   const returnNode = getNodeProp(functionNode, ['returnTypeAnnotation', 'returnType', 'returnAnnotation']);
   const returnRead = returnNode ? readAnnotation(returnNode, ctx, parseNodeType, normalizePythonTypeDisplay) : null;
@@ -4348,6 +4549,7 @@ function extractFunction(functionNode, enclosingCtx, parseNodeType) {
     staticMethod: false,
     decorators,
     decoratorArguments,
+    decoratorOrigins,
     params,
     locals: collectLocalVariables(functionNode, bodyCtx, parseNodeType),
     return: returnRef,
@@ -4639,6 +4841,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
     const classComment = extractSuiteDocString(statement.d ? statement.d.suite : null, ctx.fileText);
     const classDecorators = extractDecoratorNames(statement, ctx.fileText);
     const classDecoratorArguments = extractDecoratorArguments(statement, ctx);
+    const classDecoratorOrigins = extractDecoratorOrigins(statement, ctx, parseNodeType);
     let baseExprs = [];
     if (statement.d && Array.isArray(statement.d.baseClassExpressions)) {
       baseExprs = statement.d.baseClassExpressions;
@@ -4765,6 +4968,7 @@ function extractClassesFromStatements(statements, ctx, parseNodeType, parentUniq
       implementationHash: stableImplementationHash(textForNode(statement, ctx.fileText)),
       decorators: classDecorators,
       decoratorArguments: classDecoratorArguments,
+      decoratorOrigins: classDecoratorOrigins,
       decoratorReferences: collectDecoratorReferences(statement, ctx, parseNodeType),
       bases,
       baseArguments,
@@ -4948,6 +5152,10 @@ async function handleGetFileModel(params) {
     parsedImports.moduleScope.filter(statement => !seenStatements.has(statement)));
   const imported = resolveImportStatements(moduleStatements, importCtx);
   const nestedImported = resolveImportStatements(parsedImports.nested, importCtx);
+  for (const [bound, loadedModule] of dynamicModuleBindings(parseTree, parseNodeType, importCtx,
+    [imported, nestedImported])) {
+    imported.importedModules.set(bound, loadedModule);
+  }
   const localClasses = collectLocalClasses(parseTree, parseNodeType);
   const ctx = {
     repoRoot: state.repoRoot,

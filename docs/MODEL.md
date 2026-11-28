@@ -28,8 +28,9 @@ Every component has:
 | `module()` | The module/file-level unit, where the language has one (TS, Python). |
 | `sourceFile()` | The project path of the declaring file (§6). |
 | `children()` | Unique names of the components declared directly inside this one, in declaration order. |
-| `modifiers()` | Declared modifiers, lower-cased, from a closed vocabulary (`OOPSourceModelConstants.AccessModifiers`). |
+| `modifiers()` | Declared modifiers, lower-cased, from a closed vocabulary (`OOPSourceModelConstants.AccessModifiers`). A C# member that returns or holds a reference (`ref int R()`) has `ref`. |
 | `references()` | What this component uses (§2). |
+| `declaredType()` | The type this component is declared with, or `null` (§1.5). |
 | `imports()`, `importedFiles()` | What the declaring file imports (§5). |
 | `comment()`, `codeFragment()`, `cyclo()`, `codeHash()` | Documentation comment, declaration text, cyclomatic complexity, content hash. |
 | `isBoundary()` | Only in a one-level analysis (§7). |
@@ -144,6 +145,14 @@ How a reference binds to such a declaration, when several files hold it:
   records nothing. A name declared in several files without `expect`/`actual` (overloads) is not
   affected by this rule.
 
+### 1.5 The declared type
+
+`declaredType()` is the return type of a method or function, or the written type of a field, property,
+parameter, a Python module-level variable, or a Kotlin local (no other language gives a local one), as a
+`SimpleTypeReference`. It is always also one of `references()`. Type arguments and a nullable marker are not part of it (`List<Order>` is `List`, `Order?` is `Order`). It is `null`,
+meaning *unknown* and never *void*, when no type is written (inferred, C# `var`), when the type is not one
+named type (type variable, array, tuple, union, function type), or when the declaration returns nothing.
+
 ---
 
 ## 2. References
@@ -160,7 +169,7 @@ the target.
 | `SIMPLE` | `SimpleTypeReference` | `simple` | an ordinary use: a declared type, a constructor call, a static access, a call on a typed receiver, a type argument, a `typeof` operand, a bound or default of a type parameter |
 | `EXTENSION` | `TypeExtensionReference` | `extension` | inheritance: `extends`, a base class, the first entry of a Kotlin supertype list with a constructor call, an interface extending interfaces |
 | `IMPLEMENTATION` | `TypeImplementationReference` | `implementation` | interface implementation |
-| `ANNOTATION` | `AnnotationReference` | `annotation` | an annotation, attribute or decorator applied to this declaration, with literal arguments where read. Not a use dependency. |
+| `ANNOTATION` | `AnnotationReference` | `annotation` | an annotation, attribute or decorator applied to this declaration, with literal arguments where read. Not a use dependency. A TypeScript or Python decorator an import binds from a package or module outside the project is named `package:name` (TypeScript, `EXACT`) or by its dotted name (Python), as a call of that import is. |
 | `MEMBER` | `MemberReference` | `member` | a call of one named member of a type (§2.3). Its target is the owning type, so it is also a use of that type. |
 | `CONSTRUCTION` | `ConstructionReference` | `construction` | the construction of an instance of a type (§2.5). Its target is the constructed type, so it is also a use of that type. |
 
@@ -181,7 +190,7 @@ Rules that hold for every kind:
 - an internal component: a type, a module-level function or field, a `NAMESPACE`, or a member
   (§2.3);
 - an external name (§4);
-- the name as written, when nothing in scope declares it (§3).
+- the name as written, when nothing in scope declares it (§3). A TypeScript call of a bare global function (`fetch(url)`) records its name, `EXACT` when a default library or `@types` declares it.
 
 **Planned for 12.0:** renaming `SimpleTypeReference`. It says "type", but TS targets module
 functions and values, and C# targets extension methods. Until then read "type" as "named thing".
@@ -228,11 +237,11 @@ the parse cannot read that could supply the name, or `this`/`self`.
 
 | language | receiver types read | library owners |
 |---|---|---|
-| Java | the symbol solver: variables, fields, `var` locals, type names | declarations the solver resolves (the JDK) |
+| Java | the symbol solver: variables, fields, `var` locals, type names; elements and fields of a written type argument | declarations the solver resolves (the JDK) |
 | Kotlin | written or constructor-made parameters, locals and properties; objects and companions | a JDK type that has a member of that name |
-| C# | declared or `var x = new T()` locals, parameters, fields; type names | the built-in types (`string`, `int`, ...), when no using can add an extension method |
-| TypeScript | the checker's type of the receiver expression | a class or interface a package declares, or a type imported from a package that is not installed |
-| Python | Pyright: annotated, or inferred to a single class; a class by its name | the defining module of the class |
+| C# | declared or `var x = new T()` locals, parameters, fields; type names; the unqualified call of a `using static` member; elements and fields of a written type argument | the built-in types (`string`, `int`, ...), when no using can add an extension method |
+| TypeScript | the checker's type of the receiver expression; a module bound by a literal `import()` or `require()` | a class or interface a package declares, or a type imported from a package that is not installed |
+| Python | Pyright: annotated, or inferred to a single class; a class by its name; a module bound by `importlib.import_module("p.m")` | the defining module of the class |
 
 **TypeScript, deprecated string form.** Through 11.x a call on a library-typed receiver is also
 recorded, as before, as a `SimpleTypeReference` whose target is the string `<package>:<Type>.<member>`.
@@ -442,6 +451,7 @@ file's own text and is not resolved against the model. A directive has:
 "Always false" means the concept does not exist in the language, not that it was not looked for. An empty
 list has the same ambiguity as an empty `imports()` (§5.2): a file that was not read in full has none recorded.
 A `from m import name` where `name` is a submodule is a names import; the directive does not say which.
+A literal TypeScript `await import("m")` and Python `importlib.import_module("m")` bind names and aliases like a static import.
 A `require()` whose result is used another way than a plain binding or object destructuring is
 `importsModule() == true` with no alias.
 

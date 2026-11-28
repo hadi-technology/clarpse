@@ -276,6 +276,19 @@ final class KotlinModel {
         boolean hasLambda;
         /** The calls on a receiver that is a single name. */
         final List<ReceiverCall> receiverCalls = new ArrayList<>();
+        /**
+         * The collection a {@code for (x in collection)} variable is read from, by variable, where the
+         * collection is a plain name; a variable that two loops bind maps to nothing.
+         */
+        final java.util.Map<String, String> loopCollections = new java.util.LinkedHashMap<>();
+        /** The type a loop variable is written with, by variable. */
+        final java.util.Map<String, String> loopTypes = new java.util.LinkedHashMap<>();
+        /**
+         * The collection a lambda parameter, or {@code it}, is an element of, by name, where the lambda is the
+         * only argument of an element function called on a plain name; a name that two lambdas bind maps
+         * to nothing.
+         */
+        final java.util.Map<String, String> lambdaCollections = new java.util.LinkedHashMap<>();
     }
 
     /** A parameter of a function or constructor. */

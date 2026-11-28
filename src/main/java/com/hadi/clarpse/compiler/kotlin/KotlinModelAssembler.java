@@ -14,6 +14,7 @@ import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeKind;
 import com.hadi.clarpse.compiler.kotlin.KotlinModel.TypeUsage;
 import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Resolution;
 import com.hadi.clarpse.compiler.kotlin.KotlinNameResolver.Scope;
+import com.hadi.clarpse.TypeNames;
 import com.hadi.clarpse.listener.ParseUtil;
 import com.hadi.clarpse.reference.AnnotationArgument;
 import com.hadi.clarpse.reference.AnnotationArguments;
@@ -261,6 +262,7 @@ final class KotlinModelAssembler {
             component.setCyclo(member.cyclo);
         }
         addTypeReferences(component, member.typeUsages, scope, closer);
+        addDeclaredType(component, member.declaredType, scope);
         addFileClassReferences(component, member, context, scope);
         addExtensionReferences(component, member, typing);
         model.insertComponent(component);
@@ -289,6 +291,7 @@ final class KotlinModelAssembler {
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
         addTypeReferences(component, parameter.typeUsages, scope, closer);
+        addDeclaredType(component, parameter.declaredType, scope);
         model.insertComponent(component);
         stack.pop();
         ParseUtil.copyRefsToParents(component, stack);
@@ -311,6 +314,7 @@ final class KotlinModelAssembler {
         ParseUtil.pointParentsToGivenChild(component, stack);
         stack.push(component);
         addTypeReferences(component, local.typeUsages, scope, closer);
+        addDeclaredType(component, local.declaredType, scope);
         addInferredType(component, local, typing);
         model.insertComponent(component);
         stack.pop();
@@ -389,6 +393,7 @@ final class KotlinModelAssembler {
             ParseUtil.pointParentsToGivenChild(component, stack);
             stack.push(component);
             addTypeReferences(component, parameter.typeUsages, scope);
+            addDeclaredType(component, parameter.declaredType, scope);
             model.insertComponent(component);
             stack.pop();
             ParseUtil.copyRefsToParents(component, stack);
@@ -499,6 +504,29 @@ final class KotlinModelAssembler {
             return AnnotationArgument.literal(AnnotationArgument.Kind.ENUM, written);
         }
         return AnnotationArgument.unresolved();
+    }
+
+    /**
+     * Records the type a declaration is written with as the component's declared type: one named type,
+     * whatever its type arguments and a nullable marker. {@code Unit}, a function type, a type parameter
+     * and a type that is not a single name are not one, and the reference is recorded only when the
+     * written type already gave this component that reference.
+     */
+    private void addDeclaredType(final Component component, final String written, final Scope scope) {
+        final String name = TypeNames.singleNamedType(written);
+        if (name == null || "Unit".equals(name) || "kotlin.Unit".equals(name) || scope.typeParameters().contains(name)) {
+            return;
+        }
+        final Resolution resolved = resolver.resolve(name, scope, false);
+        if (resolved == null || resolved.name().isEmpty()) {
+            return;
+        }
+        for (final ComponentReference reference : component.references()) {
+            if (reference instanceof SimpleTypeReference && reference.invokedComponent().equals(resolved.name())) {
+                component.setDeclaredType((SimpleTypeReference) reference);
+                return;
+            }
+        }
     }
 
     private void addTypeReferences(final Component component, final Collection<TypeUsage> usages, final Scope scope) {

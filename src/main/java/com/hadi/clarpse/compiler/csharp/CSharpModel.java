@@ -158,6 +158,11 @@ final class CSharpModel {
         List<CSharpMemberModel> members = new ArrayList<>();
         List<CSharpTypeModel> nestedTypes = new ArrayList<>();
         Set<String> imports = new LinkedHashSet<>();
+        /**
+         * The classes the file's {@code using static} directives name, as written, among those in force
+         * where this type is declared.
+         */
+        Set<String> staticImports = new LinkedHashSet<>();
         /** The using directives written in the file that declares this type, with the manner of each. */
         List<com.hadi.clarpse.sourcemodel.ImportDirective> importDirectives = new ArrayList<>();
         Map<String, String> usingAliases = new LinkedHashMap<>();
@@ -194,6 +199,7 @@ final class CSharpModel {
                 copy.nestedTypes.add(nested.assemblyCopy());
             }
             copy.imports = new LinkedHashSet<>(imports);
+            copy.staticImports = new LinkedHashSet<>(staticImports);
             copy.importDirectives = new ArrayList<>(importDirectives);
             copy.usingAliases = new LinkedHashMap<>(usingAliases);
             copy.importedFiles = new LinkedHashSet<>(importedFiles);
@@ -255,6 +261,27 @@ final class CSharpModel {
          */
         Set<ExtensionCall> extensionCalls = new LinkedHashSet<>();
         /**
+         * The names called without a receiver, {@code Max(1, 2)}, in the member's body or initializer.
+         */
+        Set<String> bareCalls = new LinkedHashSet<>();
+        /**
+         * The collection a {@code foreach (var x in collection)} loop reads, by loop variable, where the
+         * collection is a plain name; a variable that two loops bind maps to nothing.
+         */
+        Map<String, String> foreachCollections = new LinkedHashMap<>();
+        /**
+         * The collection a lambda parameter comes from when the lambda is the only argument of a call
+         * {@code collection.ForEach(x => ...)} on a plain name; a name that two lambdas bind maps to nothing.
+         */
+        Map<String, String> lambdaCollections = new LinkedHashMap<>();
+        /** The calls {@code collection[index].Name(...)} on a plain name. */
+        Set<IndexedCall> indexedCalls = new LinkedHashSet<>();
+        /**
+         * The names the member's body or initializer may declare itself -- a local function, a local
+         * variable or a lambda parameter -- and so may hide a name another scope supplies.
+         */
+        Set<String> bodyDeclaredNames = new LinkedHashSet<>();
+        /**
          * The variables that lambdas and anonymous methods in the member declare, by name, with the
          * type each is written with; a null type is an implicitly typed parameter.
          */
@@ -279,6 +306,10 @@ final class CSharpModel {
      * The argument count is -1 when it could not be read.
      */
     record ExtensionCall(String receiver, String name, int argumentCount) {
+    }
+
+    /** A call {@code collection[index].Name(...)}, the collection being a plain name. */
+    record IndexedCall(String collection, String name) {
     }
 
     static final class CSharpParameterModel {

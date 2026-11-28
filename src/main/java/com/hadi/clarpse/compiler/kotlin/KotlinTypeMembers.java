@@ -169,6 +169,40 @@ final class KotlinTypeMembers {
     }
 
     /**
+     * The position among a repository type's own type parameters of the one a property of the type is
+     * written with: {@code T} for {@code val value: T} in {@code class Box<T>} is 0. -1 when the type has
+     * no such property, the property writes anything else, or the name is written more than once.
+     *
+     * @param owner The type, fully qualified.
+     * @param name  The property's name.
+     * @return The position, or -1.
+     */
+    int typeParameterPosition(final String owner, final String name) {
+        final KotlinDeclaration declaration = resolver.index().declaration(owner);
+        if (declaration == null) {
+            return -1;
+        }
+        final List<String> parameters = new ArrayList<>(declaration.type().typeParameters);
+        int found = -1;
+        int writers = 0;
+        for (final KotlinMemberModel member : declaration.type().members) {
+            if (member.receiverType != null) {
+                continue;
+            }
+            final Optional<String> written = writtenBy(member, name, false);
+            if (written == null) {
+                continue;
+            }
+            writers += 1;
+            found = written.map(text -> parameters.indexOf(text.trim())).orElse(-1);
+        }
+        if (writers != 1) {
+            return -1;
+        }
+        return found;
+    }
+
+    /**
      * What a member writes as the type of the name asked for: null when it is not that member, empty
      * when it is but writes no type (or is something the name cannot be read as), else the written type.
      */

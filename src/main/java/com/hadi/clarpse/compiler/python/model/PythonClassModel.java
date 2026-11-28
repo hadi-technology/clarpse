@@ -21,6 +21,11 @@ public class PythonClassModel {
      * where the decorator's arguments could not be read, empty where it was written without any.
      */
     public List<List<PythonDecoratorArgumentModel>> decoratorArguments = new ArrayList<>();
+    /**
+     * Where each decorator comes from, in the order of {@link #decorators}: {@code null} where no
+     * import outside the repository names it.
+     */
+    public List<PythonDecoratorOriginModel> decoratorOrigins = new ArrayList<>();
     /** What the arguments of the class's decorators refer to: {@code Baz} in {@code @register(Baz)}. */
     public List<PythonTypeRefModel> decoratorReferences = new ArrayList<>();
     public List<PythonTypeRefModel> bases = new ArrayList<>();
