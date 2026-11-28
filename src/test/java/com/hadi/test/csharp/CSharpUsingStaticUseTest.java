@@ -92,6 +92,18 @@ public class CSharpUsingStaticUseTest {
                           public class Roots { public double F() { return Sqrt(4); } }
                         }
                         """),
+                new ProjectFile("/Patterns.cs", """
+                        using static System.Math;
+                        namespace App {
+                          public record Point(int X, int Y);
+                          public class Patterns {
+                            public int Is(object o) { return o is Point(var a, var b) ? a : 0; }
+                            public int Switch(object o) { return o switch { Point(1, 2) => 1, _ => 0 }; }
+                            public int Case(object o) { switch (o) { case Point(1, 2): return 1; default: return 0; } }
+                            public int When(object o) { return o switch { int i when i > 0 => 1, Point(1, 2) => 2, _ => 0 }; }
+                          }
+                        }
+                        """),
                 new ProjectFile("/Several.cs", """
                         using static System.Math;
                         using static System.Console;
@@ -208,5 +220,30 @@ public class CSharpUsingStaticUseTest {
     @Test
     public void aConstructionIsNotACall() {
         assertTrue(calls("App.Constructs.F(").isEmpty());
+    }
+
+    private static void assertNoMathPattern(final String method) {
+        assertTrue(calls(method).toString(), calls(method).stream().noneMatch(ref -> ref.member().equals("Point")));
+        assertFalse(referencesType(method, "System.Math"));
+    }
+
+    @Test
+    public void aPatternAfterIsIsNotACall() {
+        assertNoMathPattern("App.Patterns.Is(");
+    }
+
+    @Test
+    public void aPatternInASwitchExpressionArmIsNotACall() {
+        assertNoMathPattern("App.Patterns.Switch(");
+    }
+
+    @Test
+    public void aPatternAfterCaseIsNotACall() {
+        assertNoMathPattern("App.Patterns.Case(");
+    }
+
+    @Test
+    public void aPatternInAWhenArmIsNotACall() {
+        assertNoMathPattern("App.Patterns.When(");
     }
 }

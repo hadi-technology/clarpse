@@ -259,6 +259,9 @@ final class CSharpBodyText {
             "return", "await", "else", "yield", "throw", "in", "is", "as", "case", "when", "and", "or", "not",
             "do", "ref", "lock", "switch", "if", "while", "for", "foreach");
 
+    /** Words after which a name is a pattern, {@code o is Point(var a)}, and never a call. */
+    private static final Set<String> AHEAD_OF_A_PATTERN = Set.of("is", "case", "when");
+
     /**
      * Records every name called without a receiver, {@code Max(1, 2)}, outside comments and string
      * literals, and every name the body may declare itself: a name written after a type or {@code var}
@@ -306,7 +309,7 @@ final class CSharpBodyText {
                     || clean.charAt(before - 1) == '>' || clean.charAt(before - 1) == ']');
             final boolean afterTypeSyntax = previous == ']' || nullableMarker
                     || previous == '>' && !(before > 0 && clean.charAt(before - 1) == '=');
-            if ("new".equals(previousWord) || NOT_CALLED.contains(name)) {
+            if ("new".equals(previousWord) || NOT_CALLED.contains(name) || AHEAD_OF_A_PATTERN.contains(previousWord)) {
                 continue;
             }
             if (afterTypeName || afterTypeSyntax) {

@@ -1087,6 +1087,13 @@ final class CSharpModelAssembler {
         return new WrittenType(element, holder.scope(), holder.member());
     }
 
+    /** Whether the file's types resolve the bare name to a type, as a positional pattern or a constructor does. */
+    private static boolean namesAType(final String name, final CSharpModel.CSharpTypeModel ownerType,
+                                      final CSharpTypeIndex typeIndex) {
+        final CSharpTypeIndex.Resolution resolved = typeIndex.resolveType(name, ownerType, null);
+        return resolved != null && resolved.kind() == ResolutionKind.EXACT;
+    }
+
     /**
      * Records the call of a member a {@code using static} directive brings into scope: {@code Max(1, 2)}
      * with {@code using static Lib.Util;} is a call of {@code Lib.Util.Max}, beside the reference to the
@@ -1105,7 +1112,8 @@ final class CSharpModelAssembler {
             return;
         }
         for (final String name : memberModel.bareCalls) {
-            if (isDeclaredInMember(name, memberModel) || isBoundByEnclosingTypes(name, ownerType, typeIndex)) {
+            if (isDeclaredInMember(name, memberModel) || isBoundByEnclosingTypes(name, ownerType, typeIndex)
+                    || namesAType(name, ownerType, typeIndex)) {
                 continue;
             }
             final List<String> declaring = new ArrayList<>();
