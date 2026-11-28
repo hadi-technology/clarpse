@@ -544,7 +544,8 @@ public final class Component implements Serializable {
 
     /**
      * The type this component is declared with: the return type of a METHOD or FUNCTION, the written
-     * type of a FIELD, MODULE_FIELD, LOCAL or parameter. Null when no type is written, when it is not a
+     * type of a FIELD or parameter, of a MODULE_FIELD in Python, and of a LOCAL in Kotlin only (a local of
+     * any other language has none). Null when no type is written, when it is not a
      * single named type (a type variable, an array, a union of several types, a function type), or for a
      * declaration that returns nothing. Null means unknown, never "void".
      *
