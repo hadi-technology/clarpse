@@ -809,10 +809,43 @@ function programsForUnownedFiles(ts, repoRoot, configs) {
     dir,
     options,
     rootNames: groups.get(dir).sort(),
+    promiseShim: groups.get(dir).some(loadsModuleDynamically),
     projectReferences: [],
     programFailed: false,
     unowned: true
   }));
+}
+
+/**
+ * The declaration of `Promise` a program with no library is given where a file loads a module with
+ * `import()`: the checker types that call as a promise of the module, and without a global `Promise`
+ * the result is `any`. It is the part of the library that call needs, and nothing else.
+ */
+const PROMISE_SHIM_PATH = path.join(path.parse(process.cwd()).root, "__clarpse__", "promise.d.ts");
+const PROMISE_SHIM_TEXT = "interface PromiseLike<T> { then<R1 = T, R2 = never>(onfulfilled?: ((value: T) => R1 | "
+  + "PromiseLike<R1>) | null, onrejected?: ((reason: any) => R2 | PromiseLike<R2>) | null): PromiseLike<R1 | R2>; }\n"
+  + "interface Promise<T> { then<R1 = T, R2 = never>(onfulfilled?: ((value: T) => R1 | PromiseLike<R1>) | null, "
+  + "onrejected?: ((reason: any) => R2 | PromiseLike<R2>) | null): Promise<R1 | R2>; }\n";
+
+/** Whether a file's text loads a module with a call of `import(`. */
+function loadsModuleDynamically(fileName) {
+  try {
+    return /(^|[^\w$.])import\s*\(/.test(fs.readFileSync(fileName, "utf8"));
+  } catch (err) {
+    return false;
+  }
+}
+
+/** A host that holds the Promise declaration as a file of its own. */
+function withPromiseShim(host) {
+  const ts = state.ts;
+  const getSourceFile = host.getSourceFile.bind(host);
+  const fileExists = host.fileExists.bind(host);
+  host.fileExists = (fileName) => fileName === PROMISE_SHIM_PATH || fileExists(fileName);
+  host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreate) => fileName === PROMISE_SHIM_PATH
+    ? ts.createSourceFile(fileName, PROMISE_SHIM_TEXT, languageVersionOrOptions, false)
+    : getSourceFile(fileName, languageVersionOrOptions, onError, shouldCreate);
+  return host;
 }
 
 /** Nearest enclosing directory first, and a config the repository wrote before one it did not. */
@@ -904,16 +937,17 @@ function programSpec(config) {
   if (state.oneLevel) {
     const options = Object.assign({}, config.options, { noResolve: true });
     return {
-      rootNames: config.oneLevelRoots || [],
+      rootNames: (config.oneLevelRoots || []).concat(config.promiseShim ? [PROMISE_SHIM_PATH] : []),
       options,
-      host: sharedSourceFileHost(options)
+      host: config.promiseShim ? withPromiseShim(sharedSourceFileHost(options)) : sharedSourceFileHost(options)
     };
   }
   return {
-    rootNames: config.rootNames,
+    rootNames: config.promiseShim ? config.rootNames.concat([PROMISE_SHIM_PATH]) : config.rootNames,
     options: config.options,
     projectReferences: config.projectReferences,
-    host: sharedSourceFileHost(config.options)
+    host: config.promiseShim ? withPromiseShim(sharedSourceFileHost(config.options))
+      : sharedSourceFileHost(config.options)
   };
 }
 
@@ -2234,6 +2268,64 @@ function readNamedArgument(node, checker) {
   return { kind: "other" };
 }
 
+/** The exports of the repository module a variable's initializer loads with a literal `import()` or `require()`. */
+function loadedModuleExports(variable, checker) {
+  const ts = state.ts;
+  if (!variable || !ts.isVariableDeclaration(variable) || !variable.initializer) {
+    return null;
+  }
+  const specifier = requiredModule(variable.initializer);
+  if (!specifier) {
+    return null;
+  }
+  let call = variable.initializer;
+  while (!ts.isCallExpression(call) && call.expression) {
+    call = call.expression;
+  }
+  const file = resolveImportedFile(call.arguments[0], specifier, variable.getSourceFile(), checker);
+  const moduleSource = file && state.currentProgram ? state.currentProgram.getSourceFile(file) : null;
+  const moduleSymbol = moduleSource ? checker.getSymbolAtLocation(moduleSource) : null;
+  return moduleSymbol ? checker.getExportsOfModule(moduleSymbol) : null;
+}
+
+function exportNamed(exports, name, checker) {
+  const found = exports ? exports.find((entry) => entry.getName() === name) : null;
+  if (!found) {
+    return null;
+  }
+  return (found.flags & state.ts.SymbolFlags.Alias) ? checker.getAliasedSymbol(found) : found;
+}
+
+/**
+ * The export a name destructured from a literal `import("m")` or `require("m")` binds, found in the
+ * module's own exports where the checker cannot type the call. Null where the binding is not such a name,
+ * the module is not a file of the repository or exports nothing of that name.
+ */
+function loadedExportOf(declaration, checker) {
+  const ts = state.ts;
+  if (!declaration || !ts.isBindingElement(declaration) || !ts.isObjectBindingPattern(declaration.parent)
+      || declaration.dotDotDotToken) {
+    return null;
+  }
+  const wanted = declaration.propertyName && ts.isIdentifier(declaration.propertyName)
+    ? declaration.propertyName.text : declaration.name.text;
+  return exportNamed(loadedModuleExports(declaration.parent.parent, checker), wanted, checker);
+}
+
+/** The export `ns.name` reaches when `ns` is bound to a literal `import("m")` or `require("m")`. */
+function loadedMemberOf(propertyAccess, checker) {
+  const ts = state.ts;
+  if (!ts.isIdentifier(propertyAccess.expression) || !ts.isIdentifier(propertyAccess.name)) {
+    return null;
+  }
+  const symbol = checker.getSymbolAtLocation(propertyAccess.expression);
+  const declaration = symbol && symbol.declarations && symbol.declarations[0];
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) {
+    return null;
+  }
+  return exportNamed(loadedModuleExports(declaration, checker), propertyAccess.name.text, checker);
+}
+
 /**
  * The module-level function a call names, when it names one in this repository.
  *
@@ -2255,7 +2347,8 @@ function buildCalleeReference(node, checker) {
   }
   let symbol;
   try {
-    symbol = checker.getSymbolAtLocation(expr);
+    symbol = (state.ts.isPropertyAccessExpression(expr) ? loadedMemberOf(expr, checker) : null)
+      || checker.getSymbolAtLocation(expr);
   } catch (err) {
     return null;
   }
@@ -2269,6 +2362,14 @@ function buildCalleeReference(node, checker) {
     } catch (err) {
       actual = symbol;
     }
+  }
+  try {
+    const loaded = loadedExportOf(actual.declarations && actual.declarations[0], checker);
+    if (loaded) {
+      actual = loaded;
+    }
+  } catch (err) {
+    actual = symbol;
   }
   const name = actual.getName ? actual.getName() : null;
   if (!name || isInternalSymbolName(name)) {
@@ -2976,6 +3077,9 @@ function buildValueReference(identifier, checker, owner) {
         if (loaded && ts.isBindingElement(declaration)) {
           imported = loaded;
           boundByRequire = true;
+          if (!packageOfSpecifier(loaded)) {
+            symbol = loadedExportOf(declaration, checker) || symbol;
+          }
         }
       }
     }
@@ -4125,6 +4229,7 @@ async function handleGetFileModel(params) {
     throw err;
   }
   const checker = entryInfo.entry.checker || withPortableTypeText(entryInfo.entry.program.getTypeChecker());
+  state.currentProgram = entryInfo.entry.program;
   const unresolvedBases = [];
   let declarations;
   state.shallowBody = !!(state.oneLevel && params.boundary);
@@ -4329,8 +4434,14 @@ function collectImportDirectives(ts, source, checker) {
       const dynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
       if (dynamicImport || isRequireFunction(callee)) {
         const fields = { importsModule: true, dynamic: dynamicImport || insideFunction, names: [], binds: [] };
-        const parent = node.parent;
-        if (parent && ts.isVariableDeclaration(parent) && parent.initializer === node) {
+        // `await import("m")`, `(await import("m"))` and `require("m") as T` bind what the plain call does.
+        let bound = node;
+        while (bound.parent && (ts.isAwaitExpression(bound.parent) || ts.isParenthesizedExpression(bound.parent)
+            || ts.isAsExpression(bound.parent) || ts.isNonNullExpression(bound.parent))) {
+          bound = bound.parent;
+        }
+        const parent = bound.parent;
+        if (parent && ts.isVariableDeclaration(parent) && parent.initializer === bound) {
           if (ts.isIdentifier(parent.name)) {
             fields.alias = parent.name.text;
           } else if (ts.isObjectBindingPattern(parent.name)) {
