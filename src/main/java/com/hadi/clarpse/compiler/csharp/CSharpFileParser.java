@@ -1216,7 +1216,7 @@ final class CSharpFileParser {
         member.sourceText = fileModel.sourceText;
         member.moduleName = fileModel.moduleName;
         member.ownerTypeUniqueName = ownerType.uniqueName;
-        member.modifiers = parseModifiers(node.text);
+        member.modifiers = parseMemberModifiers(node.text);
         member.comment = extractLeadingComment(fileModel.sourceText, node.startOffset);
         member.startOffset = node.startOffset;
         member.endOffset = node.endOffset;
@@ -1661,6 +1661,37 @@ final class CSharpFileParser {
                 modifiers.add(lower);
             }
         }
+        return modifiers;
+    }
+
+    /**
+     * The modifiers of a member declaration. A {@code ref} before the type says the member returns or
+     * holds a reference and is a modifier of the member; the {@code readonly} that may follow it
+     * belongs to the type ({@code ref readonly int}), so it is not.
+     *
+     * @param text The member's declaration text.
+     * @return The modifiers, in source order.
+     */
+    static List<String> parseMemberModifiers(final String text) {
+        final List<String> modifiers = parseModifiers(text);
+        if (text == null || text.isBlank()) {
+            return modifiers;
+        }
+        final String header = normalizeWhitespace(cutAtAny(text, "{", "(", ";", "=>", "="));
+        final List<String> parts = List.of(header.split(" "));
+        final int ref = parts.indexOf("ref");
+        if (ref < 0) {
+            return modifiers;
+        }
+        if (ref + 1 < parts.size() && "readonly".equals(parts.get(ref + 1))) {
+            // `readonly` directly after `ref` belongs to the returned type, unless a `readonly`
+            // was also written before the `ref`.
+            final boolean written = parts.subList(0, ref).contains("readonly");
+            if (!written) {
+                modifiers.remove("readonly");
+            }
+        }
+        modifiers.add("ref");
         return modifiers;
     }
 
